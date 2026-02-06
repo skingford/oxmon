@@ -1,0 +1,17 @@
+[package]
+name = "oxmon-notify"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+oxmon-common = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+lettre = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

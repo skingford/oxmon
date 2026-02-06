@@ -1,0 +1,13 @@
+# oxmon Agent Configuration
+
+# Unique identifier for this agent (defaults to hostname if not set)
+agent_id = "web-server-01"
+
+# Server gRPC endpoint to report metrics to
+server_endpoint = "http://127.0.0.1:9090"
+
+# How often to collect metrics (seconds)
+collection_interval_secs = 10
+
+# Maximum number of metric batches to buffer when server is unreachable
+buffer_max_size = 1000

@@ -1,0 +1,68 @@
+[workspace]
+members = [
+    "crates/oxmon-common",
+    "crates/oxmon-collector",
+    "crates/oxmon-storage",
+    "crates/oxmon-alert",
+    "crates/oxmon-notify",
+    "crates/oxmon-agent",
+    "crates/oxmon-server",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# gRPC
+tonic = "0.12"
+tonic-build = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP
+axum = "0.7"
+reqwest = { version = "0.12", features = ["json"] }
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# System info
+sysinfo = "0.32"
+
+# Email
+lettre = { version = "0.10", features = ["tokio1-native-tls", "smtp-transport", "builder"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Async trait
+async-trait = "0.1"
+
+# Glob matching
+glob-match = "0.2"
+
+# Internal crates
+oxmon-common = { path = "crates/oxmon-common" }
+oxmon-collector = { path = "crates/oxmon-collector" }
+oxmon-storage = { path = "crates/oxmon-storage" }
+oxmon-alert = { path = "crates/oxmon-alert" }
+oxmon-notify = { path = "crates/oxmon-notify" }
