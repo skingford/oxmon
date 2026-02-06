@@ -1,0 +1,8 @@
+[build.env]
+passthrough = ["PROTOC", "PROTOC_INCLUDE"]
+
+[target.x86_64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main"
+
+[target.aarch64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main"

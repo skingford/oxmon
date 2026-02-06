@@ -310,13 +310,66 @@ curl http://localhost:8080/api/v1/alerts/rules
 curl "http://localhost:8080/api/v1/alerts/history?severity=critical&limit=50"
 ```
 
+## 交叉编译 / 多平台构建
+
+支持以下目标平台：
+
+| 目标 | 说明 |
+|------|------|
+| `x86_64-unknown-linux-gnu` | Linux AMD64 |
+| `aarch64-unknown-linux-gnu` | Linux ARM64 |
+| `x86_64-apple-darwin` | macOS Intel |
+| `aarch64-apple-darwin` | macOS Apple Silicon |
+
+### 前置依赖
+
+- [cross](https://github.com/cross-rs/cross)（Linux 交叉编译需要 Docker）
+- Rust 工具链及对应 target：`rustup target add <triple>`
+
+### 使用 Makefile
+
+```bash
+# 构建单个 Linux 目标（通过 cross）
+make x86_64-unknown-linux-gnu
+make aarch64-unknown-linux-gnu
+
+# 构建 macOS 目标（原生编译）
+make aarch64-apple-darwin
+
+# 打包某个目标的产物
+make package TARGET=x86_64-unknown-linux-gnu
+
+# 构建并打包所有目标
+make release
+```
+
+### 手动使用 cross
+
+```bash
+cross build --release --target aarch64-unknown-linux-gnu
+```
+
+### 验证 OpenSSL 已移除
+
+```bash
+cargo tree -i openssl-sys
+# 应输出 "openssl-sys" 不存在
+```
+
 ## Docker 部署
 
 ### 构建镜像
 
 ```bash
+# 单架构
 docker build -f Dockerfile.server -t oxmon-server .
 docker build -f Dockerfile.agent -t oxmon-agent .
+
+# 多架构（需要 docker buildx）
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f Dockerfile.agent -t oxmon-agent:latest --push .
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f Dockerfile.server -t oxmon-server:latest --push .
 ```
 
 ### 运行服务端

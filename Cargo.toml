@@ -36,7 +36,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # HTTP
 axum = "0.7"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -45,7 +45,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 sysinfo = "0.32"
 
 # Email
-lettre = { version = "0.10", features = ["tokio1-native-tls", "smtp-transport", "builder"] }
+lettre = { version = "0.10", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
