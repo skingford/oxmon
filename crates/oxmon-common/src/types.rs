@@ -70,3 +70,56 @@ pub struct AgentInfo {
     pub last_seen: DateTime<Utc>,
     pub active: bool,
 }
+
+// Certificate domain monitoring types
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CertDomain {
+    pub id: String,
+    pub domain: String,
+    pub port: i32,
+    pub enabled: bool,
+    pub check_interval_secs: Option<u64>,
+    pub note: Option<String>,
+    pub last_checked_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CertCheckResult {
+    pub id: String,
+    pub domain_id: String,
+    pub domain: String,
+    pub is_valid: bool,
+    pub chain_valid: bool,
+    pub not_before: Option<DateTime<Utc>>,
+    pub not_after: Option<DateTime<Utc>>,
+    pub days_until_expiry: Option<i64>,
+    pub issuer: Option<String>,
+    pub subject: Option<String>,
+    pub san_list: Option<Vec<String>>,
+    pub error: Option<String>,
+    pub checked_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateDomainRequest {
+    pub domain: String,
+    pub port: Option<i32>,
+    pub check_interval_secs: Option<u64>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateDomainRequest {
+    pub port: Option<i32>,
+    pub enabled: Option<bool>,
+    pub check_interval_secs: Option<Option<u64>>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchCreateDomainsRequest {
+    pub domains: Vec<CreateDomainRequest>,
+}

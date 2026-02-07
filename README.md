@@ -231,6 +231,8 @@ aggregation_window_secs = 60   # 相似告警的聚合窗口（秒），窗口�
 | `load.load_5` | 5 分钟负载 |
 | `load.load_15` | 15 分钟负载 |
 | `load.uptime` | 系统运行时间 (秒) |
+| `certificate.days_until_expiry` | 证书剩余有效天数，按域名（Server 端采集） |
+| `certificate.is_valid` | 证书是否有效 (1=有效, 0=无效/过期/错误)，按域名 |
 
 ## REST API
 
@@ -309,6 +311,124 @@ curl http://localhost:8080/api/v1/alerts/rules
 ```bash
 curl "http://localhost:8080/api/v1/alerts/history?severity=critical&limit=50"
 ```
+
+### 证书域名管理
+
+#### `POST /api/v1/certs/domains`
+
+添加监控域名。
+
+```bash
+curl -X POST http://localhost:8080/api/v1/certs/domains \
+  -H "Content-Type: application/json" \
+  -d '{"domain": "example.com", "port": 443, "note": "主站"}'
+```
+
+#### `POST /api/v1/certs/domains/batch`
+
+批量添加域名。
+
+```bash
+curl -X POST http://localhost:8080/api/v1/certs/domains/batch \
+  -H "Content-Type: application/json" \
+  -d '{"domains": [{"domain": "a.com"}, {"domain": "b.com", "port": 8443}]}'
+```
+
+#### `GET /api/v1/certs/domains`
+
+查询域名列表（支持 `?enabled=true&search=example&limit=20&offset=0`）。
+
+```bash
+curl http://localhost:8080/api/v1/certs/domains
+```
+
+#### `PUT /api/v1/certs/domains/:id`
+
+更新域名配置（端口、启用状态、检测间隔）。
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/certs/domains/<id> \
+  -H "Content-Type: application/json" \
+  -d '{"check_interval_secs": 3600, "enabled": true}'
+```
+
+#### `DELETE /api/v1/certs/domains/:id`
+
+删除域名及其检测记录。
+
+```bash
+curl -X DELETE http://localhost:8080/api/v1/certs/domains/<id>
+```
+
+#### `GET /api/v1/certs/status`
+
+查询所有域名最新证书检测结果。
+
+```bash
+curl http://localhost:8080/api/v1/certs/status
+```
+
+#### `GET /api/v1/certs/status/:domain`
+
+查询指定域名的最新证书检测结果。
+
+```bash
+curl http://localhost:8080/api/v1/certs/status/example.com
+```
+
+#### `POST /api/v1/certs/domains/:id/check`
+
+手动触发指定域名的证书检测。
+
+```bash
+curl -X POST http://localhost:8080/api/v1/certs/domains/<id>/check
+```
+
+#### `POST /api/v1/certs/check`
+
+手动触发所有已启用域名的证书检测。
+
+```bash
+curl -X POST http://localhost:8080/api/v1/certs/check
+```
+
+### API 文档（OpenAPI）
+
+Server 提供 OpenAPI 3.0.3 格式的接口文档，可直接导入 Apifox、Postman、Swagger UI 等工具。
+
+| 端点 | 格式 |
+|------|------|
+| `GET /api/v1/openapi.json` | JSON 格式 |
+| `GET /api/v1/openapi.yaml` | YAML 格式 |
+
+```bash
+# 获取 JSON 格式的 API 文档
+curl http://localhost:8080/api/v1/openapi.json
+
+# 获取 YAML 格式的 API 文档
+curl http://localhost:8080/api/v1/openapi.yaml
+```
+
+**Apifox 导入方式：**
+1. 打开 Apifox → 项目设置 → 导入数据
+2. 选择 "OpenAPI/Swagger" → "URL 导入"
+3. 输入 `http://<server-ip>:8080/api/v1/openapi.json`
+4. 点击导入即可获取所有接口定义
+
+### 证书检测配置
+
+在 `server.toml` 中配置证书检测：
+
+```toml
+[cert_check]
+enabled = true
+default_interval_secs = 86400   # 默认检测间隔（24小时）
+tick_secs = 60                  # 调度器 tick 间隔
+connect_timeout_secs = 10       # TLS 连接超时
+max_concurrent = 10              # 最大并发检测数
+```
+
+域名通过 REST API 动态管理，每个域名可单独配置 `check_interval_secs` 覆盖全局默认值。
 
 ## 交叉编译 / 多平台构建
 

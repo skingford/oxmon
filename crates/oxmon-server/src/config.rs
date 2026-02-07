@@ -15,6 +15,8 @@ pub struct ServerConfig {
     pub alert: AlertConfig,
     #[serde(default)]
     pub notification: NotificationConfig,
+    #[serde(default)]
+    pub cert_check: CertCheckConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -91,6 +93,52 @@ pub struct SilenceWindowConfig {
     pub start_time: String,
     pub end_time: String,
     pub recurrence: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CertCheckConfig {
+    #[serde(default = "default_cert_check_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_cert_check_default_interval_secs")]
+    pub default_interval_secs: u64,
+    #[serde(default = "default_cert_check_tick_secs")]
+    pub tick_secs: u64,
+    #[serde(default = "default_cert_check_connect_timeout_secs")]
+    pub connect_timeout_secs: u64,
+    #[serde(default = "default_cert_check_max_concurrent")]
+    pub max_concurrent: usize,
+}
+
+impl Default for CertCheckConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_cert_check_enabled(),
+            default_interval_secs: default_cert_check_default_interval_secs(),
+            tick_secs: default_cert_check_tick_secs(),
+            connect_timeout_secs: default_cert_check_connect_timeout_secs(),
+            max_concurrent: default_cert_check_max_concurrent(),
+        }
+    }
+}
+
+fn default_cert_check_enabled() -> bool {
+    true
+}
+
+fn default_cert_check_default_interval_secs() -> u64 {
+    86400
+}
+
+fn default_cert_check_tick_secs() -> u64 {
+    60
+}
+
+fn default_cert_check_connect_timeout_secs() -> u64 {
+    10
+}
+
+fn default_cert_check_max_concurrent() -> usize {
+    10
 }
 
 fn default_grpc_port() -> u16 {

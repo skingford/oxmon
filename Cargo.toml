@@ -28,6 +28,7 @@ prost-types = "0.13"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 toml = "0.8"
 
 # Logging
@@ -59,6 +60,15 @@ async-trait = "0.1"
 
 # Glob matching
 glob-match = "0.2"
+
+# TLS / Certificate parsing
+tokio-rustls = "0.26"
+rustls = "0.23"
+webpki-roots = "0.26"
+x509-parser = "0.16"
+
+# UUID
+uuid = { version = "1", features = ["v4"] }
 
 # Internal crates
 oxmon-common = { path = "crates/oxmon-common" }

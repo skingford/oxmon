@@ -2,6 +2,7 @@ use chrono::{DateTime, Duration, Utc};
 use oxmon_alert::engine::AlertEngine;
 use oxmon_common::types::AgentInfo;
 use oxmon_notify::manager::NotificationManager;
+use oxmon_storage::cert_store::CertStore;
 use oxmon_storage::engine::SqliteStorageEngine;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -53,5 +54,7 @@ pub struct AppState {
     pub alert_engine: Arc<Mutex<AlertEngine>>,
     pub notifier: Arc<NotificationManager>,
     pub agent_registry: Arc<Mutex<AgentRegistry>>,
+    pub cert_store: Arc<CertStore>,
+    pub connect_timeout_secs: u64,
     pub start_time: DateTime<Utc>,
 }

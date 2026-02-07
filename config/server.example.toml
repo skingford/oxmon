@@ -47,6 +47,42 @@ min_data_points = 10
 severity = "info"
 silence_secs = 3600
 
+# Certificate expiry warning (30 days)
+[[alert.rules]]
+name = "cert-expiry-warning"
+type = "threshold"
+metric = "certificate.days_until_expiry"
+agent_pattern = "cert-checker"
+operator = "less_than"
+value = 30.0
+duration_secs = 0
+severity = "warning"
+silence_secs = 86400
+
+# Certificate expiry critical (7 days)
+[[alert.rules]]
+name = "cert-expiry-critical"
+type = "threshold"
+metric = "certificate.days_until_expiry"
+agent_pattern = "cert-checker"
+operator = "less_than"
+value = 7.0
+duration_secs = 0
+severity = "critical"
+silence_secs = 86400
+
+# Certificate invalid
+[[alert.rules]]
+name = "cert-invalid"
+type = "threshold"
+metric = "certificate.is_valid"
+agent_pattern = "cert-checker"
+operator = "less_than"
+value = 1.0
+duration_secs = 0
+severity = "critical"
+silence_secs = 3600
+
 # Notification Channels
 
 [[notification.channels]]
@@ -75,3 +111,14 @@ url = "https://hooks.slack.com/services/xxx/yyy/zzz"
 
 # Aggregation window for batching similar alerts (seconds)
 aggregation_window_secs = 60
+
+# Certificate Check Configuration
+# Server periodically checks TLS certificates for monitored domains.
+# Domains are managed via REST API: POST/GET/PUT/DELETE /api/v1/certs/domains
+
+[cert_check]
+enabled = true
+default_interval_secs = 86400   # Default check interval (24 hours)
+tick_secs = 60                  # Scheduler tick interval
+connect_timeout_secs = 10       # TLS connection timeout per domain
+max_concurrent = 10              # Max concurrent TLS connections

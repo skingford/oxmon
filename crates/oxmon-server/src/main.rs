@@ -1,6 +1,8 @@
 mod api;
+mod cert;
 mod config;
 mod grpc;
+mod openapi;
 mod state;
 
 use anyhow::Result;
@@ -18,6 +20,7 @@ use oxmon_notify::channels::webhook::WebhookChannel;
 use oxmon_notify::manager::{NotificationManager, SilenceWindow};
 use oxmon_notify::routing::ChannelRoute;
 use oxmon_notify::NotificationChannel;
+use oxmon_storage::cert_store::CertStore;
 use oxmon_storage::engine::SqliteStorageEngine;
 use oxmon_storage::StorageEngine;
 use std::net::SocketAddr;
@@ -192,12 +195,15 @@ async fn main() -> Result<()> {
         config.notification.aggregation_window_secs,
     ));
     let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(30)));
+    let cert_store = Arc::new(CertStore::new(Path::new(&config.data_dir))?);
 
     let state = AppState {
         storage: storage.clone(),
         alert_engine,
         notifier,
         agent_registry,
+        cert_store: cert_store.clone(),
+        connect_timeout_secs: config.cert_check.connect_timeout_secs,
         start_time: Utc::now(),
     };
 
@@ -210,7 +216,9 @@ async fn main() -> Result<()> {
 
     // HTTP/REST server
     let http_addr: SocketAddr = format!("0.0.0.0:{}", config.http_port).parse()?;
-    let app = api::router(state.clone());
+    let app = api::router(state.clone())
+        .merge(cert::api::cert_routes().with_state(state.clone()))
+        .merge(openapi::openapi_routes().with_state(state.clone()));
     let http_listener = tokio::net::TcpListener::bind(http_addr).await?;
     let http_server = axum::serve(http_listener, app);
 
@@ -230,6 +238,24 @@ async fn main() -> Result<()> {
             }
         }
     });
+
+    // Cert check scheduler
+    let cert_check_handle = if config.cert_check.enabled {
+        let scheduler = cert::scheduler::CertCheckScheduler::new(
+            cert_store,
+            storage.clone(),
+            config.cert_check.default_interval_secs,
+            config.cert_check.tick_secs,
+            config.cert_check.connect_timeout_secs,
+            config.cert_check.max_concurrent,
+        );
+        Some(tokio::spawn(async move {
+            scheduler.run().await;
+        }))
+    } else {
+        tracing::info!("Certificate check scheduler disabled");
+        None
+    };
 
     tracing::info!(grpc = %grpc_addr, http = %http_addr, "Server started");
 
@@ -251,6 +277,9 @@ async fn main() -> Result<()> {
     }
 
     cleanup_handle.abort();
+    if let Some(h) = cert_check_handle {
+        h.abort();
+    }
     tracing::info!("Server stopped");
 
     Ok(())
