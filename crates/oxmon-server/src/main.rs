@@ -14,10 +14,8 @@ use oxmon_alert::rules::trend_prediction::TrendPredictionRule;
 use oxmon_alert::AlertRule;
 use oxmon_common::proto::metric_service_server::MetricServiceServer;
 use oxmon_common::types::Severity;
-use oxmon_notify::channels::email::EmailChannel;
-use oxmon_notify::channels::sms::SmsChannel;
-use oxmon_notify::channels::webhook::WebhookChannel;
 use oxmon_notify::manager::{NotificationManager, SilenceWindow};
+use oxmon_notify::plugin::ChannelRegistry;
 use oxmon_notify::routing::ChannelRoute;
 use oxmon_notify::NotificationChannel;
 use oxmon_storage::cert_store::CertStore;
@@ -94,56 +92,28 @@ fn build_alert_rules(cfg: &[config::AlertRuleConfig]) -> Vec<Box<dyn AlertRule>>
 fn build_notification_channels(
     cfg: &[config::ChannelConfig],
 ) -> (Vec<Box<dyn NotificationChannel>>, Vec<ChannelRoute>) {
+    let registry = ChannelRegistry::default();
     let mut channels: Vec<Box<dyn NotificationChannel>> = Vec::new();
     let mut routes: Vec<ChannelRoute> = Vec::new();
 
-    for (i, ch) in cfg.iter().enumerate() {
+    for ch in cfg {
         let severity: Severity = ch.min_severity.parse().unwrap_or(Severity::Info);
-        match ch.channel_type.as_str() {
-            "email" => {
-                if let (Some(host), Some(port), Some(from), Some(recipients)) =
-                    (&ch.smtp_host, ch.smtp_port, &ch.from, &ch.recipients)
-                {
-                    match EmailChannel::new(
-                        host,
-                        port,
-                        ch.smtp_username.as_deref(),
-                        ch.smtp_password.as_deref(),
-                        from,
-                        recipients.clone(),
-                    ) {
-                        Ok(email) => {
-                            channels.push(Box::new(email));
-                            routes.push(ChannelRoute {
-                                min_severity: severity,
-                                channel_index: i,
-                            });
-                        }
-                        Err(e) => tracing::error!(error = %e, "Failed to create email channel"),
-                    }
-                }
+        match registry.create_channel(&ch.channel_type, &ch.plugin_config) {
+            Ok(channel) => {
+                let idx = channels.len();
+                channels.push(channel);
+                routes.push(ChannelRoute {
+                    min_severity: severity,
+                    channel_index: idx,
+                });
             }
-            "webhook" => {
-                if let Some(url) = &ch.url {
-                    channels.push(Box::new(WebhookChannel::new(url, ch.body_template.clone())));
-                    routes.push(ChannelRoute {
-                        min_severity: severity,
-                        channel_index: i,
-                    });
-                }
+            Err(e) => {
+                tracing::error!(
+                    channel_type = %ch.channel_type,
+                    error = %e,
+                    "Failed to create notification channel"
+                );
             }
-            "sms" => {
-                if let (Some(gw), Some(key), Some(phones)) =
-                    (&ch.gateway_url, &ch.api_key, &ch.phone_numbers)
-                {
-                    channels.push(Box::new(SmsChannel::new(gw, key, phones.clone())));
-                    routes.push(ChannelRoute {
-                        min_severity: severity,
-                        channel_index: i,
-                    });
-                }
-            }
-            other => tracing::warn!(channel_type = other, "Unknown notification channel type"),
         }
     }
 

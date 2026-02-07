@@ -1,7 +1,10 @@
-use crate::{ChannelType, NotificationChannel};
+use crate::plugin::ChannelPlugin;
+use crate::NotificationChannel;
 use anyhow::Result;
 use async_trait::async_trait;
 use oxmon_common::types::AlertEvent;
+use serde::Deserialize;
+use serde_json::Value;
 use tracing;
 
 pub struct SmsChannel {
@@ -88,7 +91,40 @@ impl NotificationChannel for SmsChannel {
         Ok(())
     }
 
-    fn channel_type(&self) -> ChannelType {
-        ChannelType::Sms
+    fn channel_name(&self) -> &str {
+        "sms"
+    }
+}
+
+// Plugin
+
+#[derive(Deserialize)]
+struct SmsConfig {
+    gateway_url: String,
+    api_key: String,
+    phone_numbers: Vec<String>,
+}
+
+pub struct SmsPlugin;
+
+impl ChannelPlugin for SmsPlugin {
+    fn name(&self) -> &str {
+        "sms"
+    }
+
+    fn validate_config(&self, config: &Value) -> Result<()> {
+        serde_json::from_value::<SmsConfig>(config.clone())
+            .map_err(|e| anyhow::anyhow!("Invalid sms config: {e}"))?;
+        Ok(())
+    }
+
+    fn create_channel(&self, config: &Value) -> Result<Box<dyn NotificationChannel>> {
+        let cfg: SmsConfig = serde_json::from_value(config.clone())
+            .map_err(|e| anyhow::anyhow!("Invalid sms config: {e}"))?;
+        Ok(Box::new(SmsChannel::new(
+            &cfg.gateway_url,
+            &cfg.api_key,
+            cfg.phone_numbers,
+        )))
     }
 }

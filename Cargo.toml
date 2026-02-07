@@ -70,6 +70,14 @@ x509-parser = "0.16"
 # UUID
 uuid = { version = "1", features = ["v4"] }
 
+# Crypto (HMAC signing)
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+
+# URL encoding
+urlencoding = "2"
+
 # Internal crates
 oxmon-common = { path = "crates/oxmon-common" }
 oxmon-collector = { path = "crates/oxmon-collector" }

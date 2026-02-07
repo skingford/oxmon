@@ -1,10 +1,13 @@
-use crate::{ChannelType, NotificationChannel};
+use crate::plugin::ChannelPlugin;
+use crate::NotificationChannel;
 use anyhow::Result;
 use async_trait::async_trait;
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use oxmon_common::types::AlertEvent;
+use serde::Deserialize;
+use serde_json::Value;
 use tracing;
 
 pub struct EmailChannel {
@@ -97,7 +100,47 @@ impl NotificationChannel for EmailChannel {
         Ok(())
     }
 
-    fn channel_type(&self) -> ChannelType {
-        ChannelType::Email
+    fn channel_name(&self) -> &str {
+        "email"
+    }
+}
+
+// Plugin
+
+#[derive(Deserialize)]
+struct EmailConfig {
+    smtp_host: String,
+    smtp_port: u16,
+    smtp_username: Option<String>,
+    smtp_password: Option<String>,
+    from: String,
+    recipients: Vec<String>,
+}
+
+pub struct EmailPlugin;
+
+impl ChannelPlugin for EmailPlugin {
+    fn name(&self) -> &str {
+        "email"
+    }
+
+    fn validate_config(&self, config: &Value) -> Result<()> {
+        serde_json::from_value::<EmailConfig>(config.clone())
+            .map_err(|e| anyhow::anyhow!("Invalid email config: {e}"))?;
+        Ok(())
+    }
+
+    fn create_channel(&self, config: &Value) -> Result<Box<dyn NotificationChannel>> {
+        let cfg: EmailConfig = serde_json::from_value(config.clone())
+            .map_err(|e| anyhow::anyhow!("Invalid email config: {e}"))?;
+        let channel = EmailChannel::new(
+            &cfg.smtp_host,
+            cfg.smtp_port,
+            cfg.smtp_username.as_deref(),
+            cfg.smtp_password.as_deref(),
+            &cfg.from,
+            cfg.recipients,
+        )?;
+        Ok(Box::new(channel))
     }
 }

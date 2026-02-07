@@ -70,22 +70,9 @@ pub struct ChannelConfig {
     #[serde(default = "default_min_severity")]
     pub min_severity: String,
 
-    // Email fields
-    pub smtp_host: Option<String>,
-    pub smtp_port: Option<u16>,
-    pub smtp_username: Option<String>,
-    pub smtp_password: Option<String>,
-    pub from: Option<String>,
-    pub recipients: Option<Vec<String>>,
-
-    // Webhook fields
-    pub url: Option<String>,
-    pub body_template: Option<String>,
-
-    // SMS fields
-    pub gateway_url: Option<String>,
-    pub api_key: Option<String>,
-    pub phone_numbers: Option<Vec<String>>,
+    /// All remaining fields are passed to the channel plugin as-is.
+    #[serde(flatten)]
+    pub plugin_config: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]

@@ -16,9 +16,9 @@
 │ ┌──────────────┐ │                │      ▼           │                   │
 │ │ Local Buffer │ │                │ ┌────────┐       │  ┌────────────┐  │
 │ │ (VecDeque)   │ │                │ │ Alert  │───────┘  │ Notify     │  │
-│ └──────────────┘ │                │ │ Engine │─────────→│ Email/     │  │
-└──────────────────┘                │ └────────┘          │ Webhook/   │  │
-                                    │                     │ SMS        │  │
+│ └──────────────┘ │                │ │ Engine │─────────→│ Notify     │  │
+└──────────────────┘                │ └────────┘          │ Plugin     │  │
+                                    │                     │ Registry   │  │
                                     └─────────────────────┴────────────┴──┘
 ```
 
@@ -35,7 +35,7 @@
 | `oxmon-agent` | Agent 二进制 - 采集循环 + gRPC 客户端 |
 | `oxmon-storage` | 按时间分区的 SQLite 存储引擎 |
 | `oxmon-alert` | 告警规则引擎（阈值、变化率、趋势预测） |
-| `oxmon-notify` | 通知渠道（邮件、Webhook、短信） |
+| `oxmon-notify` | 通知渠道插件系统（邮件、Webhook、短信、钉钉、企业微信） |
 | `oxmon-server` | Server 二进制 - gRPC + REST API + 告警 + 通知 |
 
 ## 快速开始
@@ -187,8 +187,33 @@ type = "sms"
 min_severity = "critical"
 gateway_url = "https://sms-api.example.com/send"
 api_key = "your-api-key"
-recipients = ["+8613800138000"]
+phone_numbers = ["+8613800138000"]
 ```
+
+**钉钉机器人通知：**
+
+```toml
+[[notification.channels]]
+type = "dingtalk"
+min_severity = "warning"
+webhook_url = "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
+secret = "SEC_YOUR_SECRET"   # 可选：HMAC-SHA256 加签密钥
+```
+
+钉钉通知发送 Markdown 格式消息，包含告警级别、Agent、指标、值、阈值和时间信息。当配置了 `secret` 时，使用 HMAC-SHA256 对请求签名。
+
+**企业微信机器人通知：**
+
+```toml
+[[notification.channels]]
+type = "weixin"
+min_severity = "warning"
+webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
+```
+
+企业微信通知发送 Markdown 格式消息。
+
+> **插件系统**：通知渠道基于插件架构实现，每种渠道是一个独立的 `ChannelPlugin`。Server 通过 `ChannelRegistry` 动态查找并实例化渠道，配置文件中的 `type` 字段对应插件名称，其余字段直接传给插件解析。内置插件：`email`、`webhook`、`sms`、`dingtalk`、`weixin`。
 
 #### 静默窗口 (`[[notification.silence_windows]]`)
 
@@ -523,7 +548,7 @@ docker run -d \
 4. **评估** — Alert Engine 对每个数据点评估所有匹配的告警规则
 5. **去重** — 同一告警在静默期内不重复触发
 6. **聚合** — 聚合窗口内的同类告警合并为一条通知
-7. **通知** — 按严重级别路由到对应渠道（邮件/Webhook/短信），静默窗口内不发送
+7. **通知** — 按严重级别路由到对应渠道（邮件/Webhook/短信/钉钉/企业微信），静默窗口内不发送
 
 ## License
 

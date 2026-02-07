@@ -1,5 +1,6 @@
 pub mod channels;
 pub mod manager;
+pub mod plugin;
 pub mod routing;
 
 #[cfg(test)]
@@ -9,15 +10,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use oxmon_common::types::AlertEvent;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChannelType {
-    Email,
-    Webhook,
-    Sms,
-}
-
 #[async_trait]
 pub trait NotificationChannel: Send + Sync {
     async fn send(&self, alert: &AlertEvent) -> Result<()>;
-    fn channel_type(&self) -> ChannelType;
+    fn channel_name(&self) -> &str;
 }

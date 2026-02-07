@@ -1,7 +1,10 @@
-use crate::{ChannelType, NotificationChannel};
+use crate::plugin::ChannelPlugin;
+use crate::NotificationChannel;
 use anyhow::Result;
 use async_trait::async_trait;
 use oxmon_common::types::AlertEvent;
+use serde::Deserialize;
+use serde_json::Value;
 use tracing;
 
 pub struct WebhookChannel {
@@ -93,7 +96,35 @@ impl NotificationChannel for WebhookChannel {
         Ok(())
     }
 
-    fn channel_type(&self) -> ChannelType {
-        ChannelType::Webhook
+    fn channel_name(&self) -> &str {
+        "webhook"
+    }
+}
+
+// Plugin
+
+#[derive(Deserialize)]
+struct WebhookConfig {
+    url: String,
+    body_template: Option<String>,
+}
+
+pub struct WebhookPlugin;
+
+impl ChannelPlugin for WebhookPlugin {
+    fn name(&self) -> &str {
+        "webhook"
+    }
+
+    fn validate_config(&self, config: &Value) -> Result<()> {
+        serde_json::from_value::<WebhookConfig>(config.clone())
+            .map_err(|e| anyhow::anyhow!("Invalid webhook config: {e}"))?;
+        Ok(())
+    }
+
+    fn create_channel(&self, config: &Value) -> Result<Box<dyn NotificationChannel>> {
+        let cfg: WebhookConfig = serde_json::from_value(config.clone())
+            .map_err(|e| anyhow::anyhow!("Invalid webhook config: {e}"))?;
+        Ok(Box::new(WebhookChannel::new(&cfg.url, cfg.body_template)))
     }
 }

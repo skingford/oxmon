@@ -137,7 +137,7 @@ impl NotificationManager {
             if let Some(channel) = self.channels.get(route.channel_index) {
                 if let Err(e) = channel.send(event).await {
                     tracing::error!(
-                        channel = ?channel.channel_type(),
+                        channel = channel.channel_name(),
                         error = %e,
                         "Failed to send notification"
                     );
