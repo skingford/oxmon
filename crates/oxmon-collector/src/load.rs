@@ -7,6 +7,12 @@ use sysinfo::System;
 
 pub struct LoadCollector;
 
+impl Default for LoadCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LoadCollector {
     pub fn new() -> Self {
         Self

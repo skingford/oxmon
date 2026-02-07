@@ -40,7 +40,7 @@ fn build_alert_rules(cfg: &[config::AlertRuleConfig]) -> Vec<Box<dyn AlertRule>>
                 if let (Some(op_str), Some(value), Some(duration)) =
                     (&r.operator, r.value, r.duration_secs)
                 {
-                    if let Some(op) = CompareOp::from_str(op_str) {
+                    if let Ok(op) = op_str.parse::<CompareOp>() {
                         rules.push(Box::new(ThresholdRule {
                             id: r.name.clone(),
                             metric: r.metric.clone(),

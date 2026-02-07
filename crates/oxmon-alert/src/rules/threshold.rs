@@ -1,6 +1,7 @@
 use crate::AlertRule;
 use chrono::{DateTime, Duration, Utc};
 use oxmon_common::types::{AlertEvent, MetricDataPoint, Severity};
+use std::str::FromStr;
 
 #[derive(Debug, Clone)]
 pub enum CompareOp {
@@ -10,16 +11,21 @@ pub enum CompareOp {
     LessEqual,
 }
 
-impl CompareOp {
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for CompareOp {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "greater_than" | "gt" => Some(Self::GreaterThan),
-            "less_than" | "lt" => Some(Self::LessThan),
-            "greater_equal" | "gte" => Some(Self::GreaterEqual),
-            "less_equal" | "lte" => Some(Self::LessEqual),
-            _ => None,
+            "greater_than" | "gt" => Ok(Self::GreaterThan),
+            "less_than" | "lt" => Ok(Self::LessThan),
+            "greater_equal" | "gte" => Ok(Self::GreaterEqual),
+            "less_equal" | "lte" => Ok(Self::LessEqual),
+            _ => Err(format!("unknown compare operator: {s}")),
         }
     }
+}
+
+impl CompareOp {
 
     fn eval(&self, value: f64, threshold: f64) -> bool {
         match self {

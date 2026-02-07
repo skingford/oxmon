@@ -9,6 +9,12 @@ pub struct MemoryCollector {
     system: System,
 }
 
+impl Default for MemoryCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryCollector {
     pub fn new() -> Self {
         Self {

@@ -13,6 +13,12 @@ pub struct NetworkCollector {
     prev_packets_transmitted: HashMap<String, u64>,
 }
 
+impl Default for NetworkCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetworkCollector {
     pub fn new() -> Self {
         let networks = Networks::new_with_refreshed_list();
@@ -32,7 +38,7 @@ impl Collector for NetworkCollector {
     }
 
     fn collect(&mut self, agent_id: &str) -> Result<Vec<MetricDataPoint>> {
-        self.networks.refresh();
+        self.networks.refresh(false);
         let now = Utc::now();
         let mut points = Vec::new();
 

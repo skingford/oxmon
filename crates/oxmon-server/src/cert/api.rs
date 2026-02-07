@@ -46,7 +46,7 @@ async fn create_domain(
         .into_response();
     }
     if let Some(port) = req.port {
-        if port < 1 || port > 65535 {
+        if !(1..=65535).contains(&port) {
             return error_response(
                 StatusCode::BAD_REQUEST,
                 "invalid_port",
@@ -111,7 +111,7 @@ async fn create_domains_batch(
             .into_response();
         }
         if let Some(port) = d.port {
-            if port < 1 || port > 65535 {
+            if !(1..=65535).contains(&port) {
                 return error_response(
                     StatusCode::BAD_REQUEST,
                     "invalid_port",
@@ -194,7 +194,7 @@ async fn update_domain(
     Json(req): Json<UpdateDomainRequest>,
 ) -> impl IntoResponse {
     if let Some(port) = req.port {
-        if port < 1 || port > 65535 {
+        if !(1..=65535).contains(&port) {
             return error_response(
                 StatusCode::BAD_REQUEST,
                 "invalid_port",

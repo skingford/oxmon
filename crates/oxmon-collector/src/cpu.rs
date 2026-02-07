@@ -9,6 +9,12 @@ pub struct CpuCollector {
     system: System,
 }
 
+impl Default for CpuCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpuCollector {
     pub fn new() -> Self {
         let mut system = System::new();

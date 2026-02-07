@@ -9,6 +9,12 @@ pub struct DiskCollector {
     disks: Disks,
 }
 
+impl Default for DiskCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DiskCollector {
     pub fn new() -> Self {
         Self {
@@ -23,7 +29,7 @@ impl Collector for DiskCollector {
     }
 
     fn collect(&mut self, agent_id: &str) -> Result<Vec<MetricDataPoint>> {
-        self.disks.refresh();
+        self.disks.refresh(false);
         let now = Utc::now();
         let mut points = Vec::new();
 
