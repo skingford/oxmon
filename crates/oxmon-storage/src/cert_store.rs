@@ -69,10 +69,11 @@ impl CertStore {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now().timestamp();
         let port = req.port.unwrap_or(443);
+        let check_interval_secs = req.check_interval_secs.map(|v| v as i64);
         conn.execute(
             "INSERT INTO cert_domains (id, domain, port, enabled, check_interval_secs, note, created_at, updated_at)
              VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7)",
-            rusqlite::params![id, req.domain, port, req.check_interval_secs, req.note, now, now],
+            rusqlite::params![id, req.domain, port, check_interval_secs, req.note, now, now],
         )?;
         drop(conn);
         self.get_domain_by_id(&id)
@@ -92,11 +93,12 @@ impl CertStore {
             for req in reqs {
                 let id = uuid::Uuid::new_v4().to_string();
                 let port = req.port.unwrap_or(443);
+                let check_interval_secs = req.check_interval_secs.map(|v| v as i64);
                 stmt.execute(rusqlite::params![
                     id,
                     req.domain,
                     port,
-                    req.check_interval_secs,
+                    check_interval_secs,
                     req.note,
                     now,
                     now,
