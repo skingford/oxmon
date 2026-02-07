@@ -30,6 +30,7 @@ use tonic::transport::Server as TonicServer;
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::state::{AgentRegistry, AppState};
 
@@ -138,6 +139,10 @@ fn build_silence_windows(cfg: &[config::SilenceWindowConfig]) -> Vec<SilenceWind
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install default CryptoProvider");
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("oxmon=info".parse()?))
         .init();
@@ -216,11 +221,17 @@ async fn main() -> Result<()> {
     merged_spec.merge(cert_spec);
     let spec = Arc::new(merged_spec.clone());
 
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     let app = api_router
         .merge(cert_router)
         .with_state(state.clone())
         .merge(SwaggerUi::new("/docs").url("/v1/openapi.json", merged_spec))
-        .merge(openapi::yaml_route(spec));
+        .merge(openapi::yaml_route(spec))
+        .layer(cors);
     let http_listener = tokio::net::TcpListener::bind(http_addr).await?;
     let http_server = axum::serve(http_listener, app);
 

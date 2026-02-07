@@ -64,7 +64,7 @@ glob-match = "0.2"
 
 # TLS / Certificate parsing
 tokio-rustls = "0.26"
-rustls = "0.23"
+rustls = { version = "0.23", features = ["ring"] }
 webpki-roots = "1"
 x509-parser = "0.18"
 
@@ -78,6 +78,9 @@ base64 = "0.22"
 
 # URL encoding
 urlencoding = "2"
+
+# HTTP middleware
+tower-http = { version = "0.6", features = ["cors"] }
 
 # OpenAPI documentation
 utoipa = { version = "5", features = ["chrono"] }

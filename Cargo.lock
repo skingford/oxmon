@@ -1400,6 +1400,7 @@ dependencies = [
  "tokio-rustls",
  "toml",
  "tonic",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
  "utoipa",
