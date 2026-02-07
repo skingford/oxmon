@@ -2,22 +2,23 @@ use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::Json;
 use chrono::Utc;
 use oxmon_common::types::{
-    BatchCreateDomainsRequest, CreateDomainRequest, MetricBatch, MetricDataPoint,
-    UpdateDomainRequest,
+    BatchCreateDomainsRequest, CertCheckResult, CertDomain, CreateDomainRequest, MetricBatch,
+    MetricDataPoint, UpdateDomainRequest,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa::ToSchema;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use oxmon_storage::StorageEngine;
 
 use super::checker::check_certificate;
 
-#[derive(Serialize)]
-struct ApiError {
+#[derive(Serialize, ToSchema)]
+struct CertApiError {
     error: String,
     code: String,
 }
@@ -25,14 +26,25 @@ struct ApiError {
 fn error_response(status: StatusCode, code: &str, msg: &str) -> impl IntoResponse {
     (
         status,
-        Json(ApiError {
+        Json(CertApiError {
             error: msg.to_string(),
             code: code.to_string(),
         }),
     )
 }
 
-// POST /api/v1/certs/domains
+/// Add a domain for certificate monitoring
+#[utoipa::path(
+    post,
+    path = "/v1/certs/domains",
+    tag = "Certificates",
+    request_body = CreateDomainRequest,
+    responses(
+        (status = 201, description = "Domain created", body = CertDomain),
+        (status = 400, description = "Bad request", body = CertApiError),
+        (status = 409, description = "Domain already exists", body = CertApiError)
+    )
+)]
 async fn create_domain(
     State(state): State<AppState>,
     Json(req): Json<CreateDomainRequest>,
@@ -88,7 +100,18 @@ async fn create_domain(
     }
 }
 
-// POST /api/v1/certs/domains/batch
+/// Batch add domains for certificate monitoring
+#[utoipa::path(
+    post,
+    path = "/v1/certs/domains/batch",
+    tag = "Certificates",
+    request_body = BatchCreateDomainsRequest,
+    responses(
+        (status = 201, description = "Domains created", body = Vec<CertDomain>),
+        (status = 400, description = "Bad request", body = CertApiError),
+        (status = 409, description = "Duplicate domain", body = CertApiError)
+    )
+)]
 async fn create_domains_batch(
     State(state): State<AppState>,
     Json(req): Json<BatchCreateDomainsRequest>,
@@ -140,21 +163,40 @@ async fn create_domains_batch(
     }
 }
 
-// GET /api/v1/certs/domains
-#[derive(Deserialize)]
+// GET /v1/certs/domains
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ListDomainsParams {
+    /// Filter by enabled status
+    #[param(required = false)]
     enabled: Option<bool>,
+    /// Search by domain name
+    #[param(required = false)]
     search: Option<String>,
-    limit: Option<usize>,
-    offset: Option<usize>,
+    /// Results per page (default: 10)
+    #[param(required = false)]
+    limit: Option<u64>,
+    /// Pagination offset (default: 0)
+    #[param(required = false)]
+    offset: Option<u64>,
 }
 
+/// List monitored domains
+#[utoipa::path(
+    get,
+    path = "/v1/certs/domains",
+    tag = "Certificates",
+    params(ListDomainsParams),
+    responses(
+        (status = 200, description = "List of domains", body = Vec<CertDomain>)
+    )
+)]
 async fn list_domains(
     State(state): State<AppState>,
     Query(params): Query<ListDomainsParams>,
 ) -> impl IntoResponse {
-    let limit = params.limit.unwrap_or(100);
-    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.unwrap_or(10) as usize;
+    let offset = params.offset.unwrap_or(0) as usize;
     match state
         .cert_store
         .query_domains(params.enabled, params.search.as_deref(), limit, offset)
@@ -169,7 +211,19 @@ async fn list_domains(
     }
 }
 
-// GET /api/v1/certs/domains/:id
+/// Get a monitored domain by ID
+#[utoipa::path(
+    get,
+    path = "/v1/certs/domains/{id}",
+    tag = "Certificates",
+    params(
+        ("id" = String, Path, description = "Domain ID")
+    ),
+    responses(
+        (status = 200, description = "Domain details", body = CertDomain),
+        (status = 404, description = "Domain not found", body = CertApiError)
+    )
+)]
 async fn get_domain(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -187,7 +241,21 @@ async fn get_domain(
     }
 }
 
-// PUT /api/v1/certs/domains/:id
+/// Update a monitored domain
+#[utoipa::path(
+    put,
+    path = "/v1/certs/domains/{id}",
+    tag = "Certificates",
+    params(
+        ("id" = String, Path, description = "Domain ID")
+    ),
+    request_body = UpdateDomainRequest,
+    responses(
+        (status = 200, description = "Domain updated", body = CertDomain),
+        (status = 400, description = "Bad request", body = CertApiError),
+        (status = 404, description = "Domain not found", body = CertApiError)
+    )
+)]
 async fn update_domain(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -220,7 +288,19 @@ async fn update_domain(
     }
 }
 
-// DELETE /api/v1/certs/domains/:id
+/// Delete a monitored domain
+#[utoipa::path(
+    delete,
+    path = "/v1/certs/domains/{id}",
+    tag = "Certificates",
+    params(
+        ("id" = String, Path, description = "Domain ID")
+    ),
+    responses(
+        (status = 204, description = "Domain deleted"),
+        (status = 404, description = "Domain not found", body = CertApiError)
+    )
+)]
 async fn delete_domain(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -238,7 +318,15 @@ async fn delete_domain(
     }
 }
 
-// GET /api/v1/certs/status
+/// Get latest certificate check results for all domains
+#[utoipa::path(
+    get,
+    path = "/v1/certs/status",
+    tag = "Certificates",
+    responses(
+        (status = 200, description = "Latest check results", body = Vec<CertCheckResult>)
+    )
+)]
 async fn cert_status_all(State(state): State<AppState>) -> impl IntoResponse {
     match state.cert_store.query_latest_results() {
         Ok(results) => Json(results).into_response(),
@@ -251,12 +339,23 @@ async fn cert_status_all(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-// GET /api/v1/certs/status/:domain
+/// Get latest certificate check result for a specific domain
+#[utoipa::path(
+    get,
+    path = "/v1/certs/status/{domain}",
+    tag = "Certificates",
+    params(
+        ("domain" = String, Path, description = "Domain name")
+    ),
+    responses(
+        (status = 200, description = "Latest check result", body = CertCheckResult),
+        (status = 404, description = "Domain not found", body = CertApiError)
+    )
+)]
 async fn cert_status_by_domain(
     State(state): State<AppState>,
     Path(domain): Path<String>,
 ) -> impl IntoResponse {
-    // Check if domain is monitored
     match state.cert_store.get_domain_by_name(&domain) {
         Ok(None) => {
             return error_response(
@@ -294,7 +393,19 @@ async fn cert_status_by_domain(
     }
 }
 
-// POST /api/v1/certs/domains/:id/check
+/// Manually trigger certificate check for a domain
+#[utoipa::path(
+    post,
+    path = "/v1/certs/domains/{id}/check",
+    tag = "Certificates",
+    params(
+        ("id" = String, Path, description = "Domain ID")
+    ),
+    responses(
+        (status = 200, description = "Certificate check result", body = CertCheckResult),
+        (status = 404, description = "Domain not found", body = CertApiError)
+    )
+)]
 async fn check_single_domain(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -330,7 +441,15 @@ async fn check_single_domain(
     Json(result).into_response()
 }
 
-// POST /api/v1/certs/check
+/// Manually trigger certificate check for all enabled domains
+#[utoipa::path(
+    post,
+    path = "/v1/certs/check",
+    tag = "Certificates",
+    responses(
+        (status = 200, description = "Certificate check results for all domains", body = Vec<CertCheckResult>)
+    )
+)]
 async fn check_all_domains(State(state): State<AppState>) -> impl IntoResponse {
     let domains = match state.cert_store.query_domains(Some(true), None, 10000, 0) {
         Ok(d) => d,
@@ -412,16 +531,13 @@ fn store_check_result(
     Ok(())
 }
 
-pub fn cert_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/v1/certs/domains", post(create_domain).get(list_domains))
-        .route("/api/v1/certs/domains/batch", post(create_domains_batch))
-        .route(
-            "/api/v1/certs/domains/:id",
-            get(get_domain).put(update_domain).delete(delete_domain),
-        )
-        .route("/api/v1/certs/domains/:id/check", post(check_single_domain))
-        .route("/api/v1/certs/check", post(check_all_domains))
-        .route("/api/v1/certs/status", get(cert_status_all))
-        .route("/api/v1/certs/status/:domain", get(cert_status_by_domain))
+pub fn cert_routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(create_domain, list_domains))
+        .routes(routes!(create_domains_batch))
+        .routes(routes!(get_domain, update_domain, delete_domain))
+        .routes(routes!(check_single_domain))
+        .routes(routes!(check_all_domains))
+        .routes(routes!(cert_status_all))
+        .routes(routes!(cert_status_by_domain))
 }

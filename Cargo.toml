@@ -79,6 +79,11 @@ base64 = "0.22"
 # URL encoding
 urlencoding = "2"
 
+# OpenAPI documentation
+utoipa = { version = "5", features = ["chrono"] }
+utoipa-axum = "0.2"
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+
 # Internal crates
 oxmon-common = { path = "crates/oxmon-common" }
 oxmon-collector = { path = "crates/oxmon-collector" }

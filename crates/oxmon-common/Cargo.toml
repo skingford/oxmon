@@ -12,6 +12,7 @@ prost = { workspace = true }
 prost-types = { workspace = true }
 tonic = { workspace = true }
 tonic-prost = { workspace = true }
+utoipa = { workspace = true }
 
 [build-dependencies]
 tonic-prost-build = { workspace = true }

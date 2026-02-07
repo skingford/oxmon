@@ -2,14 +2,15 @@ use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::get;
-use axum::{Json, Router};
+use axum::Json;
 use chrono::{DateTime, Utc};
 use oxmon_storage::{MetricQuery, StorageEngine};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
-#[derive(Serialize)]
-struct ApiError {
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ApiError {
     error: String,
     code: String,
 }
@@ -24,8 +25,8 @@ fn error_response(status: StatusCode, code: &str, msg: &str) -> impl IntoRespons
     )
 }
 
-// GET /api/v1/health
-#[derive(Serialize)]
+// GET /v1/health
+#[derive(Serialize, ToSchema)]
 struct HealthResponse {
     version: String,
     uptime_secs: i64,
@@ -33,6 +34,15 @@ struct HealthResponse {
     storage_status: String,
 }
 
+/// Get server health status
+#[utoipa::path(
+    get,
+    path = "/v1/health",
+    tag = "Health",
+    responses(
+        (status = 200, description = "Server health info", body = HealthResponse)
+    )
+)]
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let uptime = (Utc::now() - state.start_time).num_seconds();
     let agent_count = state.agent_registry.lock().unwrap().list_agents().len();
@@ -44,14 +54,23 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     })
 }
 
-// GET /api/v1/agents
-#[derive(Serialize)]
+// GET /v1/agents
+#[derive(Serialize, ToSchema)]
 struct AgentResponse {
     agent_id: String,
     last_seen: DateTime<Utc>,
     status: String,
 }
 
+/// List all registered agents
+#[utoipa::path(
+    get,
+    path = "/v1/agents",
+    tag = "Agents",
+    responses(
+        (status = 200, description = "List of agents", body = Vec<AgentResponse>)
+    )
+)]
 async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
     let agents = state.agent_registry.lock().unwrap().list_agents();
     let resp: Vec<AgentResponse> = agents
@@ -69,14 +88,27 @@ async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
     Json(resp)
 }
 
-// GET /api/v1/agents/:id/latest
-#[derive(Serialize)]
+// GET /v1/agents/:id/latest
+#[derive(Serialize, ToSchema)]
 struct LatestMetric {
     metric_name: String,
     value: f64,
     timestamp: DateTime<Utc>,
 }
 
+/// Get latest metrics for an agent
+#[utoipa::path(
+    get,
+    path = "/v1/agents/{id}/latest",
+    tag = "Agents",
+    params(
+        ("id" = String, Path, description = "Agent ID")
+    ),
+    responses(
+        (status = 200, description = "Latest metric values", body = Vec<LatestMetric>),
+        (status = 404, description = "Agent not found", body = ApiError)
+    )
+)]
 async fn agent_latest(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
@@ -124,21 +156,41 @@ async fn agent_latest(
     Json(latest).into_response()
 }
 
-// GET /api/v1/metrics
-#[derive(Deserialize)]
+// GET /v1/metrics
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 struct MetricQueryParams {
+    /// Agent ID
+    #[param(required = false)]
     agent: Option<String>,
+    /// Metric name (e.g., cpu.usage, memory.used_percent)
+    #[param(required = false)]
     metric: Option<String>,
+    /// Start time (defaults to 1 hour before `to`)
+    #[param(required = false)]
     from: Option<DateTime<Utc>>,
+    /// End time (defaults to now)
+    #[param(required = false)]
     to: Option<DateTime<Utc>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct MetricPointResponse {
     timestamp: DateTime<Utc>,
     value: f64,
 }
 
+/// Query metric time series data
+#[utoipa::path(
+    get,
+    path = "/v1/metrics",
+    tag = "Metrics",
+    params(MetricQueryParams),
+    responses(
+        (status = 200, description = "Metric data points", body = Vec<MetricPointResponse>),
+        (status = 400, description = "Bad request", body = ApiError)
+    )
+)]
 async fn query_metrics(
     State(state): State<AppState>,
     Query(params): Query<MetricQueryParams>,
@@ -198,8 +250,8 @@ async fn query_metrics(
     }
 }
 
-// GET /api/v1/alerts/rules
-#[derive(Serialize)]
+// GET /v1/alerts/rules
+#[derive(Serialize, ToSchema)]
 struct AlertRuleResponse {
     id: String,
     metric: String,
@@ -207,6 +259,15 @@ struct AlertRuleResponse {
     severity: String,
 }
 
+/// List all alert rules
+#[utoipa::path(
+    get,
+    path = "/v1/alerts/rules",
+    tag = "Alerts",
+    responses(
+        (status = 200, description = "List of alert rules", body = Vec<AlertRuleResponse>)
+    )
+)]
 async fn list_alert_rules(State(state): State<AppState>) -> impl IntoResponse {
     let engine = state.alert_engine.lock().unwrap();
     let rules: Vec<AlertRuleResponse> = engine
@@ -222,18 +283,31 @@ async fn list_alert_rules(State(state): State<AppState>) -> impl IntoResponse {
     Json(rules)
 }
 
-// GET /api/v1/alerts/history
-#[derive(Deserialize)]
+// GET /v1/alerts/history
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 struct AlertHistoryParams {
+    /// Start time (defaults to 1 day ago)
+    #[param(required = false)]
     from: Option<DateTime<Utc>>,
+    /// End time (defaults to now)
+    #[param(required = false)]
     to: Option<DateTime<Utc>>,
+    /// Filter by severity
+    #[param(required = false)]
     severity: Option<String>,
+    /// Filter by agent ID
+    #[param(required = false)]
     agent: Option<String>,
-    limit: Option<usize>,
-    offset: Option<usize>,
+    /// Results per page (default: 10)
+    #[param(required = false)]
+    limit: Option<u64>,
+    /// Pagination offset (default: 0)
+    #[param(required = false)]
+    offset: Option<u64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct AlertEventResponse {
     id: String,
     rule_id: String,
@@ -247,6 +321,16 @@ struct AlertEventResponse {
     predicted_breach: Option<DateTime<Utc>>,
 }
 
+/// Query alert event history
+#[utoipa::path(
+    get,
+    path = "/v1/alerts/history",
+    tag = "Alerts",
+    params(AlertHistoryParams),
+    responses(
+        (status = 200, description = "Alert events", body = Vec<AlertEventResponse>)
+    )
+)]
 async fn alert_history(
     State(state): State<AppState>,
     Query(params): Query<AlertHistoryParams>,
@@ -255,8 +339,8 @@ async fn alert_history(
     let from = params
         .from
         .unwrap_or_else(|| to - chrono::Duration::days(1));
-    let limit = params.limit.unwrap_or(100);
-    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.unwrap_or(10) as usize;
+    let offset = params.offset.unwrap_or(0) as usize;
 
     match state.storage.query_alert_history(
         from,
@@ -293,13 +377,12 @@ async fn alert_history(
     }
 }
 
-pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/api/v1/health", get(health))
-        .route("/api/v1/agents", get(list_agents))
-        .route("/api/v1/agents/:id/latest", get(agent_latest))
-        .route("/api/v1/metrics", get(query_metrics))
-        .route("/api/v1/alerts/rules", get(list_alert_rules))
-        .route("/api/v1/alerts/history", get(alert_history))
-        .with_state(state)
+pub fn api_routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(health))
+        .routes(routes!(list_agents))
+        .routes(routes!(agent_latest))
+        .routes(routes!(query_metrics))
+        .routes(routes!(list_alert_rules))
+        .routes(routes!(alert_history))
 }

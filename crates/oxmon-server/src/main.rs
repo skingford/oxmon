@@ -28,6 +28,8 @@ use tokio::signal;
 use tokio::time::{interval, Duration};
 use tonic::transport::Server as TonicServer;
 use tracing_subscriber::EnvFilter;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use crate::state::{AgentRegistry, AppState};
 
@@ -186,9 +188,39 @@ async fn main() -> Result<()> {
 
     // HTTP/REST server
     let http_addr: SocketAddr = format!("0.0.0.0:{}", config.http_port).parse()?;
-    let app = api::router(state.clone())
-        .merge(cert::api::cert_routes().with_state(state.clone()))
-        .merge(openapi::openapi_routes().with_state(state.clone()));
+
+    #[derive(OpenApi)]
+    #[openapi(
+        info(
+            title = "oxmon API",
+            description = "oxmon server monitoring REST API",
+        ),
+        tags(
+            (name = "Health", description = "Server health"),
+            (name = "Agents", description = "Agent management"),
+            (name = "Metrics", description = "Metric queries"),
+            (name = "Alerts", description = "Alert rules and history"),
+            (name = "Certificates", description = "Certificate monitoring")
+        )
+    )]
+    struct ApiDoc;
+
+    let (api_router, api_spec) = api::api_routes()
+        .split_for_parts();
+
+    let (cert_router, cert_spec) = cert::api::cert_routes()
+        .split_for_parts();
+
+    let mut merged_spec = ApiDoc::openapi();
+    merged_spec.merge(api_spec);
+    merged_spec.merge(cert_spec);
+    let spec = Arc::new(merged_spec.clone());
+
+    let app = api_router
+        .merge(cert_router)
+        .with_state(state.clone())
+        .merge(SwaggerUi::new("/docs").url("/v1/openapi.json", merged_spec))
+        .merge(openapi::yaml_route(spec));
     let http_listener = tokio::net::TcpListener::bind(http_addr).await?;
     let http_server = axum::serve(http_listener, app);
 

@@ -1,0 +1,142 @@
+# oxmon Server Configuration
+
+# gRPC port for receiving metrics from agents
+grpc_port = 9090
+
+# HTTP port for REST API
+http_port = 8080
+
+# Directory for metric data storage (SQLite partition files)
+data_dir = "data"
+
+# How many days to retain metric data
+retention_days = 7
+
+# Alert Rules
+# Supported types: "threshold", "rate_of_change", "trend_prediction"
+
+[[alert.rules]]
+name = "high-cpu"
+type = "threshold"
+metric = "cpu.usage"
+agent_pattern = "*"
+operator = "greater_than"
+value = 90.0
+duration_secs = 300
+severity = "critical"
+silence_secs = 600
+
+[[alert.rules]]
+name = "memory-spike"
+type = "rate_of_change"
+metric = "memory.used_percent"
+agent_pattern = "*"
+rate_threshold = 20.0
+window_secs = 300
+severity = "warning"
+silence_secs = 600
+
+[[alert.rules]]
+name = "disk-full-prediction"
+type = "trend_prediction"
+metric = "disk.used_percent"
+agent_pattern = "*"
+predict_threshold = 95.0
+horizon_secs = 86400
+min_data_points = 10
+severity = "info"
+silence_secs = 3600
+
+# Certificate expiry warning (30 days)
+[[alert.rules]]
+name = "cert-expiry-warning"
+type = "threshold"
+metric = "certificate.days_until_expiry"
+agent_pattern = "cert-checker"
+operator = "less_than"
+value = 30.0
+duration_secs = 0
+severity = "warning"
+silence_secs = 86400
+
+# Certificate expiry critical (7 days)
+[[alert.rules]]
+name = "cert-expiry-critical"
+type = "threshold"
+metric = "certificate.days_until_expiry"
+agent_pattern = "cert-checker"
+operator = "less_than"
+value = 7.0
+duration_secs = 0
+severity = "critical"
+silence_secs = 86400
+
+# Certificate invalid
+[[alert.rules]]
+name = "cert-invalid"
+type = "threshold"
+metric = "certificate.is_valid"
+agent_pattern = "cert-checker"
+operator = "less_than"
+value = 1.0
+duration_secs = 0
+severity = "critical"
+silence_secs = 3600
+
+# Notification Channels
+
+[[notification.channels]]
+type = "email"
+min_severity = "warning"
+smtp_host = "smtp.example.com"
+smtp_port = 587
+smtp_username = "alerts@example.com"
+smtp_password = "your-password"
+from = "alerts@example.com"
+recipients = ["admin@example.com"]
+
+[[notification.channels]]
+type = "webhook"
+min_severity = "info"
+url = "https://hooks.slack.com/services/xxx/yyy/zzz"
+# Optional: custom body template (uses {{agent_id}}, {{metric}}, {{value}}, {{severity}}, {{message}})
+# body_template = '{"text": "[{{severity}}] {{agent_id}}: {{message}}"}'
+
+# [[notification.channels]]
+# type = "sms"
+# min_severity = "critical"
+# gateway_url = "https://sms-gateway.example.com/send"
+# api_key = "your-sms-api-key"
+# phone_numbers = ["+8613800138000"]
+
+# [[notification.channels]]
+# type = "dingtalk"
+# min_severity = "warning"
+# webhook_url = "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
+# secret = "SEC_YOUR_SECRET"  # Optional: HMAC-SHA256 signing secret
+
+# [[notification.channels]]
+# type = "weixin"
+# min_severity = "warning"
+# webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
+
+# Silence Windows (suppress notifications during maintenance)
+
+# [[notification.silence_windows]]
+# start_time = "02:00"
+# end_time = "04:00"
+# recurrence = "daily"
+
+# Aggregation window for batching similar alerts (seconds)
+aggregation_window_secs = 60
+
+# Certificate Check Configuration
+# Server periodically checks TLS certificates for monitored domains.
+# Domains are managed via REST API: POST/GET/PUT/DELETE /api/v1/certs/domains
+
+[cert_check]
+enabled = true
+default_interval_secs = 86400   # Default check interval (24 hours)
+tick_secs = 60                  # Scheduler tick interval
+connect_timeout_secs = 10       # TLS connection timeout per domain
+max_concurrent = 10              # Max concurrent TLS connections

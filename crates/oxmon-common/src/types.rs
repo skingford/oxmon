@@ -73,7 +73,7 @@ pub struct AgentInfo {
 
 // Certificate domain monitoring types
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CertDomain {
     pub id: String,
     pub domain: String,
@@ -86,7 +86,7 @@ pub struct CertDomain {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CertCheckResult {
     pub id: String,
     pub domain_id: String,
@@ -103,7 +103,7 @@ pub struct CertCheckResult {
     pub checked_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateDomainRequest {
     pub domain: String,
     pub port: Option<i32>,
@@ -111,7 +111,7 @@ pub struct CreateDomainRequest {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdateDomainRequest {
     pub port: Option<i32>,
     pub enabled: Option<bool>,
@@ -119,7 +119,7 @@ pub struct UpdateDomainRequest {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BatchCreateDomainsRequest {
     pub domains: Vec<CreateDomainRequest>,
 }

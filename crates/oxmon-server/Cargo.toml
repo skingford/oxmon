@@ -29,3 +29,6 @@ rustls = { workspace = true }
 webpki-roots = { workspace = true }
 x509-parser = { workspace = true }
 uuid = { workspace = true }
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
