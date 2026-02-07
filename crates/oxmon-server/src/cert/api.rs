@@ -417,11 +417,11 @@ pub fn cert_routes() -> Router<AppState> {
         .route("/api/v1/certs/domains", post(create_domain).get(list_domains))
         .route("/api/v1/certs/domains/batch", post(create_domains_batch))
         .route(
-            "/api/v1/certs/domains/{id}",
+            "/api/v1/certs/domains/:id",
             get(get_domain).put(update_domain).delete(delete_domain),
         )
-        .route("/api/v1/certs/domains/{id}/check", post(check_single_domain))
+        .route("/api/v1/certs/domains/:id/check", post(check_single_domain))
         .route("/api/v1/certs/check", post(check_all_domains))
         .route("/api/v1/certs/status", get(cert_status_all))
-        .route("/api/v1/certs/status/{domain}", get(cert_status_by_domain))
+        .route("/api/v1/certs/status/:domain", get(cert_status_by_domain))
 }

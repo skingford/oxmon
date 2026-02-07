@@ -48,3 +48,4 @@
 - [x] 7.4 Unit test: `WeixinPlugin` validates config (accepts valid, rejects missing webhook_url)
 - [x] 7.5 Unit test: DingTalk HMAC-SHA256 signing produces correct URL format
 - [x] 7.6 Unit test: existing `EmailPlugin`/`WebhookPlugin`/`SmsPlugin` validate config correctly
+- [x] 7.7 E2E verification: server starts with all 5 plugins configured (email/webhook/sms/dingtalk/weixin), no "Failed to create notification channel" errors in logs

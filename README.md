@@ -1,8 +1,10 @@
+English | [中文](README.zh-CN.md)
+
 # oxmon
 
-轻量级服务器监控系统，使用 Rust 构建。采集系统指标（CPU、内存、磁盘、网络、负载），存储时序数据，评估告警规则，并通过多种渠道发送通知。
+Lightweight server monitoring system built with Rust. Collects system metrics (CPU, memory, disk, network, load), stores time-series data, evaluates alert rules, and sends notifications through multiple channels.
 
-## 架构
+## Architecture
 
 ```
 ┌──────────────────┐      gRPC      ┌──────────────────────────────────────┐
@@ -22,69 +24,69 @@
                                     └─────────────────────┴────────────┴──┘
 ```
 
-**Agent** 部署在被监控服务器上，每隔 N 秒采集指标，通过 gRPC 上报。连接失败时在本地缓冲。
+**Agent** is deployed on monitored servers. It collects metrics every N seconds and reports them via gRPC. When the connection fails, data is buffered locally.
 
-**Server** 接收指标，存储到按时间分区的 SQLite，评估告警规则（阈值/变化率/趋势预测），并发送通知。
+**Server** receives metrics, stores them in time-partitioned SQLite, evaluates alert rules (threshold / rate of change / trend prediction), and sends notifications.
 
-## Crate 结构
+## Crate Structure
 
-| Crate | 说明 |
-|-------|------|
-| `oxmon-common` | 共享类型、protobuf 定义 |
-| `oxmon-collector` | 系统指标采集器（CPU、内存、磁盘、网络、负载） |
-| `oxmon-agent` | Agent 二进制 - 采集循环 + gRPC 客户端 |
-| `oxmon-storage` | 按时间分区的 SQLite 存储引擎 |
-| `oxmon-alert` | 告警规则引擎（阈值、变化率、趋势预测） |
-| `oxmon-notify` | 通知渠道插件系统（邮件、Webhook、短信、钉钉、企业微信） |
-| `oxmon-server` | Server 二进制 - gRPC + REST API + 告警 + 通知 |
+| Crate | Description |
+|-------|-------------|
+| `oxmon-common` | Shared types, protobuf definitions |
+| `oxmon-collector` | System metric collectors (CPU, memory, disk, network, load) |
+| `oxmon-agent` | Agent binary - collection loop + gRPC client |
+| `oxmon-storage` | Time-partitioned SQLite storage engine |
+| `oxmon-alert` | Alert rule engine (threshold, rate of change, trend prediction) |
+| `oxmon-notify` | Notification channel plugin system (email, webhook, SMS, DingTalk, WeChat Work) |
+| `oxmon-server` | Server binary - gRPC + REST API + alerting + notifications |
 
-## 快速开始
+## Quick Start
 
-### 1. 构建
+### 1. Build
 
 ```bash
 cargo build --release
 ```
 
-生成两个二进制文件：`target/release/oxmon-agent` 和 `target/release/oxmon-server`。
+This produces two binaries: `target/release/oxmon-agent` and `target/release/oxmon-server`.
 
-### 2. 配置
+### 2. Configure
 
 ```bash
 cp config/server.example.toml config/server.toml
 cp config/agent.example.toml config/agent.toml
 ```
 
-根据实际环境编辑配置文件，详见下方 [配置说明](#配置说明)。
+Edit the configuration files for your environment. See [Configuration](#configuration) below.
 
-### 3. 启动服务端
+### 3. Start the Server
 
 ```bash
 ./target/release/oxmon-server config/server.toml
 ```
 
-Server 启动后监听 gRPC 端口 9090 和 REST API 端口 8080（可配置）。
+The server listens on gRPC port 9090 and REST API port 8080 (configurable).
 
-### 4. 启动采集端
+### 4. Start the Agent
 
 ```bash
 ./target/release/oxmon-agent config/agent.toml
 ```
 
-Agent 每 10 秒（可配置）采集一次系统指标，通过 gRPC 上报给 Server。
+The agent collects system metrics every 10 seconds (configurable) and reports them to the server via gRPC.
 
-## 配置说明
+## Configuration
 
-### Agent 配置 (`agent.toml`)
+### Agent Configuration (`agent.toml`)
 
-| 字段 | 说明 | 默认值 |
-|------|------|--------|
-| `agent_id` | 该节点唯一标识，用于区分不同服务器 | `"web-server-01"` |
-| `server_endpoint` | Server 的 gRPC 地址 | `"http://127.0.0.1:9090"` |
-| `collection_interval_secs` | 指标采集间隔（秒） | `10` |
-| `buffer_max_size` | Server 不可达时本地缓冲的最大批次数 | `1000` |
+| Field | Description | Default |
+|-------|-------------|---------|
+| `agent_id` | Unique identifier for this node | `"web-server-01"` |
+| `server_endpoint` | Server gRPC address | `"http://127.0.0.1:9090"` |
+| `collection_interval_secs` | Metric collection interval (seconds) | `10` |
+| `buffer_max_size` | Max buffered batches when server is unreachable | `1000` |
 
-示例：
+Example:
 
 ```toml
 agent_id = "web-server-01"
@@ -93,37 +95,37 @@ collection_interval_secs = 10
 buffer_max_size = 1000
 ```
 
-### Server 配置 (`server.toml`)
+### Server Configuration (`server.toml`)
 
-#### 基础配置
+#### Basic Settings
 
-| 字段 | 说明 | 默认值 |
-|------|------|--------|
-| `grpc_port` | gRPC 端口，接收 Agent 上报 | `9090` |
-| `http_port` | REST API 端口 | `8080` |
-| `data_dir` | SQLite 数据文件存储目录 | `"data"` |
-| `retention_days` | 数据保留天数，超期自动清理 | `7` |
+| Field | Description | Default |
+|-------|-------------|---------|
+| `grpc_port` | gRPC port for receiving agent reports | `9090` |
+| `http_port` | REST API port | `8080` |
+| `data_dir` | SQLite data file storage directory | `"data"` |
+| `retention_days` | Data retention in days, auto-cleanup when expired | `7` |
 
-#### 告警规则 (`[[alert.rules]]`)
+#### Alert Rules (`[[alert.rules]]`)
 
-支持三种规则类型：
+Three rule types are supported:
 
-**阈值告警 (threshold)** — 指标持续超过阈值时触发：
+**Threshold Alert** — triggers when a metric exceeds a threshold for a sustained duration:
 
 ```toml
 [[alert.rules]]
 name = "high-cpu"
 type = "threshold"
-metric = "cpu.usage"          # 监控的指标名
-agent_pattern = "*"           # Agent 匹配模式，支持 glob（如 "web-*"）
-operator = "greater_than"     # 比较运算符：greater_than / less_than
-value = 90.0                  # 阈值
-duration_secs = 300           # 持续时间（秒），超过阈值持续这么久才触发
-severity = "critical"         # 严重级别：info / warning / critical
-silence_secs = 600            # 静默期（秒），同一告警在此期间不重复触发
+metric = "cpu.usage"          # Metric name to monitor
+agent_pattern = "*"           # Agent match pattern, supports glob (e.g., "web-*")
+operator = "greater_than"     # Comparison operator: greater_than / less_than
+value = 90.0                  # Threshold value
+duration_secs = 300           # Duration (seconds) the metric must exceed threshold to trigger
+severity = "critical"         # Severity level: info / warning / critical
+silence_secs = 600            # Silence period (seconds), same alert won't re-trigger within this window
 ```
 
-**变化率告警 (rate_of_change)** — 指标在时间窗口内变化超过百分比时触发：
+**Rate of Change Alert** — triggers when a metric changes beyond a percentage within a time window:
 
 ```toml
 [[alert.rules]]
@@ -131,13 +133,13 @@ name = "memory-spike"
 type = "rate_of_change"
 metric = "memory.used_percent"
 agent_pattern = "*"
-rate_threshold = 20.0         # 变化率阈值（百分比）
-window_secs = 300             # 计算窗口（秒）
+rate_threshold = 20.0         # Rate threshold (percentage)
+window_secs = 300             # Calculation window (seconds)
 severity = "warning"
 silence_secs = 600
 ```
 
-**趋势预测告警 (trend_prediction)** — 通过线性回归预测指标何时突破阈值：
+**Trend Prediction Alert** — uses linear regression to predict when a metric will breach a threshold:
 
 ```toml
 [[alert.rules]]
@@ -145,21 +147,21 @@ name = "disk-full-prediction"
 type = "trend_prediction"
 metric = "disk.used_percent"
 agent_pattern = "*"
-predict_threshold = 95.0      # 预测突破的目标阈值
-horizon_secs = 86400          # 预测时间范围（秒），如 86400 = 24 小时
-min_data_points = 10          # 最少数据点数，不够则不预测
+predict_threshold = 95.0      # Target threshold for prediction
+horizon_secs = 86400          # Prediction horizon (seconds), e.g., 86400 = 24 hours
+min_data_points = 10          # Minimum data points required for prediction
 severity = "info"
 silence_secs = 3600
 ```
 
-#### 通知渠道 (`[[notification.channels]]`)
+#### Notification Channels (`[[notification.channels]]`)
 
-**邮件通知：**
+**Email:**
 
 ```toml
 [[notification.channels]]
 type = "email"
-min_severity = "warning"          # 最低触发级别
+min_severity = "warning"          # Minimum severity to trigger
 smtp_host = "smtp.example.com"
 smtp_port = 587
 smtp_username = "alerts@example.com"
@@ -168,18 +170,18 @@ from = "alerts@example.com"
 recipients = ["admin@example.com", "ops@example.com"]
 ```
 
-**Webhook 通知（适用于 Slack / 钉钉 / 飞书等）：**
+**Webhook (for Slack / DingTalk / Feishu, etc.):**
 
 ```toml
 [[notification.channels]]
 type = "webhook"
 min_severity = "info"
 url = "https://hooks.slack.com/services/xxx/yyy/zzz"
-# 可选：自定义 body 模板，支持 {{agent_id}} {{metric}} {{value}} {{severity}} {{message}} 变量
+# Optional: custom body template with {{agent_id}} {{metric}} {{value}} {{severity}} {{message}} variables
 # body_template = '{"text": "[{{severity}}] {{agent_id}}: {{message}}"}'
 ```
 
-**短信通知：**
+**SMS:**
 
 ```toml
 [[notification.channels]]
@@ -190,19 +192,19 @@ api_key = "your-api-key"
 phone_numbers = ["+8613800138000"]
 ```
 
-**钉钉机器人通知：**
+**DingTalk Robot:**
 
 ```toml
 [[notification.channels]]
 type = "dingtalk"
 min_severity = "warning"
 webhook_url = "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
-secret = "SEC_YOUR_SECRET"   # 可选：HMAC-SHA256 加签密钥
+secret = "SEC_YOUR_SECRET"   # Optional: HMAC-SHA256 signing secret
 ```
 
-钉钉通知发送 Markdown 格式消息，包含告警级别、Agent、指标、值、阈值和时间信息。当配置了 `secret` 时，使用 HMAC-SHA256 对请求签名。
+DingTalk notifications send Markdown-formatted messages containing alert severity, agent, metric, value, threshold, and timestamp. When `secret` is configured, requests are signed with HMAC-SHA256.
 
-**企业微信机器人通知：**
+**WeChat Work Robot:**
 
 ```toml
 [[notification.channels]]
@@ -211,13 +213,13 @@ min_severity = "warning"
 webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
 ```
 
-企业微信通知发送 Markdown 格式消息。
+WeChat Work notifications send Markdown-formatted messages.
 
-> **插件系统**：通知渠道基于插件架构实现，每种渠道是一个独立的 `ChannelPlugin`。Server 通过 `ChannelRegistry` 动态查找并实例化渠道，配置文件中的 `type` 字段对应插件名称，其余字段直接传给插件解析。内置插件：`email`、`webhook`、`sms`、`dingtalk`、`weixin`。
+> **Plugin System**: Notification channels are implemented as a plugin architecture. Each channel is an independent `ChannelPlugin`. The server uses `ChannelRegistry` to dynamically look up and instantiate channels — the `type` field in the config maps to the plugin name, and remaining fields are passed directly to the plugin for parsing. Built-in plugins: `email`, `webhook`, `sms`, `dingtalk`, `weixin`.
 
-#### 静默窗口 (`[[notification.silence_windows]]`)
+#### Silence Windows (`[[notification.silence_windows]]`)
 
-在维护时段抑制通知：
+Suppress notifications during maintenance windows:
 
 ```toml
 [[notification.silence_windows]]
@@ -226,44 +228,44 @@ end_time = "04:00"
 recurrence = "daily"
 ```
 
-#### 告警聚合
+#### Alert Aggregation
 
 ```toml
-aggregation_window_secs = 60   # 相似告警的聚合窗口（秒），窗口内的同类告警合并为一条通知
+aggregation_window_secs = 60   # Aggregation window (seconds) for batching similar alerts into one notification
 ```
 
-## 采集指标列表
+## Collected Metrics
 
-| 指标名 | 说明 |
-|--------|------|
-| `cpu.usage` | CPU 总体使用率 (%) |
-| `cpu.core_usage` | 每核 CPU 使用率 (%) |
-| `memory.total` | 内存总量 (bytes) |
-| `memory.used` | 已用内存 (bytes) |
-| `memory.available` | 可用内存 (bytes) |
-| `memory.used_percent` | 内存使用率 (%) |
-| `memory.swap_total` | Swap 总量 (bytes) |
-| `memory.swap_used` | Swap 已用 (bytes) |
-| `disk.total` | 磁盘总容量 (bytes)，按挂载点 |
-| `disk.used` | 磁盘已用 (bytes)，按挂载点 |
-| `disk.available` | 磁盘可用 (bytes)，按挂载点 |
-| `disk.used_percent` | 磁盘使用率 (%)，按挂载点 |
-| `network.bytes_sent` | 网络发送字节数/秒，按网卡 |
-| `network.bytes_recv` | 网络接收字节数/秒，按网卡 |
-| `network.packets_sent` | 网络发送包数/秒，按网卡 |
-| `network.packets_recv` | 网络接收包数/秒，按网卡 |
-| `load.load_1` | 1 分钟负载 |
-| `load.load_5` | 5 分钟负载 |
-| `load.load_15` | 15 分钟负载 |
-| `load.uptime` | 系统运行时间 (秒) |
-| `certificate.days_until_expiry` | 证书剩余有效天数，按域名（Server 端采集） |
-| `certificate.is_valid` | 证书是否有效 (1=有效, 0=无效/过期/错误)，按域名 |
+| Metric | Description |
+|--------|-------------|
+| `cpu.usage` | Overall CPU usage (%) |
+| `cpu.core_usage` | Per-core CPU usage (%) |
+| `memory.total` | Total memory (bytes) |
+| `memory.used` | Used memory (bytes) |
+| `memory.available` | Available memory (bytes) |
+| `memory.used_percent` | Memory usage (%) |
+| `memory.swap_total` | Swap total (bytes) |
+| `memory.swap_used` | Swap used (bytes) |
+| `disk.total` | Disk total capacity (bytes), per mount point |
+| `disk.used` | Disk used (bytes), per mount point |
+| `disk.available` | Disk available (bytes), per mount point |
+| `disk.used_percent` | Disk usage (%), per mount point |
+| `network.bytes_sent` | Network bytes sent/sec, per interface |
+| `network.bytes_recv` | Network bytes received/sec, per interface |
+| `network.packets_sent` | Network packets sent/sec, per interface |
+| `network.packets_recv` | Network packets received/sec, per interface |
+| `load.load_1` | 1-minute load average |
+| `load.load_5` | 5-minute load average |
+| `load.load_15` | 15-minute load average |
+| `load.uptime` | System uptime (seconds) |
+| `certificate.days_until_expiry` | Days until certificate expiry, per domain (collected by server) |
+| `certificate.is_valid` | Whether certificate is valid (1=valid, 0=invalid/expired/error), per domain |
 
 ## REST API
 
 ### `GET /api/v1/health`
 
-健康检查，返回服务端状态。
+Health check, returns server status.
 
 ```bash
 curl http://localhost:8080/api/v1/health
@@ -271,13 +273,13 @@ curl http://localhost:8080/api/v1/health
 
 ### `GET /api/v1/agents`
 
-列出所有已注册的 Agent。
+List all registered agents.
 
 ```bash
 curl http://localhost:8080/api/v1/agents
 ```
 
-响应示例：
+Response example:
 
 ```json
 [
@@ -291,7 +293,7 @@ curl http://localhost:8080/api/v1/agents
 
 ### `GET /api/v1/agents/:id/latest`
 
-获取指定 Agent 的最新指标值。
+Get latest metric values for a specific agent.
 
 ```bash
 curl http://localhost:8080/api/v1/agents/web-server-01/latest
@@ -299,14 +301,14 @@ curl http://localhost:8080/api/v1/agents/web-server-01/latest
 
 ### `GET /api/v1/metrics`
 
-查询时序数据。
+Query time-series data.
 
-| 参数 | 说明 | 必填 |
-|------|------|------|
-| `agent` | Agent ID | 是 |
-| `metric` | 指标名 | 是 |
-| `from` | 起始时间 (ISO 8601) | 是 |
-| `to` | 结束时间 (ISO 8601) | 是 |
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `agent` | Agent ID | Yes |
+| `metric` | Metric name | Yes |
+| `from` | Start time (ISO 8601) | Yes |
+| `to` | End time (ISO 8601) | Yes |
 
 ```bash
 curl "http://localhost:8080/api/v1/metrics?agent=web-server-01&metric=cpu.usage&from=2026-02-06T00:00:00Z&to=2026-02-06T23:59:59Z"
@@ -314,7 +316,7 @@ curl "http://localhost:8080/api/v1/metrics?agent=web-server-01&metric=cpu.usage&
 
 ### `GET /api/v1/alerts/rules`
 
-列出所有已配置的告警规则。
+List all configured alert rules.
 
 ```bash
 curl http://localhost:8080/api/v1/alerts/rules
@@ -322,36 +324,36 @@ curl http://localhost:8080/api/v1/alerts/rules
 
 ### `GET /api/v1/alerts/history`
 
-查询告警历史。
+Query alert history.
 
-| 参数 | 说明 | 必填 |
-|------|------|------|
-| `severity` | 按严重级别过滤 (info/warning/critical) | 否 |
-| `agent` | 按 Agent ID 过滤 | 否 |
-| `from` | 起始时间 | 否 |
-| `to` | 结束时间 | 否 |
-| `limit` | 返回条数限制 | 否 |
-| `offset` | 分页偏移 | 否 |
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `severity` | Filter by severity (info/warning/critical) | No |
+| `agent` | Filter by agent ID | No |
+| `from` | Start time | No |
+| `to` | End time | No |
+| `limit` | Result count limit | No |
+| `offset` | Pagination offset | No |
 
 ```bash
 curl "http://localhost:8080/api/v1/alerts/history?severity=critical&limit=50"
 ```
 
-### 证书域名管理
+### Certificate Domain Management
 
 #### `POST /api/v1/certs/domains`
 
-添加监控域名。
+Add a domain for monitoring.
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/certs/domains \
   -H "Content-Type: application/json" \
-  -d '{"domain": "example.com", "port": 443, "note": "主站"}'
+  -d '{"domain": "example.com", "port": 443, "note": "Main site"}'
 ```
 
 #### `POST /api/v1/certs/domains/batch`
 
-批量添加域名。
+Batch add domains.
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/certs/domains/batch \
@@ -361,7 +363,7 @@ curl -X POST http://localhost:8080/api/v1/certs/domains/batch \
 
 #### `GET /api/v1/certs/domains`
 
-查询域名列表（支持 `?enabled=true&search=example&limit=20&offset=0`）。
+List domains (supports `?enabled=true&search=example&limit=20&offset=0`).
 
 ```bash
 curl http://localhost:8080/api/v1/certs/domains
@@ -369,7 +371,7 @@ curl http://localhost:8080/api/v1/certs/domains
 
 #### `PUT /api/v1/certs/domains/:id`
 
-更新域名配置（端口、启用状态、检测间隔）。
+Update domain configuration (port, enabled status, check interval).
 
 ```bash
 curl -X PUT http://localhost:8080/api/v1/certs/domains/<id> \
@@ -379,7 +381,7 @@ curl -X PUT http://localhost:8080/api/v1/certs/domains/<id> \
 
 #### `DELETE /api/v1/certs/domains/:id`
 
-删除域名及其检测记录。
+Delete a domain and its check results.
 
 ```bash
 curl -X DELETE http://localhost:8080/api/v1/certs/domains/<id>
@@ -387,7 +389,7 @@ curl -X DELETE http://localhost:8080/api/v1/certs/domains/<id>
 
 #### `GET /api/v1/certs/status`
 
-查询所有域名最新证书检测结果。
+Get the latest certificate check results for all domains.
 
 ```bash
 curl http://localhost:8080/api/v1/certs/status
@@ -395,7 +397,7 @@ curl http://localhost:8080/api/v1/certs/status
 
 #### `GET /api/v1/certs/status/:domain`
 
-查询指定域名的最新证书检测结果。
+Get the latest certificate check result for a specific domain.
 
 ```bash
 curl http://localhost:8080/api/v1/certs/status/example.com
@@ -403,7 +405,7 @@ curl http://localhost:8080/api/v1/certs/status/example.com
 
 #### `POST /api/v1/certs/domains/:id/check`
 
-手动触发指定域名的证书检测。
+Manually trigger a certificate check for a specific domain.
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/certs/domains/<id>/check
@@ -411,113 +413,113 @@ curl -X POST http://localhost:8080/api/v1/certs/domains/<id>/check
 
 #### `POST /api/v1/certs/check`
 
-手动触发所有已启用域名的证书检测。
+Manually trigger certificate checks for all enabled domains.
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/certs/check
 ```
 
-### API 文档（OpenAPI）
+### API Documentation (OpenAPI)
 
-Server 提供 OpenAPI 3.0.3 格式的接口文档，可直接导入 Apifox、Postman、Swagger UI 等工具。
+The server provides OpenAPI 3.0.3 API documentation, which can be imported directly into Apifox, Postman, Swagger UI, and similar tools.
 
-| 端点 | 格式 |
-|------|------|
-| `GET /api/v1/openapi.json` | JSON 格式 |
-| `GET /api/v1/openapi.yaml` | YAML 格式 |
+| Endpoint | Format |
+|----------|--------|
+| `GET /api/v1/openapi.json` | JSON format |
+| `GET /api/v1/openapi.yaml` | YAML format |
 
 ```bash
-# 获取 JSON 格式的 API 文档
+# Get JSON format API documentation
 curl http://localhost:8080/api/v1/openapi.json
 
-# 获取 YAML 格式的 API 文档
+# Get YAML format API documentation
 curl http://localhost:8080/api/v1/openapi.yaml
 ```
 
-**Apifox 导入方式：**
-1. 打开 Apifox → 项目设置 → 导入数据
-2. 选择 "OpenAPI/Swagger" → "URL 导入"
-3. 输入 `http://<server-ip>:8080/api/v1/openapi.json`
-4. 点击导入即可获取所有接口定义
+**Apifox Import:**
+1. Open Apifox -> Project Settings -> Import Data
+2. Select "OpenAPI/Swagger" -> "URL Import"
+3. Enter `http://<server-ip>:8080/api/v1/openapi.json`
+4. Click Import to get all API definitions
 
-### 证书检测配置
+### Certificate Check Configuration
 
-在 `server.toml` 中配置证书检测：
+Configure certificate checking in `server.toml`:
 
 ```toml
 [cert_check]
 enabled = true
-default_interval_secs = 86400   # 默认检测间隔（24小时）
-tick_secs = 60                  # 调度器 tick 间隔
-connect_timeout_secs = 10       # TLS 连接超时
-max_concurrent = 10              # 最大并发检测数
+default_interval_secs = 86400   # Default check interval (24 hours)
+tick_secs = 60                  # Scheduler tick interval
+connect_timeout_secs = 10       # TLS connection timeout
+max_concurrent = 10              # Max concurrent checks
 ```
 
-域名通过 REST API 动态管理，每个域名可单独配置 `check_interval_secs` 覆盖全局默认值。
+Domains are managed dynamically via the REST API. Each domain can have its own `check_interval_secs` to override the global default.
 
-## 交叉编译 / 多平台构建
+## Cross-Compilation / Multi-Platform Build
 
-支持以下目标平台：
+Supported target platforms:
 
-| 目标 | 说明 |
-|------|------|
+| Target | Description |
+|--------|-------------|
 | `x86_64-unknown-linux-gnu` | Linux AMD64 |
 | `aarch64-unknown-linux-gnu` | Linux ARM64 |
 | `x86_64-apple-darwin` | macOS Intel |
 | `aarch64-apple-darwin` | macOS Apple Silicon |
 
-### 前置依赖
+### Prerequisites
 
-- [cross](https://github.com/cross-rs/cross)（Linux 交叉编译需要 Docker）
-- Rust 工具链及对应 target：`rustup target add <triple>`
+- [cross](https://github.com/cross-rs/cross) (Docker required for Linux cross-compilation)
+- Rust toolchain with corresponding targets: `rustup target add <triple>`
 
-### 使用 Makefile
+### Using the Makefile
 
 ```bash
-# 构建单个 Linux 目标（通过 cross）
+# Build a single Linux target (via cross)
 make x86_64-unknown-linux-gnu
 make aarch64-unknown-linux-gnu
 
-# 构建 macOS 目标（原生编译）
+# Build macOS target (native compilation)
 make aarch64-apple-darwin
 
-# 打包某个目标的产物
+# Package artifacts for a target
 make package TARGET=x86_64-unknown-linux-gnu
 
-# 构建并打包所有目标
+# Build and package all targets
 make release
 ```
 
-### 手动使用 cross
+### Using cross Manually
 
 ```bash
 cross build --release --target aarch64-unknown-linux-gnu
 ```
 
-### 验证 OpenSSL 已移除
+### Verify OpenSSL Removal
 
 ```bash
 cargo tree -i openssl-sys
-# 应输出 "openssl-sys" 不存在
+# Should output that "openssl-sys" does not exist
 ```
 
-## Docker 部署
+## Docker Deployment
 
-### 构建镜像
+### Build Images
 
 ```bash
-# 单架构
+# Single architecture
 docker build -f Dockerfile.server -t oxmon-server .
 docker build -f Dockerfile.agent -t oxmon-agent .
 
-# 多架构（需要 docker buildx）
+# Multi-architecture (requires docker buildx)
 docker buildx build --platform linux/amd64,linux/arm64 \
   -f Dockerfile.agent -t oxmon-agent:latest --push .
 docker buildx build --platform linux/amd64,linux/arm64 \
   -f Dockerfile.server -t oxmon-server:latest --push .
 ```
 
-### 运行服务端
+### Run the Server
 
 ```bash
 docker run -d \
@@ -529,7 +531,7 @@ docker run -d \
   oxmon-server
 ```
 
-### 运行采集端
+### Run the Agent
 
 ```bash
 docker run -d \
@@ -538,17 +540,17 @@ docker run -d \
   oxmon-agent
 ```
 
-## 告警工作流程
+## Alert Workflow
 
-系统自动运行，无需手动干预：
+The system runs automatically with no manual intervention required:
 
-1. **采集** — Agent 按配置间隔采集 CPU、内存、磁盘、网络、负载指标
-2. **上报** — 通过 gRPC 发送到 Server，连接失败时自动缓冲，恢复后重传
-3. **存储** — Server 写入按天分区的 SQLite，自动清理过期数据
-4. **评估** — Alert Engine 对每个数据点评估所有匹配的告警规则
-5. **去重** — 同一告警在静默期内不重复触发
-6. **聚合** — 聚合窗口内的同类告警合并为一条通知
-7. **通知** — 按严重级别路由到对应渠道（邮件/Webhook/短信/钉钉/企业微信），静默窗口内不发送
+1. **Collect** — Agent collects CPU, memory, disk, network, and load metrics at configured intervals
+2. **Report** — Sent to server via gRPC; automatically buffered on connection failure, retransmitted on recovery
+3. **Store** — Server writes to daily-partitioned SQLite, automatically cleans up expired data
+4. **Evaluate** — Alert engine evaluates all matching alert rules against each data point
+5. **Deduplicate** — Same alert won't re-trigger within the silence period
+6. **Aggregate** — Similar alerts within the aggregation window are merged into a single notification
+7. **Notify** — Routed to channels by severity (email / webhook / SMS / DingTalk / WeChat Work); suppressed during silence windows
 
 ## License
 

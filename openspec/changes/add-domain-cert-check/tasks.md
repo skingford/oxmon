@@ -40,6 +40,7 @@
 - [x] 5.7 Implement GET `/api/v1/certs/status` handler — latest check result for all enabled domains
 - [x] 5.8 Implement GET `/api/v1/certs/status/:domain` handler — latest check result for specific domain
 - [x] 5.9 Add input validation: reject empty/invalid domain, reject duplicate domain (409), validate port range
+- [x] 5.10 Fix route path parameter syntax: `{id}`/`{domain}` → `:id`/`:domain` (axum 0.7 uses colon syntax, not brace syntax)
 
 ## 6. Server Integration (oxmon-server/src/main.rs)
 
@@ -59,3 +60,4 @@
 - [x] 8.2 Unit tests for `check_certificate`: mock or use known public domains (e.g., valid cert, expired cert scenarios)
 - [x] 8.3 Unit tests for scheduler: verify tick-based scheduling logic, concurrency limit, metric emission
 - [x] 8.4 Integration tests for cert API endpoints: create, list, update, delete, batch, status queries, error cases (409/404/400)
+- [x] 8.5 E2E smoke test: start server with all 5 notification plugins + cert config, verify all HTTP endpoints return correct status codes and payloads, verify gRPC port listening, verify OpenAPI spec serves 15 endpoints
