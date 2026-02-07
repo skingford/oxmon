@@ -17,9 +17,12 @@ use oxmon_storage::StorageEngine;
 
 use super::checker::check_certificate;
 
+/// 证书 API 错误响应
 #[derive(Serialize, ToSchema)]
 struct CertApiError {
+    /// 错误信息
     error: String,
+    /// 错误码
     code: String,
 }
 
@@ -33,16 +36,16 @@ fn error_response(status: StatusCode, code: &str, msg: &str) -> impl IntoRespons
     )
 }
 
-/// Add a domain for certificate monitoring
+/// 添加证书监控域名
 #[utoipa::path(
     post,
     path = "/v1/certs/domains",
     tag = "Certificates",
     request_body = CreateDomainRequest,
     responses(
-        (status = 201, description = "Domain created", body = CertDomain),
-        (status = 400, description = "Bad request", body = CertApiError),
-        (status = 409, description = "Domain already exists", body = CertApiError)
+        (status = 201, description = "域名创建成功", body = CertDomain),
+        (status = 400, description = "请求参数错误", body = CertApiError),
+        (status = 409, description = "域名已存在", body = CertApiError)
     )
 )]
 async fn create_domain(
@@ -100,16 +103,16 @@ async fn create_domain(
     }
 }
 
-/// Batch add domains for certificate monitoring
+/// 批量添加证书监控域名
 #[utoipa::path(
     post,
     path = "/v1/certs/domains/batch",
     tag = "Certificates",
     request_body = BatchCreateDomainsRequest,
     responses(
-        (status = 201, description = "Domains created", body = Vec<CertDomain>),
-        (status = 400, description = "Bad request", body = CertApiError),
-        (status = 409, description = "Duplicate domain", body = CertApiError)
+        (status = 201, description = "域名批量创建成功", body = Vec<CertDomain>),
+        (status = 400, description = "请求参数错误", body = CertApiError),
+        (status = 409, description = "域名重复", body = CertApiError)
     )
 )]
 async fn create_domains_batch(
@@ -167,28 +170,28 @@ async fn create_domains_batch(
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 struct ListDomainsParams {
-    /// Filter by enabled status
+    /// 按启用状态过滤
     #[param(required = false)]
     enabled: Option<bool>,
-    /// Search by domain name
+    /// 按域名搜索
     #[param(required = false)]
     search: Option<String>,
-    /// Results per page (default: 10)
+    /// 每页条数（默认 10）
     #[param(required = false)]
     limit: Option<u64>,
-    /// Pagination offset (default: 0)
+    /// 分页偏移量（默认 0）
     #[param(required = false)]
     offset: Option<u64>,
 }
 
-/// List monitored domains
+/// 获取监控域名列表
 #[utoipa::path(
     get,
     path = "/v1/certs/domains",
     tag = "Certificates",
     params(ListDomainsParams),
     responses(
-        (status = 200, description = "List of domains", body = Vec<CertDomain>)
+        (status = 200, description = "域名列表", body = Vec<CertDomain>)
     )
 )]
 async fn list_domains(
@@ -211,17 +214,17 @@ async fn list_domains(
     }
 }
 
-/// Get a monitored domain by ID
+/// 根据 ID 获取监控域名详情
 #[utoipa::path(
     get,
     path = "/v1/certs/domains/{id}",
     tag = "Certificates",
     params(
-        ("id" = String, Path, description = "Domain ID")
+        ("id" = String, Path, description = "域名唯一标识")
     ),
     responses(
-        (status = 200, description = "Domain details", body = CertDomain),
-        (status = 404, description = "Domain not found", body = CertApiError)
+        (status = 200, description = "域名详情", body = CertDomain),
+        (status = 404, description = "域名不存在", body = CertApiError)
     )
 )]
 async fn get_domain(
@@ -241,19 +244,19 @@ async fn get_domain(
     }
 }
 
-/// Update a monitored domain
+/// 更新监控域名
 #[utoipa::path(
     put,
     path = "/v1/certs/domains/{id}",
     tag = "Certificates",
     params(
-        ("id" = String, Path, description = "Domain ID")
+        ("id" = String, Path, description = "域名唯一标识")
     ),
     request_body = UpdateDomainRequest,
     responses(
-        (status = 200, description = "Domain updated", body = CertDomain),
-        (status = 400, description = "Bad request", body = CertApiError),
-        (status = 404, description = "Domain not found", body = CertApiError)
+        (status = 200, description = "域名更新成功", body = CertDomain),
+        (status = 400, description = "请求参数错误", body = CertApiError),
+        (status = 404, description = "域名不存在", body = CertApiError)
     )
 )]
 async fn update_domain(
@@ -288,17 +291,17 @@ async fn update_domain(
     }
 }
 
-/// Delete a monitored domain
+/// 删除监控域名
 #[utoipa::path(
     delete,
     path = "/v1/certs/domains/{id}",
     tag = "Certificates",
     params(
-        ("id" = String, Path, description = "Domain ID")
+        ("id" = String, Path, description = "域名唯一标识")
     ),
     responses(
-        (status = 204, description = "Domain deleted"),
-        (status = 404, description = "Domain not found", body = CertApiError)
+        (status = 204, description = "域名已删除"),
+        (status = 404, description = "域名不存在", body = CertApiError)
     )
 )]
 async fn delete_domain(
@@ -318,13 +321,13 @@ async fn delete_domain(
     }
 }
 
-/// Get latest certificate check results for all domains
+/// 获取所有域名的最新证书检查结果
 #[utoipa::path(
     get,
     path = "/v1/certs/status",
     tag = "Certificates",
     responses(
-        (status = 200, description = "Latest check results", body = Vec<CertCheckResult>)
+        (status = 200, description = "所有域名的最新检查结果", body = Vec<CertCheckResult>)
     )
 )]
 async fn cert_status_all(State(state): State<AppState>) -> impl IntoResponse {
@@ -339,17 +342,17 @@ async fn cert_status_all(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-/// Get latest certificate check result for a specific domain
+/// 获取指定域名的最新证书检查结果
 #[utoipa::path(
     get,
     path = "/v1/certs/status/{domain}",
     tag = "Certificates",
     params(
-        ("domain" = String, Path, description = "Domain name")
+        ("domain" = String, Path, description = "域名地址")
     ),
     responses(
-        (status = 200, description = "Latest check result", body = CertCheckResult),
-        (status = 404, description = "Domain not found", body = CertApiError)
+        (status = 200, description = "最新检查结果", body = CertCheckResult),
+        (status = 404, description = "域名不存在", body = CertApiError)
     )
 )]
 async fn cert_status_by_domain(
@@ -393,17 +396,17 @@ async fn cert_status_by_domain(
     }
 }
 
-/// Manually trigger certificate check for a domain
+/// 手动触发指定域名的证书检查
 #[utoipa::path(
     post,
     path = "/v1/certs/domains/{id}/check",
     tag = "Certificates",
     params(
-        ("id" = String, Path, description = "Domain ID")
+        ("id" = String, Path, description = "域名唯一标识")
     ),
     responses(
-        (status = 200, description = "Certificate check result", body = CertCheckResult),
-        (status = 404, description = "Domain not found", body = CertApiError)
+        (status = 200, description = "证书检查结果", body = CertCheckResult),
+        (status = 404, description = "域名不存在", body = CertApiError)
     )
 )]
 async fn check_single_domain(
@@ -441,13 +444,13 @@ async fn check_single_domain(
     Json(result).into_response()
 }
 
-/// Manually trigger certificate check for all enabled domains
+/// 手动触发所有已启用域名的证书检查
 #[utoipa::path(
     post,
     path = "/v1/certs/check",
     tag = "Certificates",
     responses(
-        (status = 200, description = "Certificate check results for all domains", body = Vec<CertCheckResult>)
+        (status = 200, description = "所有域名的证书检查结果", body = Vec<CertCheckResult>)
     )
 )]
 async fn check_all_domains(State(state): State<AppState>) -> impl IntoResponse {

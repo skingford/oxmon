@@ -193,14 +193,14 @@ async fn main() -> Result<()> {
     #[openapi(
         info(
             title = "oxmon API",
-            description = "oxmon server monitoring REST API",
+            description = "oxmon 服务器监控 REST API",
         ),
         tags(
-            (name = "Health", description = "Server health"),
-            (name = "Agents", description = "Agent management"),
-            (name = "Metrics", description = "Metric queries"),
-            (name = "Alerts", description = "Alert rules and history"),
-            (name = "Certificates", description = "Certificate monitoring")
+            (name = "Health", description = "服务健康检查"),
+            (name = "Agents", description = "Agent 管理"),
+            (name = "Metrics", description = "指标查询"),
+            (name = "Alerts", description = "告警规则与历史"),
+            (name = "Certificates", description = "证书监控")
         )
     )]
     struct ApiDoc;

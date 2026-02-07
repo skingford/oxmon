@@ -9,9 +9,12 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+/// API 错误响应
 #[derive(Serialize, ToSchema)]
 pub(crate) struct ApiError {
+    /// 错误信息
     error: String,
+    /// 错误码
     code: String,
 }
 
@@ -25,22 +28,26 @@ fn error_response(status: StatusCode, code: &str, msg: &str) -> impl IntoRespons
     )
 }
 
-// GET /v1/health
+/// 健康检查响应
 #[derive(Serialize, ToSchema)]
 struct HealthResponse {
+    /// 服务版本号
     version: String,
+    /// 运行时长（秒）
     uptime_secs: i64,
+    /// 已注册 Agent 数量
     agent_count: usize,
+    /// 存储状态
     storage_status: String,
 }
 
-/// Get server health status
+/// 获取服务健康状态
 #[utoipa::path(
     get,
     path = "/v1/health",
     tag = "Health",
     responses(
-        (status = 200, description = "Server health info", body = HealthResponse)
+        (status = 200, description = "服务健康信息", body = HealthResponse)
     )
 )]
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
@@ -54,21 +61,24 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     })
 }
 
-// GET /v1/agents
+/// Agent 信息
 #[derive(Serialize, ToSchema)]
 struct AgentResponse {
+    /// Agent 唯一标识
     agent_id: String,
+    /// 最后上报时间
     last_seen: DateTime<Utc>,
+    /// 状态（active / inactive）
     status: String,
 }
 
-/// List all registered agents
+/// 获取所有已注册 Agent 列表
 #[utoipa::path(
     get,
     path = "/v1/agents",
     tag = "Agents",
     responses(
-        (status = 200, description = "List of agents", body = Vec<AgentResponse>)
+        (status = 200, description = "Agent 列表", body = Vec<AgentResponse>)
     )
 )]
 async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
@@ -88,25 +98,28 @@ async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
     Json(resp)
 }
 
-// GET /v1/agents/:id/latest
+/// 最新指标数据
 #[derive(Serialize, ToSchema)]
 struct LatestMetric {
+    /// 指标名称
     metric_name: String,
+    /// 指标值
     value: f64,
+    /// 采集时间
     timestamp: DateTime<Utc>,
 }
 
-/// Get latest metrics for an agent
+/// 获取指定 Agent 的最新指标
 #[utoipa::path(
     get,
     path = "/v1/agents/{id}/latest",
     tag = "Agents",
     params(
-        ("id" = String, Path, description = "Agent ID")
+        ("id" = String, Path, description = "Agent 唯一标识")
     ),
     responses(
-        (status = 200, description = "Latest metric values", body = Vec<LatestMetric>),
-        (status = 404, description = "Agent not found", body = ApiError)
+        (status = 200, description = "最新指标列表", body = Vec<LatestMetric>),
+        (status = 404, description = "Agent 不存在", body = ApiError)
     )
 )]
 async fn agent_latest(
@@ -160,35 +173,38 @@ async fn agent_latest(
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 struct MetricQueryParams {
-    /// Agent ID
+    /// Agent 唯一标识
     #[param(required = false)]
     agent: Option<String>,
-    /// Metric name (e.g., cpu.usage, memory.used_percent)
+    /// 指标名称（如 cpu.usage、memory.used_percent）
     #[param(required = false)]
     metric: Option<String>,
-    /// Start time (defaults to 1 hour before `to`)
+    /// 起始时间（默认为结束时间前 1 小时）
     #[param(required = false)]
     from: Option<DateTime<Utc>>,
-    /// End time (defaults to now)
+    /// 结束时间（默认为当前时间）
     #[param(required = false)]
     to: Option<DateTime<Utc>>,
 }
 
+/// 指标数据点
 #[derive(Serialize, ToSchema)]
 struct MetricPointResponse {
+    /// 采集时间
     timestamp: DateTime<Utc>,
+    /// 指标值
     value: f64,
 }
 
-/// Query metric time series data
+/// 查询指标时序数据
 #[utoipa::path(
     get,
     path = "/v1/metrics",
     tag = "Metrics",
     params(MetricQueryParams),
     responses(
-        (status = 200, description = "Metric data points", body = Vec<MetricPointResponse>),
-        (status = 400, description = "Bad request", body = ApiError)
+        (status = 200, description = "指标数据点列表", body = Vec<MetricPointResponse>),
+        (status = 400, description = "请求参数错误", body = ApiError)
     )
 )]
 async fn query_metrics(
@@ -250,22 +266,26 @@ async fn query_metrics(
     }
 }
 
-// GET /v1/alerts/rules
+/// 告警规则信息
 #[derive(Serialize, ToSchema)]
 struct AlertRuleResponse {
+    /// 规则唯一标识
     id: String,
+    /// 监控指标名称
     metric: String,
+    /// Agent 匹配模式（支持 glob）
     agent_pattern: String,
+    /// 告警级别
     severity: String,
 }
 
-/// List all alert rules
+/// 获取所有告警规则
 #[utoipa::path(
     get,
     path = "/v1/alerts/rules",
     tag = "Alerts",
     responses(
-        (status = 200, description = "List of alert rules", body = Vec<AlertRuleResponse>)
+        (status = 200, description = "告警规则列表", body = Vec<AlertRuleResponse>)
     )
 )]
 async fn list_alert_rules(State(state): State<AppState>) -> impl IntoResponse {
@@ -287,48 +307,59 @@ async fn list_alert_rules(State(state): State<AppState>) -> impl IntoResponse {
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 struct AlertHistoryParams {
-    /// Start time (defaults to 1 day ago)
+    /// 起始时间（默认为 1 天前）
     #[param(required = false)]
     from: Option<DateTime<Utc>>,
-    /// End time (defaults to now)
+    /// 结束时间（默认为当前时间）
     #[param(required = false)]
     to: Option<DateTime<Utc>>,
-    /// Filter by severity
+    /// 按告警级别过滤
     #[param(required = false)]
     severity: Option<String>,
-    /// Filter by agent ID
+    /// 按 Agent ID 过滤
     #[param(required = false)]
     agent: Option<String>,
-    /// Results per page (default: 10)
+    /// 每页条数（默认 10）
     #[param(required = false)]
     limit: Option<u64>,
-    /// Pagination offset (default: 0)
+    /// 分页偏移量（默认 0）
     #[param(required = false)]
     offset: Option<u64>,
 }
 
+/// 告警事件
 #[derive(Serialize, ToSchema)]
 struct AlertEventResponse {
+    /// 事件唯一标识
     id: String,
+    /// 触发规则 ID
     rule_id: String,
+    /// Agent 唯一标识
     agent_id: String,
+    /// 指标名称
     metric_name: String,
+    /// 告警级别
     severity: String,
+    /// 告警消息
     message: String,
+    /// 当前指标值
     value: f64,
+    /// 告警阈值
     threshold: f64,
+    /// 触发时间
     timestamp: DateTime<Utc>,
+    /// 预测突破时间（趋势预测规则）
     predicted_breach: Option<DateTime<Utc>>,
 }
 
-/// Query alert event history
+/// 查询告警事件历史
 #[utoipa::path(
     get,
     path = "/v1/alerts/history",
     tag = "Alerts",
     params(AlertHistoryParams),
     responses(
-        (status = 200, description = "Alert events", body = Vec<AlertEventResponse>)
+        (status = 200, description = "告警事件列表", body = Vec<AlertEventResponse>)
     )
 )]
 async fn alert_history(
