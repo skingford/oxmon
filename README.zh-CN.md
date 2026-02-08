@@ -83,6 +83,7 @@ Agent 每 10 秒（可配置）采集一次系统指标，通过 gRPC 上报给 
 |------|------|--------|
 | `agent_id` | 该节点唯一标识，用于区分不同服务器 | `"web-server-01"` |
 | `server_endpoint` | Server 的 gRPC 地址 | `"http://127.0.0.1:9090"` |
+| `auth_token` | 认证 token（可选，Server 启用认证时必填） | 无 |
 | `collection_interval_secs` | 指标采集间隔（秒） | `10` |
 | `buffer_max_size` | Server 不可达时本地缓冲的最大批次数 | `1000` |
 
@@ -91,6 +92,7 @@ Agent 每 10 秒（可配置）采集一次系统指标，通过 gRPC 上报给 
 ```toml
 agent_id = "web-server-01"
 server_endpoint = "http://10.0.1.100:9090"
+# auth_token = "your-token-here"  # Server 启用认证时填写
 collection_interval_secs = 10
 buffer_max_size = 1000
 ```
@@ -105,10 +107,11 @@ buffer_max_size = 1000
 | `http_port` | REST API 端口 | `8080` |
 | `data_dir` | SQLite 数据文件存储目录 | `"data"` |
 | `retention_days` | 数据保留天数，超期自动清理 | `7` |
+| `require_agent_auth` | 是否要求 Agent 认证 | `false` |
 
 #### 告警规则 (`[[alert.rules]]`)
 
-支持三种规则类型：
+支持四种规则类型：
 
 **阈值告警 (threshold)** — 指标持续超过阈值时触发：
 
@@ -152,6 +155,20 @@ horizon_secs = 86400          # 预测时间范围（秒），如 86400 = 24 小
 min_data_points = 10          # 最少数据点数，不够则不预测
 severity = "info"
 silence_secs = 3600
+```
+
+**证书过期告警 (cert_expiration)** — 根据证书剩余有效天数触发分级告警：
+
+```toml
+[[alert.rules]]
+name = "cert-expiry"
+type = "cert_expiration"
+metric = "certificate.days_until_expiry"
+agent_pattern = "cert-checker"
+severity = "critical"           # 默认严重级别
+warning_days = 30               # 距过期 30 天触发 warning
+critical_days = 7               # 距过期 7 天触发 critical
+silence_secs = 86400
 ```
 
 #### 通知渠道 (`[[notification.channels]]`)
@@ -337,6 +354,107 @@ curl http://localhost:8080/api/v1/alerts/rules
 
 ```bash
 curl "http://localhost:8080/api/v1/alerts/history?severity=critical&limit=50"
+```
+
+### Agent 白名单管理
+
+Agent 白名单用于控制哪些 Agent 可以通过 gRPC 上报数据。Agent 需要**手动**通过 API 添加到白名单，不会自动注册。`agent_id` 具有唯一性约束，重复添加返回 409。
+
+#### `POST /api/v1/agents/whitelist`
+
+添加 Agent 到白名单，返回认证 token（仅在创建时返回一次，请妥善保存）。
+
+```bash
+curl -X POST http://localhost:8080/api/v1/agents/whitelist \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "web-server-01", "description": "生产环境 Web 服务器"}'
+```
+
+响应示例：
+
+```json
+{
+  "agent_id": "web-server-01",
+  "token": "AbCdEf1234567890...",
+  "created_at": "2026-02-08T10:00:00Z"
+}
+```
+
+#### `GET /api/v1/agents/whitelist`
+
+列出所有白名单中的 Agent（不包含 token）。
+
+```bash
+curl http://localhost:8080/api/v1/agents/whitelist
+```
+
+#### `DELETE /api/v1/agents/whitelist/{agent_id}`
+
+从白名单中删除 Agent。
+
+```bash
+curl -X DELETE http://localhost:8080/api/v1/agents/whitelist/web-server-01
+```
+
+> **Token 轮换**：删除 Agent 后重新添加即可生成新 token，然后更新 Agent 配置中的 `auth_token` 并重启 Agent。
+
+### 证书详情查询
+
+Server 定期采集证书详细信息（颁发者、SAN、证书链验证、解析 IP 等），可通过以下接口查询。
+
+#### `GET /api/v1/certificates`
+
+列出所有证书详情，支持过滤和分页。
+
+| 参数 | 说明 | 必填 |
+|------|------|------|
+| `expiring_within_days` | 过滤即将过期的证书（N 天内） | 否 |
+| `ip_address` | 按 IP 地址过滤 | 否 |
+| `issuer` | 按颁发者过滤 | 否 |
+| `limit` | 每页数量（默认 100） | 否 |
+| `offset` | 分页偏移 | 否 |
+
+```bash
+# 查询所有证书
+curl http://localhost:8080/api/v1/certificates
+
+# 查询 30 天内即将过期的证书
+curl "http://localhost:8080/api/v1/certificates?expiring_within_days=30"
+
+# 按颁发者过滤
+curl "http://localhost:8080/api/v1/certificates?issuer=Let%27s%20Encrypt"
+```
+
+#### `GET /api/v1/certificates/{domain}`
+
+获取指定域名的证书详情。
+
+```bash
+curl http://localhost:8080/api/v1/certificates/example.com
+```
+
+响应示例：
+
+```json
+{
+  "domain": "example.com",
+  "not_before": "2025-01-01T00:00:00Z",
+  "not_after": "2026-01-01T00:00:00Z",
+  "ip_addresses": ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"],
+  "issuer_cn": "R3",
+  "issuer_o": "Let's Encrypt",
+  "subject_alt_names": ["example.com", "www.example.com"],
+  "chain_valid": true,
+  "last_checked": "2026-02-08T10:00:00Z"
+}
+```
+
+#### `GET /api/v1/certificates/{domain}/chain`
+
+获取指定域名的证书链验证信息。
+
+```bash
+curl http://localhost:8080/api/v1/certificates/example.com/chain
 ```
 
 ### 证书域名管理

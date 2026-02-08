@@ -83,6 +83,7 @@ The agent collects system metrics every 10 seconds (configurable) and reports th
 |-------|-------------|---------|
 | `agent_id` | Unique identifier for this node | `"web-server-01"` |
 | `server_endpoint` | Server gRPC address | `"http://127.0.0.1:9090"` |
+| `auth_token` | Authentication token (optional, required when server auth is enabled) | none |
 | `collection_interval_secs` | Metric collection interval (seconds) | `10` |
 | `buffer_max_size` | Max buffered batches when server is unreachable | `1000` |
 
@@ -91,6 +92,7 @@ Example:
 ```toml
 agent_id = "web-server-01"
 server_endpoint = "http://10.0.1.100:9090"
+# auth_token = "your-token-here"  # Required when server has require_agent_auth enabled
 collection_interval_secs = 10
 buffer_max_size = 1000
 ```
@@ -105,10 +107,11 @@ buffer_max_size = 1000
 | `http_port` | REST API port | `8080` |
 | `data_dir` | SQLite data file storage directory | `"data"` |
 | `retention_days` | Data retention in days, auto-cleanup when expired | `7` |
+| `require_agent_auth` | Require agent authentication | `false` |
 
 #### Alert Rules (`[[alert.rules]]`)
 
-Three rule types are supported:
+Four rule types are supported:
 
 **Threshold Alert** — triggers when a metric exceeds a threshold for a sustained duration:
 
@@ -152,6 +155,20 @@ horizon_secs = 86400          # Prediction horizon (seconds), e.g., 86400 = 24 h
 min_data_points = 10          # Minimum data points required for prediction
 severity = "info"
 silence_secs = 3600
+```
+
+**Certificate Expiration Alert** — triggers tiered alerts based on days until certificate expiry:
+
+```toml
+[[alert.rules]]
+name = "cert-expiry"
+type = "cert_expiration"
+metric = "certificate.days_until_expiry"
+agent_pattern = "cert-checker"
+severity = "critical"             # Default severity level
+warning_days = 30                 # Trigger warning at 30 days before expiry
+critical_days = 7                 # Trigger critical at 7 days before expiry
+silence_secs = 86400
 ```
 
 #### Notification Channels (`[[notification.channels]]`)
@@ -337,6 +354,107 @@ Query alert history.
 
 ```bash
 curl "http://localhost:8080/api/v1/alerts/history?severity=critical&limit=50"
+```
+
+### Agent Whitelist Management
+
+The agent whitelist controls which agents can report data via gRPC. Agents must be **manually** added via the API — there is no auto-registration. `agent_id` has a uniqueness constraint; duplicate additions return 409.
+
+#### `POST /api/v1/agents/whitelist`
+
+Add an agent to the whitelist. Returns an authentication token (shown only once at creation — save it).
+
+```bash
+curl -X POST http://localhost:8080/api/v1/agents/whitelist \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "web-server-01", "description": "Production web server"}'
+```
+
+Response example:
+
+```json
+{
+  "agent_id": "web-server-01",
+  "token": "AbCdEf1234567890...",
+  "created_at": "2026-02-08T10:00:00Z"
+}
+```
+
+#### `GET /api/v1/agents/whitelist`
+
+List all whitelisted agents (tokens are not included).
+
+```bash
+curl http://localhost:8080/api/v1/agents/whitelist
+```
+
+#### `DELETE /api/v1/agents/whitelist/{agent_id}`
+
+Remove an agent from the whitelist.
+
+```bash
+curl -X DELETE http://localhost:8080/api/v1/agents/whitelist/web-server-01
+```
+
+> **Token Rotation**: Delete the agent and re-add it to generate a new token, then update the `auth_token` in the agent config and restart.
+
+### Certificate Details
+
+The server periodically collects detailed certificate information (issuer, SANs, chain validation, resolved IPs, etc.), queryable via the following endpoints.
+
+#### `GET /api/v1/certificates`
+
+List all certificate details with filtering and pagination.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `expiring_within_days` | Filter certificates expiring within N days | No |
+| `ip_address` | Filter by IP address | No |
+| `issuer` | Filter by issuer | No |
+| `limit` | Page size (default 100) | No |
+| `offset` | Pagination offset | No |
+
+```bash
+# List all certificates
+curl http://localhost:8080/api/v1/certificates
+
+# Filter certificates expiring within 30 days
+curl "http://localhost:8080/api/v1/certificates?expiring_within_days=30"
+
+# Filter by issuer
+curl "http://localhost:8080/api/v1/certificates?issuer=Let%27s%20Encrypt"
+```
+
+#### `GET /api/v1/certificates/{domain}`
+
+Get certificate details for a specific domain.
+
+```bash
+curl http://localhost:8080/api/v1/certificates/example.com
+```
+
+Response example:
+
+```json
+{
+  "domain": "example.com",
+  "not_before": "2025-01-01T00:00:00Z",
+  "not_after": "2026-01-01T00:00:00Z",
+  "ip_addresses": ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"],
+  "issuer_cn": "R3",
+  "issuer_o": "Let's Encrypt",
+  "subject_alt_names": ["example.com", "www.example.com"],
+  "chain_valid": true,
+  "last_checked": "2026-02-08T10:00:00Z"
+}
+```
+
+#### `GET /api/v1/certificates/{domain}/chain`
+
+Get certificate chain validation details for a specific domain.
+
+```bash
+curl http://localhost:8080/api/v1/certificates/example.com/chain
 ```
 
 ### Certificate Domain Management
