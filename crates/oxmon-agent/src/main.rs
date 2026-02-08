@@ -138,7 +138,21 @@ async fn main() -> Result<()> {
 
                     if !to_send.is_empty() {
                         let batch = to_proto_batch(&config.agent_id, &to_send);
-                        match c.report_metrics(batch).await {
+
+                        // Create request with authentication metadata if token is configured
+                        let mut request = tonic::Request::new(batch);
+                        if let Some(ref token) = config.auth_token {
+                            request.metadata_mut().insert(
+                                "authorization",
+                                format!("Bearer {}", token).parse().unwrap(),
+                            );
+                            request.metadata_mut().insert(
+                                "agent-id",
+                                config.agent_id.parse().unwrap(),
+                            );
+                        }
+
+                        match c.report_metrics(request).await {
                             Ok(resp) => {
                                 let resp = resp.into_inner();
                                 if resp.success {

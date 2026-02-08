@@ -186,7 +186,9 @@ async fn main() -> Result<()> {
 
     // gRPC server
     let grpc_addr: SocketAddr = format!("0.0.0.0:{}", config.grpc_port).parse()?;
-    let grpc_service = MetricServiceServer::new(grpc::MetricServiceImpl::new(state.clone()));
+    let grpc_service = MetricServiceServer::new(
+        grpc::MetricServiceImpl::new(state.clone(), config.require_agent_auth)
+    );
     let grpc_server = TonicServer::builder()
         .add_service(grpc_service)
         .serve(grpc_addr);

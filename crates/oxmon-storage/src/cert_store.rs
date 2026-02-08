@@ -42,6 +42,33 @@ CREATE INDEX IF NOT EXISTS idx_cert_results_checked_at ON cert_check_results(che
 CREATE INDEX IF NOT EXISTS idx_cert_results_domain ON cert_check_results(domain);
 ";
 
+const AGENT_WHITELIST_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS agent_whitelist (
+    agent_id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    description TEXT
+);
+";
+
+const CERTIFICATE_DETAILS_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS certificate_details (
+    domain TEXT PRIMARY KEY,
+    not_before INTEGER NOT NULL,
+    not_after INTEGER NOT NULL,
+    ip_addresses TEXT NOT NULL,
+    issuer_cn TEXT,
+    issuer_o TEXT,
+    issuer_ou TEXT,
+    issuer_c TEXT,
+    subject_alt_names TEXT,
+    chain_valid INTEGER NOT NULL,
+    chain_error TEXT,
+    last_checked INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cert_details_not_after ON certificate_details(not_after);
+";
+
 pub struct CertStore {
     conn: Mutex<Connection>,
     _db_path: PathBuf,
@@ -55,6 +82,8 @@ impl CertStore {
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         conn.execute_batch(CERT_DOMAINS_SCHEMA)?;
         conn.execute_batch(CERT_CHECK_RESULTS_SCHEMA)?;
+        conn.execute_batch(AGENT_WHITELIST_SCHEMA)?;
+        conn.execute_batch(CERTIFICATE_DETAILS_SCHEMA)?;
         tracing::info!(path = %db_path.display(), "Initialized cert store");
         Ok(Self {
             conn: Mutex::new(conn),
@@ -408,6 +437,194 @@ impl CertStore {
             san_list: san_str.and_then(|s| serde_json::from_str(&s).ok()),
             error: row.get(11)?,
             checked_at: DateTime::from_timestamp(checked, 0).unwrap_or_default(),
+        })
+    }
+
+    // ---- Agent whitelist operations ----
+
+    pub fn add_agent_to_whitelist(
+        &self,
+        agent_id: &str,
+        token_hash: &str,
+        description: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO agent_whitelist (agent_id, token_hash, created_at, description) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![agent_id, token_hash, now, description],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_agent_token_hash(&self, agent_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT token_hash FROM agent_whitelist WHERE agent_id = ?1")?;
+        let mut rows = stmt.query_map(rusqlite::params![agent_id], |row| row.get(0))?;
+        match rows.next() {
+            Some(Ok(hash)) => Ok(Some(hash)),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_agents(&self) -> Result<Vec<oxmon_common::types::AgentWhitelistEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT agent_id, created_at, description FROM agent_whitelist ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let created: i64 = row.get(1)?;
+            Ok(oxmon_common::types::AgentWhitelistEntry {
+                agent_id: row.get(0)?,
+                created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+                description: row.get(2)?,
+            })
+        })?;
+        let mut agents = Vec::new();
+        for row in rows {
+            agents.push(row?);
+        }
+        Ok(agents)
+    }
+
+    pub fn delete_agent_from_whitelist(&self, agent_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let deleted = conn.execute(
+            "DELETE FROM agent_whitelist WHERE agent_id = ?1",
+            rusqlite::params![agent_id],
+        )?;
+        Ok(deleted > 0)
+    }
+
+    // ---- Certificate details operations ----
+
+    pub fn upsert_certificate_details(
+        &self,
+        details: &oxmon_common::types::CertificateDetails,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let ip_json = serde_json::to_string(&details.ip_addresses)?;
+        let san_json = serde_json::to_string(&details.subject_alt_names)?;
+        conn.execute(
+            "INSERT OR REPLACE INTO certificate_details
+             (domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
+              subject_alt_names, chain_valid, chain_error, last_checked)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            rusqlite::params![
+                details.domain,
+                details.not_before.timestamp(),
+                details.not_after.timestamp(),
+                ip_json,
+                details.issuer_cn,
+                details.issuer_o,
+                details.issuer_ou,
+                details.issuer_c,
+                san_json,
+                details.chain_valid as i32,
+                details.chain_error,
+                details.last_checked.timestamp(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_certificate_details(
+        &self,
+        domain: &str,
+    ) -> Result<Option<oxmon_common::types::CertificateDetails>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
+                    subject_alt_names, chain_valid, chain_error, last_checked
+             FROM certificate_details WHERE domain = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![domain], |row| {
+            Ok(Self::row_to_cert_details(row))
+        })?;
+        match rows.next() {
+            Some(Ok(Ok(details))) => Ok(Some(details)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_certificate_details(
+        &self,
+        filter: &oxmon_common::types::CertificateDetailsFilter,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<oxmon_common::types::CertificateDetails>> {
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
+                    subject_alt_names, chain_valid, chain_error, last_checked
+             FROM certificate_details WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
+
+        if let Some(days) = filter.expiring_within_days {
+            let threshold = (Utc::now() + chrono::Duration::days(days)).timestamp();
+            sql.push_str(&format!(" AND not_after <= ?{idx}"));
+            params.push(Box::new(threshold));
+            idx += 1;
+        }
+        if let Some(ip) = &filter.ip_address {
+            sql.push_str(&format!(" AND ip_addresses LIKE ?{idx}"));
+            params.push(Box::new(format!("%{ip}%")));
+            idx += 1;
+        }
+        if let Some(issuer) = &filter.issuer {
+            sql.push_str(&format!(" AND (issuer_cn LIKE ?{idx} OR issuer_o LIKE ?{idx})"));
+            params.push(Box::new(format!("%{issuer}%")));
+            idx += 1;
+        }
+
+        sql.push_str(" ORDER BY not_after ASC");
+        sql.push_str(&format!(" LIMIT ?{idx} OFFSET ?{}", idx + 1));
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok(Self::row_to_cert_details(row))
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row??);
+        }
+        Ok(results)
+    }
+
+    fn row_to_cert_details(row: &rusqlite::Row) -> Result<oxmon_common::types::CertificateDetails> {
+        let not_before: i64 = row.get(1)?;
+        let not_after: i64 = row.get(2)?;
+        let ip_json: String = row.get(3)?;
+        let san_json: String = row.get(8)?;
+        let chain_valid_int: i32 = row.get(9)?;
+        let last_checked: i64 = row.get(11)?;
+
+        let ip_addresses: Vec<String> = serde_json::from_str(&ip_json).unwrap_or_default();
+        let subject_alt_names: Vec<String> = serde_json::from_str(&san_json).unwrap_or_default();
+
+        Ok(oxmon_common::types::CertificateDetails {
+            domain: row.get(0)?,
+            not_before: DateTime::from_timestamp(not_before, 0).unwrap_or_default(),
+            not_after: DateTime::from_timestamp(not_after, 0).unwrap_or_default(),
+            ip_addresses,
+            issuer_cn: row.get(4)?,
+            issuer_o: row.get(5)?,
+            issuer_ou: row.get(6)?,
+            issuer_c: row.get(7)?,
+            subject_alt_names,
+            chain_valid: chain_valid_int != 0,
+            chain_error: row.get(10)?,
+            last_checked: DateTime::from_timestamp(last_checked, 0).unwrap_or_default(),
         })
     }
 }

@@ -12,6 +12,11 @@ data_dir = "data"
 # How many days to retain metric data
 retention_days = 7
 
+# Require agent authentication (default: false)
+# When enabled, agents must provide a valid token in the whitelist
+# Manage whitelist via: POST/GET/DELETE /api/v1/agents/whitelist
+require_agent_auth = false
+
 # Alert Rules
 # Supported types: "threshold", "rate_of_change", "trend_prediction"
 

@@ -10,6 +10,8 @@ pub struct ServerConfig {
     pub data_dir: String,
     #[serde(default = "default_retention_days")]
     pub retention_days: u32,
+    #[serde(default = "default_require_agent_auth")]
+    pub require_agent_auth: bool,
 
     #[serde(default)]
     pub alert: AlertConfig,
@@ -158,6 +160,10 @@ fn default_min_severity() -> String {
 
 fn default_aggregation_window_secs() -> u64 {
     60
+}
+
+fn default_require_agent_auth() -> bool {
+    false
 }
 
 impl ServerConfig {

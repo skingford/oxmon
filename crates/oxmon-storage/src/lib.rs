@@ -1,6 +1,7 @@
 pub mod partition;
 pub mod engine;
 pub mod cert_store;
+pub mod auth;
 
 #[cfg(test)]
 mod tests;

@@ -67,6 +67,7 @@ tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["ring"] }
 webpki-roots = "1"
 x509-parser = "0.18"
+trust-dns-resolver = "0.23"
 
 # UUID
 uuid = { version = "1", features = ["v4"] }
@@ -75,6 +76,7 @@ uuid = { version = "1", features = ["v4"] }
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
+bcrypt = "0.16"
 
 # URL encoding
 urlencoding = "2"

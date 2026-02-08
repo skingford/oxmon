@@ -8,6 +8,8 @@ pub struct AgentConfig {
     pub collection_interval_secs: u64,
     #[serde(default = "default_buffer_max_size")]
     pub buffer_max_size: usize,
+    /// Optional authentication token for server whitelist
+    pub auth_token: Option<String>,
 }
 
 fn default_collection_interval() -> u64 {

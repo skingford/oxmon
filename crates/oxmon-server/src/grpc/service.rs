@@ -1,4 +1,5 @@
 use crate::state::AppState;
+use crate::grpc::auth::AuthInterceptor;
 use oxmon_storage::StorageEngine;
 use chrono::{DateTime, Utc};
 use oxmon_common::proto::metric_service_server::MetricService;
@@ -8,11 +9,13 @@ use tonic::{Request, Response, Status};
 
 pub struct MetricServiceImpl {
     state: AppState,
+    auth: AuthInterceptor,
 }
 
 impl MetricServiceImpl {
-    pub fn new(state: AppState) -> Self {
-        Self { state }
+    pub fn new(state: AppState, require_auth: bool) -> Self {
+        let auth = AuthInterceptor::new(state.cert_store.clone(), require_auth);
+        Self { state, auth }
     }
 }
 
@@ -20,8 +23,63 @@ impl MetricServiceImpl {
 impl MetricService for MetricServiceImpl {
     async fn report_metrics(
         &self,
-        request: Request<MetricBatchProto>,
+        mut request: Request<MetricBatchProto>,
     ) -> Result<Response<ReportResponse>, Status> {
+        // 认证检查（如果启用）
+        if self.auth.require_auth {
+            // 从 metadata 中提取并验证
+            let metadata = request.metadata();
+
+            let token = metadata
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .ok_or_else(|| Status::unauthenticated("Missing or invalid authorization header"))?
+                .to_string();
+
+            let agent_id = metadata
+                .get("agent-id")
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| Status::unauthenticated("Missing agent-id in metadata"))?
+                .to_string();
+
+            // 从数据库获取 token hash
+            let token_hash = self
+                .state
+                .cert_store
+                .get_agent_token_hash(&agent_id)
+                .map_err(|e| {
+                    tracing::error!(error = %e, "Failed to query agent whitelist");
+                    Status::internal("Authentication error")
+                })?
+                .ok_or_else(|| {
+                    tracing::warn!(agent_id = %agent_id, "Agent not in whitelist");
+                    Status::unauthenticated("Agent not authorized")
+                })?;
+
+            // 验证 token
+            let valid = oxmon_storage::auth::verify_token(&token, &token_hash).map_err(|e| {
+                tracing::error!(error = %e, "Token verification failed");
+                Status::internal("Authentication error")
+            })?;
+
+            if !valid {
+                tracing::warn!(agent_id = %agent_id, "Invalid token");
+                return Err(Status::unauthenticated("Invalid token"));
+            }
+
+            // 将 agent_id 注入到 request extensions 中
+            request.extensions_mut().insert(agent_id.clone());
+            tracing::debug!(agent_id = %agent_id, "Agent authenticated successfully");
+        }
+
+        // 从 extensions 中获取认证的 agent_id（如果有）
+        let authenticated_agent_id = request.extensions().get::<String>().cloned();
+
+        if let Some(agent_id) = &authenticated_agent_id {
+            tracing::debug!(agent_id = %agent_id, "Request from authenticated agent");
+        }
+
         let proto = request.into_inner();
 
         // Validate

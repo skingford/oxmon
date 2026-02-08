@@ -159,3 +159,78 @@ pub struct BatchCreateDomainsRequest {
     /// 域名列表
     pub domains: Vec<CreateDomainRequest>,
 }
+
+// Agent whitelist types
+
+/// Agent 白名单条目
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct AgentWhitelistEntry {
+    /// Agent 唯一标识
+    pub agent_id: String,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 描述信息
+    pub description: Option<String>,
+}
+
+/// 添加 Agent 到白名单请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct AddAgentRequest {
+    /// Agent 唯一标识
+    pub agent_id: String,
+    /// 描述信息
+    pub description: Option<String>,
+}
+
+/// 添加 Agent 响应（包含生成的 token）
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct AddAgentResponse {
+    /// Agent 唯一标识
+    pub agent_id: String,
+    /// 生成的认证 token（仅在创建时返回一次）
+    pub token: String,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+}
+
+// Certificate details types
+
+/// 证书详细信息
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct CertificateDetails {
+    /// 域名
+    pub domain: String,
+    /// 证书生效时间
+    pub not_before: DateTime<Utc>,
+    /// 证书过期时间
+    pub not_after: DateTime<Utc>,
+    /// IP 地址列表
+    pub ip_addresses: Vec<String>,
+    /// 颁发者通用名称
+    pub issuer_cn: Option<String>,
+    /// 颁发者组织
+    pub issuer_o: Option<String>,
+    /// 颁发者组织单位
+    pub issuer_ou: Option<String>,
+    /// 颁发者国家
+    pub issuer_c: Option<String>,
+    /// 主体备用名称列表
+    pub subject_alt_names: Vec<String>,
+    /// 证书链是否有效
+    pub chain_valid: bool,
+    /// 证书链错误信息
+    pub chain_error: Option<String>,
+    /// 最后检查时间
+    pub last_checked: DateTime<Utc>,
+}
+
+/// 证书详情查询过滤器
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct CertificateDetailsFilter {
+    /// 过滤即将过期的证书（天数内）
+    pub expiring_within_days: Option<i64>,
+    /// 按 IP 地址过滤
+    pub ip_address: Option<String>,
+    /// 按颁发者过滤
+    pub issuer: Option<String>,
+}

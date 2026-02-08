@@ -9,6 +9,7 @@ use tokio::sync::Semaphore;
 use tokio::time::{interval, Duration};
 
 use super::checker::check_certificate;
+use super::collector::CertificateCollector;
 
 pub struct CertCheckScheduler {
     cert_store: Arc<CertStore>,
@@ -87,6 +88,27 @@ impl CertCheckScheduler {
                 // Write detailed result to cert store
                 if let Err(e) = cert_store.insert_check_result(&result) {
                     tracing::error!(domain = %domain.domain, error = %e, "Failed to store check result");
+                }
+
+                // Collect detailed certificate information
+                match CertificateCollector::new(timeout).await {
+                    Ok(collector) => {
+                        match collector.collect(&domain.domain, domain.port as u16).await {
+                            Ok(details) => {
+                                if let Err(e) = cert_store.upsert_certificate_details(&details) {
+                                    tracing::error!(domain = %domain.domain, error = %e, "Failed to store certificate details");
+                                } else {
+                                    tracing::debug!(domain = %domain.domain, "Certificate details stored");
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(domain = %domain.domain, error = %e, "Failed to collect certificate details");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to create certificate collector");
+                    }
                 }
 
                 // Update last_checked_at

@@ -1,3 +1,6 @@
+pub mod whitelist;
+pub mod certificates;
+
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -416,4 +419,6 @@ pub fn api_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(query_metrics))
         .routes(routes!(list_alert_rules))
         .routes(routes!(alert_history))
+        .merge(whitelist::whitelist_routes())
+        .merge(certificates::certificates_routes())
 }
