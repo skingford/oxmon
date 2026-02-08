@@ -74,6 +74,7 @@ impl PartitionManager {
             conn.execute_batch("PRAGMA journal_mode=WAL;")?;
             conn.execute_batch(METRICS_SCHEMA)?;
             conn.execute_batch(ALERTS_SCHEMA)?;
+            migrate_partition(&conn);
             tracing::info!(partition = %key, "Created new partition");
             conns.insert(key.clone(), conn);
         }
@@ -109,6 +110,7 @@ impl PartitionManager {
                 if !conns.contains_key(&key) {
                     let conn = Connection::open(&path)?;
                     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+                    migrate_partition(&conn);
                     conns.insert(key.clone(), conn);
                 }
                 keys.push(key);
@@ -145,4 +147,16 @@ impl PartitionManager {
 
         Ok(removed)
     }
+}
+
+/// Migrate old partition schemas by adding missing columns.
+/// Uses ALTER TABLE ADD COLUMN which is a no-op if the column already exists (errors are ignored).
+fn migrate_partition(conn: &Connection) {
+    // metrics table: add id, created_at, updated_at
+    let _ = conn.execute_batch("ALTER TABLE metrics ADD COLUMN id TEXT;");
+    let _ = conn.execute_batch("ALTER TABLE metrics ADD COLUMN created_at INTEGER;");
+    let _ = conn.execute_batch("ALTER TABLE metrics ADD COLUMN updated_at INTEGER;");
+    // alert_events table: add created_at, updated_at
+    let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN created_at INTEGER;");
+    let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN updated_at INTEGER;");
 }
