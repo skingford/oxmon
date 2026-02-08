@@ -616,6 +616,75 @@ max_concurrent = 10              # 最大并发检测数
 
 域名通过 REST API 动态管理，每个域名可单独配置 `check_interval_secs` 覆盖全局默认值。
 
+## Linux 快速部署
+
+使用 `curl | bash` 一键安装，自动下载 GitHub Releases 中的预编译二进制文件，生成配置文件，并可选配置 PM2 进程守护。
+
+> Server 和 Agent 分开部署 — 中心机器装 `server`，被监控主机装 `agent`。
+
+### 安装 Server（中心机器）
+
+```bash
+# 基础安装
+curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- server
+
+# 安装并配置 PM2 进程守护
+curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- server --setup-pm2
+```
+
+### 安装 Agent（被监控主机）
+
+```bash
+# 指向 Server 的 gRPC 地址
+curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent \
+  --server-endpoint http://10.0.1.100:9090
+
+# 自定义 Agent ID + PM2
+curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent \
+  --server-endpoint http://10.0.1.100:9090 \
+  --agent-id web-server-01 \
+  --setup-pm2
+```
+
+### 为已有安装添加 PM2 守护
+
+如果已经手动安装了 oxmon，可以单独生成 PM2 配置：
+
+```bash
+# Server 机器上
+curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- server --pm2-only
+
+# Agent 机器上
+curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent --pm2-only
+```
+
+### PM2 常用命令
+
+```bash
+pm2 status                    # 查看进程状态
+pm2 logs oxmon-server         # 实时查看 Server 日志
+pm2 logs oxmon-agent          # 实时查看 Agent 日志
+pm2 restart oxmon-server      # 重启 Server
+pm2 restart oxmon-agent       # 重启 Agent
+pm2 stop oxmon-server         # 停止服务
+pm2 startup                   # 设置开机自启
+pm2 save                      # 保存当前进程列表
+```
+
+### 安装脚本参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `server` / `agent` | 安装组件（必填，第一个参数） | — |
+| `--version` | 指定 Release 版本号 | `latest` |
+| `--install-dir` | 二进制安装路径 | `/usr/local/bin` |
+| `--config-dir` | 配置文件路径 | `/etc/oxmon` |
+| `--data-dir` | Server 数据存储目录（仅 server） | `/var/lib/oxmon` |
+| `--agent-id` | Agent 标识（仅 agent） | `$(hostname)` |
+| `--server-endpoint` | Agent 连接的 gRPC 地址（仅 agent） | `http://127.0.0.1:9090` |
+| `--setup-pm2` | 生成 PM2 配置并启动服务 | 关闭 |
+| `--pm2-only` | 仅生成 PM2 配置（跳过下载） | 关闭 |
+
 ## 交叉编译 / 多平台构建
 
 支持以下目标平台：

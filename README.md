@@ -616,6 +616,75 @@ max_concurrent = 10              # Max concurrent checks
 
 Domains are managed dynamically via the REST API. Each domain can have its own `check_interval_secs` to override the global default.
 
+## Linux Quick Deploy
+
+One-liner install using `curl | bash`, similar to [nvm](https://github.com/nvm-sh/nvm). Downloads pre-built binaries from GitHub Releases, generates config files, and optionally sets up PM2 for process management.
+
+> Server and agent are deployed separately — use `server` on the central machine, `agent` on each monitored host.
+
+### Install Server (central machine)
+
+```bash
+# Basic install
+curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- server
+
+# Install with PM2 process daemon
+curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- server --setup-pm2
+```
+
+### Install Agent (monitored hosts)
+
+```bash
+# Point to the server's gRPC address
+curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent \
+  --server-endpoint http://10.0.1.100:9090
+
+# Custom agent ID + PM2
+curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent \
+  --server-endpoint http://10.0.1.100:9090 \
+  --agent-id web-server-01 \
+  --setup-pm2
+```
+
+### Add PM2 to Existing Installation
+
+If you already installed oxmon manually and want to add PM2 management:
+
+```bash
+# For server
+curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- server --pm2-only
+
+# For agent
+curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent --pm2-only
+```
+
+### PM2 Common Commands
+
+```bash
+pm2 status                    # View process status
+pm2 logs oxmon-server         # View server logs (real-time)
+pm2 logs oxmon-agent          # View agent logs
+pm2 restart oxmon-server      # Restart server
+pm2 restart oxmon-agent       # Restart agent
+pm2 stop oxmon-server         # Stop service
+pm2 startup                   # Enable auto-start on boot
+pm2 save                      # Save current process list
+```
+
+### Install Script Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `server` / `agent` | Component to install (required, first argument) | — |
+| `--version` | Release version tag | `latest` |
+| `--install-dir` | Binary install path | `/usr/local/bin` |
+| `--config-dir` | Config file path | `/etc/oxmon` |
+| `--data-dir` | Server data storage (server only) | `/var/lib/oxmon` |
+| `--agent-id` | Agent identifier (agent only) | `$(hostname)` |
+| `--server-endpoint` | gRPC server address (agent only) | `http://127.0.0.1:9090` |
+| `--setup-pm2` | Generate PM2 config and start service | off |
+| `--pm2-only` | Only generate PM2 config (skip download) | off |
+
 ## Cross-Compilation / Multi-Platform Build
 
 Supported target platforms:
