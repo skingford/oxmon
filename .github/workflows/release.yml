@@ -1,8 +1,8 @@
 name: Release
 
 on:
-  release:
-    types: [created]
+  push:
+    tags: ["v*"]
 
 permissions:
   contents: write
@@ -29,6 +29,10 @@ jobs:
         with:
           version: ${{ env.PROTOC_VERSION }}
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
@@ -37,7 +41,7 @@ jobs:
 
       - name: Package
         run: |
-          TAG="${{ github.event.release.tag_name }}"
+          TAG="${GITHUB_REF#refs/tags/}"
           for bin in oxmon-agent oxmon-server; do
             tar czf "${bin}-${TAG}-${{ matrix.target }}.tar.gz" \
               -C "target/${{ matrix.target }}/release" "${bin}"
@@ -54,7 +58,7 @@ jobs:
       matrix:
         include:
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-13
           - target: aarch64-apple-darwin
             os: macos-latest
     runs-on: ${{ matrix.os }}
@@ -73,22 +77,24 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Build agent
-        run: cargo build --release --target ${{ matrix.target }} --bin oxmon-agent
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package
         run: |
-          TAG="${{ github.event.release.tag_name }}"
-          tar czf "oxmon-agent-${TAG}-${{ matrix.target }}.tar.gz" \
-            -C "target/${{ matrix.target }}/release" oxmon-agent
+          TAG="${GITHUB_REF#refs/tags/}"
+          for bin in oxmon-agent oxmon-server; do
+            tar czf "${bin}-${TAG}-${{ matrix.target }}.tar.gz" \
+              -C "target/${{ matrix.target }}/release" "${bin}"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.target }}
           path: "*.tar.gz"
 
-  # --------------- Create GitHub Release ---------------
-  release:
+  # --------------- Upload to GitHub Release ---------------
+  upload:
     needs: [build-linux, build-macos]
     runs-on: ubuntu-latest
     steps:
@@ -100,9 +106,9 @@ jobs:
       - name: Create checksums
         run: sha256sum *.tar.gz > SHA256SUMS
 
-      - uses: softprops/action-gh-release@v2
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
           files: |
             *.tar.gz
             SHA256SUMS
