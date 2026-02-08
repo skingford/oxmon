@@ -632,3 +632,7 @@ Tab 项: padding 12px 24px, 14px/500
 
 - 居中图标（对应场景的空状态图标，48px，`#D2D2D7`）
 - 提示文案：16px / `#6E6E73`
+
+## 技术栈
+
+- Next16.1.6 + React 19.2.4 + TypeScript
