@@ -51,6 +51,10 @@ pub struct AlertRuleConfig {
     pub horizon_secs: Option<u64>,
     pub min_data_points: Option<usize>,
 
+    // Cert expiration fields
+    pub warning_days: Option<i64>,
+    pub critical_days: Option<i64>,
+
     #[serde(default = "default_silence_secs")]
     pub silence_secs: u64,
 }

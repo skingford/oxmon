@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS cert_check_results (
     issuer TEXT,
     subject TEXT,
     san_list TEXT,
+    resolved_ips TEXT,
     error TEXT,
     checked_at INTEGER NOT NULL
 );
@@ -84,6 +85,10 @@ impl CertStore {
         conn.execute_batch(CERT_CHECK_RESULTS_SCHEMA)?;
         conn.execute_batch(AGENT_WHITELIST_SCHEMA)?;
         conn.execute_batch(CERTIFICATE_DETAILS_SCHEMA)?;
+        // 迁移：为已有的 cert_check_results 表添加 resolved_ips 列
+        let _ = conn.execute_batch(
+            "ALTER TABLE cert_check_results ADD COLUMN resolved_ips TEXT;",
+        );
         tracing::info!(path = %db_path.display(), "Initialized cert store");
         Ok(Self {
             conn: Mutex::new(conn),
@@ -331,9 +336,13 @@ impl CertStore {
             .san_list
             .as_ref()
             .map(|v| serde_json::to_string(v).unwrap_or_default());
+        let ips_json = result
+            .resolved_ips
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
         conn.execute(
-            "INSERT INTO cert_check_results (id, domain_id, domain, is_valid, chain_valid, not_before, not_after, days_until_expiry, issuer, subject, san_list, error, checked_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO cert_check_results (id, domain_id, domain, is_valid, chain_valid, not_before, not_after, days_until_expiry, issuer, subject, san_list, resolved_ips, error, checked_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             rusqlite::params![
                 result.id,
                 result.domain_id,
@@ -346,6 +355,7 @@ impl CertStore {
                 result.issuer,
                 result.subject,
                 san_json,
+                ips_json,
                 result.error,
                 result.checked_at.timestamp(),
             ],
@@ -356,7 +366,7 @@ impl CertStore {
     pub fn query_latest_results(&self) -> Result<Vec<CertCheckResult>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT r.id, r.domain_id, r.domain, r.is_valid, r.chain_valid, r.not_before, r.not_after, r.days_until_expiry, r.issuer, r.subject, r.san_list, r.error, r.checked_at
+            "SELECT r.id, r.domain_id, r.domain, r.is_valid, r.chain_valid, r.not_before, r.not_after, r.days_until_expiry, r.issuer, r.subject, r.san_list, r.resolved_ips, r.error, r.checked_at
              FROM cert_check_results r
              INNER JOIN (
                  SELECT domain_id, MAX(checked_at) AS max_checked
@@ -377,7 +387,7 @@ impl CertStore {
     pub fn query_result_by_domain(&self, domain: &str) -> Result<Option<CertCheckResult>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, domain_id, domain, is_valid, chain_valid, not_before, not_after, days_until_expiry, issuer, subject, san_list, error, checked_at
+            "SELECT id, domain_id, domain, is_valid, chain_valid, not_before, not_after, days_until_expiry, issuer, subject, san_list, resolved_ips, error, checked_at
              FROM cert_check_results
              WHERE domain = ?1
              ORDER BY checked_at DESC
@@ -422,7 +432,8 @@ impl CertStore {
         let not_after: Option<i64> = row.get(6)?;
         let days: Option<i64> = row.get(7)?;
         let san_str: Option<String> = row.get(10)?;
-        let checked: i64 = row.get(12)?;
+        let ips_str: Option<String> = row.get(11)?;
+        let checked: i64 = row.get(13)?;
         Ok(CertCheckResult {
             id: row.get(0)?,
             domain_id: row.get(1)?,
@@ -435,7 +446,8 @@ impl CertStore {
             issuer: row.get(8)?,
             subject: row.get(9)?,
             san_list: san_str.and_then(|s| serde_json::from_str(&s).ok()),
-            error: row.get(11)?,
+            resolved_ips: ips_str.and_then(|s| serde_json::from_str(&s).ok()),
+            error: row.get(12)?,
             checked_at: DateTime::from_timestamp(checked, 0).unwrap_or_default(),
         })
     }
@@ -761,6 +773,7 @@ mod tests {
             issuer: None,
             subject: None,
             san_list: None,
+            resolved_ips: None,
             error: None,
             checked_at: Utc::now(),
         };
@@ -813,6 +826,7 @@ mod tests {
             issuer: Some("Let's Encrypt".to_string()),
             subject: Some("cert.com".to_string()),
             san_list: Some(vec!["cert.com".to_string(), "www.cert.com".to_string()]),
+            resolved_ips: Some(vec!["1.2.3.4".to_string(), "2001:db8::1".to_string()]),
             error: None,
             checked_at: Utc::now(),
         };
@@ -823,8 +837,11 @@ mod tests {
         assert_eq!(latest[0].domain, "cert.com");
         assert!(latest[0].is_valid);
         assert_eq!(latest[0].san_list.as_ref().unwrap().len(), 2);
+        assert_eq!(latest[0].resolved_ips.as_ref().unwrap().len(), 2);
+        assert_eq!(latest[0].resolved_ips.as_ref().unwrap()[0], "1.2.3.4");
 
         let by_domain = store.query_result_by_domain("cert.com").unwrap().unwrap();
         assert_eq!(by_domain.issuer, Some("Let's Encrypt".to_string()));
+        assert_eq!(by_domain.resolved_ips.as_ref().unwrap().len(), 2);
     }
 }

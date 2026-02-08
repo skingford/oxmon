@@ -18,7 +18,7 @@ retention_days = 7
 require_agent_auth = false
 
 # Alert Rules
-# Supported types: "threshold", "rate_of_change", "trend_prediction"
+# Supported types: "threshold", "rate_of_change", "trend_prediction", "cert_expiration"
 
 [[alert.rules]]
 name = "high-cpu"
@@ -52,28 +52,16 @@ min_data_points = 10
 severity = "info"
 silence_secs = 3600
 
-# Certificate expiry warning (30 days)
+# Certificate expiration alert (uses dedicated cert_expiration rule type)
+# Triggers warning at 30 days, critical at 7 days before expiry
 [[alert.rules]]
-name = "cert-expiry-warning"
-type = "threshold"
+name = "cert-expiry"
+type = "cert_expiration"
 metric = "certificate.days_until_expiry"
 agent_pattern = "cert-checker"
-operator = "less_than"
-value = 30.0
-duration_secs = 0
-severity = "warning"
-silence_secs = 86400
-
-# Certificate expiry critical (7 days)
-[[alert.rules]]
-name = "cert-expiry-critical"
-type = "threshold"
-metric = "certificate.days_until_expiry"
-agent_pattern = "cert-checker"
-operator = "less_than"
-value = 7.0
-duration_secs = 0
 severity = "critical"
+warning_days = 30
+critical_days = 7
 silence_secs = 86400
 
 # Certificate invalid

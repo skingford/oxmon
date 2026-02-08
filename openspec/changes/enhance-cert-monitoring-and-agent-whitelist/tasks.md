@@ -26,7 +26,7 @@
 - [x] 3.5 Add config flag `require_agent_auth` (default: false) to server config
 - [x] 3.6 Wire up interceptor to gRPC server with conditional activation based on config
 - [x] 3.7 Update gRPC ReportMetrics handler to log agent_id from extensions
-- [ ] 3.8 Add integration tests for authenticated and unauthenticated requests
+- [x] 3.8 Add integration tests for authenticated and unauthenticated requests
 
 ## 4. Agent Whitelist - REST API
 
@@ -37,7 +37,7 @@
 - [x] 4.5 Add request/response types for whitelist API
 - [x] 4.6 Add validation for duplicate agent_id (return 409 Conflict)
 - [x] 4.7 Wire up whitelist routes to axum router
-- [ ] 4.8 Add API tests for whitelist management endpoints
+- [x] 4.8 Add API tests for whitelist management endpoints
 
 ## 5. Certificate Details - Collection
 
@@ -57,7 +57,7 @@
 - [x] 6.2 Update certificate monitoring scheduler to call new collector
 - [x] 6.3 Store collected certificate details in certificate_details table
 - [x] 6.4 Handle and log collection failures with error status
-- [ ] 6.5 Add integration tests for certificate collection and storage
+- [x] 6.5 Add integration tests for certificate collection and storage
 
 ## 7. Certificate Details - REST API
 
@@ -68,31 +68,31 @@
 - [x] 7.5 Add request/response types for certificate API
 - [x] 7.6 Add pagination support for certificate list endpoint
 - [x] 7.7 Wire up certificate routes to axum router
-- [ ] 7.8 Add API tests for certificate endpoints
+- [x] 7.8 Add API tests for certificate endpoints
 
 ## 8. Certificate Expiration Alerting
 
-- [ ] 8.1 Create CertificateExpirationRule in oxmon-alert crate
-- [ ] 8.2 Implement alert rule that checks certificate expiration thresholds
-- [ ] 8.3 Add configurable warning threshold (default: 30 days)
-- [ ] 8.4 Add configurable critical threshold (default: 7 days)
-- [ ] 8.5 Include certificate details in alert payload (domain, expiration, issuer, IPs)
-- [ ] 8.6 Integrate certificate expiration rule with alert engine
-- [ ] 8.7 Add tests for certificate expiration alerting
+- [x] 8.1 Create CertificateExpirationRule in oxmon-alert crate
+- [x] 8.2 Implement alert rule that checks certificate expiration thresholds
+- [x] 8.3 Add configurable warning threshold (default: 30 days)
+- [x] 8.4 Add configurable critical threshold (default: 7 days)
+- [x] 8.5 Include certificate details in alert payload (domain, expiration, issuer, IPs)
+- [x] 8.6 Integrate certificate expiration rule with alert engine
+- [x] 8.7 Add tests for certificate expiration alerting
 
 ## 9. Agent Configuration
 
 - [x] 9.1 Add `auth_token` field to agent config (optional)
 - [x] 9.2 Update agent gRPC client to include token in metadata if configured
 - [x] 9.3 Add example agent config with auth_token placeholder
-- [ ] 9.4 Update agent documentation with authentication setup instructions
+- [x] 9.4 Update agent documentation with authentication setup instructions
 
 ## 10. Documentation and Testing
 
 - [x] 10.1 Update server config example with require_agent_auth flag
 - [x] 10.2 Add migration guide for enabling agent authentication
-- [ ] 10.3 Add API documentation for whitelist endpoints to OpenAPI spec
-- [ ] 10.4 Add API documentation for certificate endpoints to OpenAPI spec
-- [ ] 10.5 Run full integration test suite
+- [x] 10.3 Add API documentation for whitelist endpoints to OpenAPI spec
+- [x] 10.4 Add API documentation for certificate endpoints to OpenAPI spec
+- [x] 10.5 Run full integration test suite
 - [x] 10.6 Run clippy and fix any warnings
-- [ ] 10.7 Update CLAUDE.md if new patterns or commands are introduced
+- [x] 10.7 Update CLAUDE.md if new patterns or commands are introduced

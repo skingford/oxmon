@@ -44,8 +44,8 @@ Agent (per monitored host)          Server (central)
 | `oxmon-common` | Shared types, protobuf codegen (build.rs), `MetricDataPoint` |
 | `oxmon-collector` | Trait `Collector` + implementations for each metric type |
 | `oxmon-agent` | Agent binary: collection loop, gRPC client, offline buffering |
-| `oxmon-storage` | `StorageEngine` trait, time-partitioned SQLite (daily), cert storage |
-| `oxmon-alert` | `AlertRule` trait, rule types (threshold, rate-of-change, trend), sliding window engine |
+| `oxmon-storage` | `StorageEngine` trait, time-partitioned SQLite (daily), cert storage, agent whitelist, token auth (`auth` module) |
+| `oxmon-alert` | `AlertRule` trait, rule types (threshold, rate-of-change, trend, cert-expiration), sliding window engine |
 | `oxmon-notify` | `ChannelPlugin` trait, plugin registry, routing by severity, silence windows. Plugins: email, webhook, sms, dingtalk, weixin |
 | `oxmon-server` | Server binary: gRPC handler, REST API, `AppState`, cert scheduler |
 
@@ -56,10 +56,12 @@ Agent (per monitored host)          Server (central)
 - **Alert deduplication**: The alert engine uses per-(rule_id, agent_id) sliding windows with configurable silence periods.
 - **Agent glob matching**: Alert rules use `glob-match` patterns to target specific agents.
 - **No OpenSSL**: All TLS uses `rustls`/`tokio-rustls`. The `reqwest` dependency uses `rustls-tls` feature. SQLite is bundled.
+- **Agent authentication**: Optional bearer-token auth for gRPC ingestion. Tokens are bcrypt-hashed and stored in the `agent_whitelist` table. Managed via REST API (`/api/v1/agents/whitelist`). Controlled by `require_agent_auth` config flag.
+- **Certificate details collection**: The cert scheduler uses `CertificateCollector` (DNS resolution + TLS + x509 parsing) to gather detailed cert info (issuer, SANs, chain validation, IPs) stored in `certificate_details` table.
 
 ## REST API Routes
 
-Core metrics API is in `oxmon-server/src/api.rs`. Certificate management API is in `oxmon-server/src/cert/api.rs`. OpenAPI spec is served from `oxmon-server/src/openapi.rs`. All routes are prefixed with `/api/v1/`.
+Core metrics API is in `oxmon-server/src/api.rs`. Certificate management API is in `oxmon-server/src/cert/api.rs`. Certificate details API is in `oxmon-server/src/api/certificates.rs`. Agent whitelist API is in `oxmon-server/src/api/whitelist.rs`. OpenAPI spec is served from `oxmon-server/src/openapi.rs`. All routes are prefixed with `/api/v1/`.
 
 ## Configuration
 

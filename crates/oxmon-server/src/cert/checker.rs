@@ -15,6 +15,15 @@ pub async fn check_certificate(
     timeout_secs: u64,
 ) -> CertCheckResult {
     let now = Utc::now();
+
+    // 解析域名 IP 地址
+    let resolved_ips = resolve_ips(domain, port).await;
+    let ips_field = if resolved_ips.is_empty() {
+        None
+    } else {
+        Some(resolved_ips)
+    };
+
     match do_check(domain, port, timeout_secs).await {
         Ok(result) => CertCheckResult {
             id: uuid::Uuid::new_v4().to_string(),
@@ -28,6 +37,7 @@ pub async fn check_certificate(
             issuer: result.issuer,
             subject: result.subject,
             san_list: result.san_list,
+            resolved_ips: ips_field,
             error: None,
             checked_at: now,
         },
@@ -43,9 +53,23 @@ pub async fn check_certificate(
             issuer: None,
             subject: None,
             san_list: None,
+            resolved_ips: ips_field,
             error: Some(e.to_string()),
             checked_at: now,
         },
+    }
+}
+
+/// 解析域名对应的 IP 地址列表
+async fn resolve_ips(domain: &str, port: i32) -> Vec<String> {
+    let addr = format!("{domain}:{port}");
+    let result = tokio::net::lookup_host(&addr).await;
+    match result {
+        Ok(addrs) => addrs.map(|a| a.ip().to_string()).collect(),
+        Err(e) => {
+            tracing::debug!(domain, error = %e, "DNS resolution failed");
+            Vec::new()
+        }
     }
 }
 

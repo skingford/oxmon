@@ -8,6 +8,7 @@ mod state;
 use anyhow::Result;
 use chrono::Utc;
 use oxmon_alert::engine::AlertEngine;
+use oxmon_alert::rules::cert_expiration::CertExpirationRule;
 use oxmon_alert::rules::rate_of_change::RateOfChangeRule;
 use oxmon_alert::rules::threshold::{CompareOp, ThresholdRule};
 use oxmon_alert::rules::trend_prediction::TrendPredictionRule;
@@ -85,6 +86,16 @@ fn build_alert_rules(cfg: &[config::AlertRuleConfig]) -> Vec<Box<dyn AlertRule>>
                         silence_secs: r.silence_secs,
                     }));
                 }
+            }
+            "cert_expiration" => {
+                let warning = r.warning_days.unwrap_or(30);
+                let critical = r.critical_days.unwrap_or(7);
+                rules.push(Box::new(CertExpirationRule::new(
+                    r.name.clone(),
+                    warning,
+                    critical,
+                    r.silence_secs,
+                )));
             }
             other => tracing::warn!(rule_type = other, "Unknown alert rule type"),
         }

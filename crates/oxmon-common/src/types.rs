@@ -121,6 +121,8 @@ pub struct CertCheckResult {
     pub subject: Option<String>,
     /// 主体备用名称列表（SAN）
     pub san_list: Option<Vec<String>>,
+    /// 域名解析 IP 地址列表
+    pub resolved_ips: Option<Vec<String>>,
     /// 错误信息
     pub error: Option<String>,
     /// 检查时间
