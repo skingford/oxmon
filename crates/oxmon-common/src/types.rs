@@ -195,6 +195,37 @@ pub struct AddAgentResponse {
     pub created_at: DateTime<Utc>,
 }
 
+/// 更新 Agent 白名单请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct UpdateAgentRequest {
+    /// 描述信息
+    pub description: Option<String>,
+}
+
+/// Agent 白名单详情（包含在线状态）
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct AgentWhitelistDetail {
+    /// Agent 唯一标识
+    pub agent_id: String,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 描述信息
+    pub description: Option<String>,
+    /// 最后上报时间
+    pub last_seen: Option<DateTime<Utc>>,
+    /// 在线状态（active / inactive / unknown）
+    pub status: String,
+}
+
+/// 重新生成 Token 响应
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct RegenerateTokenResponse {
+    /// Agent 唯一标识
+    pub agent_id: String,
+    /// 新生成的认证 token
+    pub token: String,
+}
+
 // Certificate details types
 
 /// 证书详细信息

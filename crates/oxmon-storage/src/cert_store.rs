@@ -509,6 +509,28 @@ impl CertStore {
         Ok(deleted > 0)
     }
 
+    pub fn update_agent_whitelist(
+        &self,
+        agent_id: &str,
+        description: Option<&str>,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let updated = conn.execute(
+            "UPDATE agent_whitelist SET description = ?2 WHERE agent_id = ?1",
+            rusqlite::params![agent_id, description],
+        )?;
+        Ok(updated > 0)
+    }
+
+    pub fn update_agent_token_hash(&self, agent_id: &str, token_hash: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let updated = conn.execute(
+            "UPDATE agent_whitelist SET token_hash = ?2 WHERE agent_id = ?1",
+            rusqlite::params![agent_id, token_hash],
+        )?;
+        Ok(updated > 0)
+    }
+
     // ---- Certificate details operations ----
 
     pub fn upsert_certificate_details(

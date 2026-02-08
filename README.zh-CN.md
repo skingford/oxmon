@@ -382,10 +382,53 @@ curl -X POST http://localhost:8080/api/v1/agents/whitelist \
 
 #### `GET /api/v1/agents/whitelist`
 
-列出所有白名单中的 Agent（不包含 token）。
+列出所有白名单中的 Agent（包含在线状态，不包含 token）。
 
 ```bash
 curl http://localhost:8080/api/v1/agents/whitelist
+```
+
+响应示例：
+
+```json
+[
+  {
+    "agent_id": "web-server-01",
+    "created_at": "2026-02-08T10:00:00Z",
+    "description": "生产环境 Web 服务器",
+    "last_seen": "2026-02-08T12:30:00Z",
+    "status": "active"
+  }
+]
+```
+
+`status` 字段取值：`active`（在线）、`inactive`（离线）、`unknown`（从未上报）。
+
+#### `PUT /api/v1/agents/whitelist/{agent_id}`
+
+更新 Agent 白名单信息（如描述）。
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/agents/whitelist/web-server-01 \
+  -H "Content-Type: application/json" \
+  -d '{"description": "生产环境 Web 服务器 - 已迁移"}'
+```
+
+#### `POST /api/v1/agents/whitelist/{agent_id}/token`
+
+重新生成 Agent 的认证 Token。生成后旧 Token 立即失效，请更新 Agent 配置中的 `auth_token` 并重启 Agent。
+
+```bash
+curl -X POST http://localhost:8080/api/v1/agents/whitelist/web-server-01/token
+```
+
+响应示例：
+
+```json
+{
+  "agent_id": "web-server-01",
+  "token": "NewToken1234567890..."
+}
 ```
 
 #### `DELETE /api/v1/agents/whitelist/{agent_id}`
@@ -395,8 +438,6 @@ curl http://localhost:8080/api/v1/agents/whitelist
 ```bash
 curl -X DELETE http://localhost:8080/api/v1/agents/whitelist/web-server-01
 ```
-
-> **Token 轮换**：删除 Agent 后重新添加即可生成新 token，然后更新 Agent 配置中的 `auth_token` 并重启 Agent。
 
 ### 证书详情查询
 

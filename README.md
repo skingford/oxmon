@@ -382,10 +382,53 @@ Response example:
 
 #### `GET /api/v1/agents/whitelist`
 
-List all whitelisted agents (tokens are not included).
+List all whitelisted agents with online status (tokens are not included).
 
 ```bash
 curl http://localhost:8080/api/v1/agents/whitelist
+```
+
+Response example:
+
+```json
+[
+  {
+    "agent_id": "web-server-01",
+    "created_at": "2026-02-08T10:00:00Z",
+    "description": "Production web server",
+    "last_seen": "2026-02-08T12:30:00Z",
+    "status": "active"
+  }
+]
+```
+
+`status` values: `active` (online), `inactive` (offline), `unknown` (never reported).
+
+#### `PUT /api/v1/agents/whitelist/{agent_id}`
+
+Update agent whitelist information (e.g., description).
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/agents/whitelist/web-server-01 \
+  -H "Content-Type: application/json" \
+  -d '{"description": "Production web server - migrated"}'
+```
+
+#### `POST /api/v1/agents/whitelist/{agent_id}/token`
+
+Regenerate the authentication token for an agent. The old token is immediately invalidated. Update the `auth_token` in the agent config and restart the agent.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/agents/whitelist/web-server-01/token
+```
+
+Response example:
+
+```json
+{
+  "agent_id": "web-server-01",
+  "token": "NewToken1234567890..."
+}
 ```
 
 #### `DELETE /api/v1/agents/whitelist/{agent_id}`
@@ -395,8 +438,6 @@ Remove an agent from the whitelist.
 ```bash
 curl -X DELETE http://localhost:8080/api/v1/agents/whitelist/web-server-01
 ```
-
-> **Token Rotation**: Delete the agent and re-add it to generate a new token, then update the `auth_token` in the agent config and restart.
 
 ### Certificate Details
 

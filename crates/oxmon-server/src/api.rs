@@ -129,13 +129,6 @@ async fn agent_latest(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
 ) -> impl IntoResponse {
-    let registry = state.agent_registry.lock().unwrap();
-    if registry.get_agent(&agent_id).is_none() {
-        return error_response(StatusCode::NOT_FOUND, "not_found", "Agent not found")
-            .into_response();
-    }
-    drop(registry);
-
     // Query last 5 minutes of data to get latest values
     let to = Utc::now();
     let from = to - chrono::Duration::minutes(5);
@@ -166,6 +159,20 @@ async fn agent_latest(
                     timestamp: last.timestamp,
                 });
             }
+        }
+    }
+
+    if latest.is_empty() {
+        // Check if agent exists in whitelist or registry
+        let in_registry = state.agent_registry.lock().unwrap().get_agent(&agent_id).is_some();
+        let in_whitelist = state
+            .cert_store
+            .get_agent_token_hash(&agent_id)
+            .unwrap_or(None)
+            .is_some();
+        if !in_registry && !in_whitelist {
+            return error_response(StatusCode::NOT_FOUND, "not_found", "Agent not found")
+                .into_response();
         }
     }
 
