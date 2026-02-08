@@ -26,14 +26,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install protoc
-        run: |
-          PB_REL="https://github.com/protocolbuffers/protobuf/releases"
-          curl -fsSL "$PB_REL/download/v${{ env.PROTOC_VERSION }}/protoc-${{ env.PROTOC_VERSION }}-linux-x86_64.zip" -o protoc.zip
-          sudo unzip -o protoc.zip -d /usr/local bin/protoc 'include/*'
-          rm protoc.zip
-          protoc --version
-
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
