@@ -14,11 +14,11 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 /// API 错误响应
 #[derive(Serialize, ToSchema)]
-pub(crate) struct ApiError {
+pub struct ApiError {
     /// 错误信息
-    error: String,
+    pub error: String,
     /// 错误码
-    code: String,
+    pub code: String,
 }
 
 fn error_response(status: StatusCode, code: &str, msg: &str) -> impl IntoResponse {
@@ -80,8 +80,10 @@ struct AgentResponse {
     get,
     path = "/v1/agents",
     tag = "Agents",
+    security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Agent 列表", body = Vec<AgentResponse>)
+        (status = 200, description = "Agent 列表", body = Vec<AgentResponse>),
+        (status = 401, description = "未认证", body = ApiError)
     )
 )]
 async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
@@ -117,11 +119,13 @@ struct LatestMetric {
     get,
     path = "/v1/agents/{id}/latest",
     tag = "Agents",
+    security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "Agent 唯一标识")
     ),
     responses(
         (status = 200, description = "最新指标列表", body = Vec<LatestMetric>),
+        (status = 401, description = "未认证", body = ApiError),
         (status = 404, description = "Agent 不存在", body = ApiError)
     )
 )]
@@ -211,10 +215,12 @@ struct MetricPointResponse {
     get,
     path = "/v1/metrics",
     tag = "Metrics",
+    security(("bearer_auth" = [])),
     params(MetricQueryParams),
     responses(
         (status = 200, description = "指标数据点列表", body = Vec<MetricPointResponse>),
-        (status = 400, description = "请求参数错误", body = ApiError)
+        (status = 400, description = "请求参数错误", body = ApiError),
+        (status = 401, description = "未认证", body = ApiError)
     )
 )]
 async fn query_metrics(
@@ -294,8 +300,10 @@ struct AlertRuleResponse {
     get,
     path = "/v1/alerts/rules",
     tag = "Alerts",
+    security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "告警规则列表", body = Vec<AlertRuleResponse>)
+        (status = 200, description = "告警规则列表", body = Vec<AlertRuleResponse>),
+        (status = 401, description = "未认证", body = ApiError)
     )
 )]
 async fn list_alert_rules(State(state): State<AppState>) -> impl IntoResponse {
@@ -367,9 +375,11 @@ struct AlertEventResponse {
     get,
     path = "/v1/alerts/history",
     tag = "Alerts",
+    security(("bearer_auth" = [])),
     params(AlertHistoryParams),
     responses(
-        (status = 200, description = "告警事件列表", body = Vec<AlertEventResponse>)
+        (status = 200, description = "告警事件列表", body = Vec<AlertEventResponse>),
+        (status = 401, description = "未认证", body = ApiError)
     )
 )]
 async fn alert_history(
@@ -418,9 +428,18 @@ async fn alert_history(
     }
 }
 
-pub fn api_routes() -> OpenApiRouter<AppState> {
+pub fn public_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(health))
+}
+
+pub fn auth_routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(crate::auth::login))
+}
+
+pub fn protected_routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
         .routes(routes!(list_agents))
         .routes(routes!(agent_latest))
         .routes(routes!(query_metrics))

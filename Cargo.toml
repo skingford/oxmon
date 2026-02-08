@@ -72,6 +72,9 @@ trust-dns-resolver = "0.23"
 # Snowflake ID
 rs-snowflake = "0.6"
 
+# JWT
+jsonwebtoken = "9"
+
 # Crypto (HMAC signing)
 hmac = "0.12"
 sha2 = "0.10"

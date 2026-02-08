@@ -79,6 +79,16 @@ CREATE INDEX IF NOT EXISTS idx_cert_details_not_after ON certificate_details(not
 CREATE INDEX IF NOT EXISTS idx_cert_details_domain ON certificate_details(domain);
 ";
 
+const USERS_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+";
+
 pub struct CertStore {
     conn: Mutex<Connection>,
     _db_path: PathBuf,
@@ -111,6 +121,8 @@ impl CertStore {
         let _ = conn.execute_batch(
             "ALTER TABLE cert_check_results ADD COLUMN updated_at INTEGER;",
         );
+
+        conn.execute_batch(USERS_SCHEMA)?;
 
         let token_encryptor = TokenEncryptor::load_or_create(data_dir)?;
         tracing::info!(path = %db_path.display(), "Initialized cert store");
@@ -786,6 +798,58 @@ impl CertStore {
             Some(Err(e)) => Err(e.into()),
             None => Ok(None),
         }
+    }
+
+    // ---- Certificate details operations ----
+
+    // ---- User operations ----
+
+    pub fn get_user_by_username(&self, username: &str) -> Result<Option<oxmon_common::types::User>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, username, password_hash, created_at, updated_at FROM users WHERE username = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![username], |row| {
+            let created: i64 = row.get(3)?;
+            let updated: i64 = row.get(4)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                created,
+                updated,
+            ))
+        })?;
+        match rows.next() {
+            Some(Ok((id, username, password_hash, created, updated))) => {
+                Ok(Some(oxmon_common::types::User {
+                    id,
+                    username,
+                    password_hash,
+                    created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+                    updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+                }))
+            }
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn create_user(&self, username: &str, password_hash: &str) -> Result<String> {
+        let conn = self.conn.lock().unwrap();
+        let id = oxmon_common::id::next_id();
+        let now = Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO users (id, username, password_hash, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![id, username, password_hash, now, now],
+        )?;
+        Ok(id)
+    }
+
+    pub fn count_users(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
+        Ok(count)
     }
 
     // ---- Certificate details operations ----

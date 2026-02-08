@@ -61,4 +61,6 @@ pub struct AppState {
     pub cert_store: Arc<CertStore>,
     pub connect_timeout_secs: u64,
     pub start_time: DateTime<Utc>,
+    pub jwt_secret: Arc<String>,
+    pub token_expire_secs: u64,
 }

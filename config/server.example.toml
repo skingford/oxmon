@@ -17,6 +17,17 @@ retention_days = 7
 # Manage whitelist via: POST/GET/DELETE /api/v1/agents/whitelist
 require_agent_auth = false
 
+# REST API Authentication (JWT)
+# All REST API endpoints (except health check and login) require a valid JWT token.
+# Obtain a token via: POST /api/v1/auth/login
+[auth]
+# JWT signing secret. If not set, a random secret is generated on each startup
+# (tokens will be invalidated on restart). Set a fixed value for production.
+jwt_secret = "your-secret-key-here"
+token_expire_secs = 86400       # Token validity period (default: 24 hours)
+default_username = "admin"      # Default admin username (created on first startup)
+default_password = "changeme"   # Default admin password (created on first startup)
+
 # Alert Rules
 # Supported types: "threshold", "rate_of_change", "trend_prediction", "cert_expiration"
 

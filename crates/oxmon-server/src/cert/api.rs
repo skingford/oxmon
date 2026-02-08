@@ -41,10 +41,12 @@ fn error_response(status: StatusCode, code: &str, msg: &str) -> impl IntoRespons
     post,
     path = "/v1/certs/domains",
     tag = "Certificates",
+    security(("bearer_auth" = [])),
     request_body = CreateDomainRequest,
     responses(
         (status = 201, description = "域名创建成功", body = CertDomain),
         (status = 400, description = "请求参数错误", body = CertApiError),
+        (status = 401, description = "未授权", body = CertApiError),
         (status = 409, description = "域名已存在", body = CertApiError)
     )
 )]
@@ -108,10 +110,12 @@ async fn create_domain(
     post,
     path = "/v1/certs/domains/batch",
     tag = "Certificates",
+    security(("bearer_auth" = [])),
     request_body = BatchCreateDomainsRequest,
     responses(
         (status = 201, description = "域名批量创建成功", body = Vec<CertDomain>),
         (status = 400, description = "请求参数错误", body = CertApiError),
+        (status = 401, description = "未授权", body = CertApiError),
         (status = 409, description = "域名重复", body = CertApiError)
     )
 )]
@@ -189,9 +193,11 @@ struct ListDomainsParams {
     get,
     path = "/v1/certs/domains",
     tag = "Certificates",
+    security(("bearer_auth" = [])),
     params(ListDomainsParams),
     responses(
-        (status = 200, description = "域名列表", body = Vec<CertDomain>)
+        (status = 200, description = "域名列表", body = Vec<CertDomain>),
+        (status = 401, description = "未授权", body = CertApiError)
     )
 )]
 async fn list_domains(
@@ -219,11 +225,13 @@ async fn list_domains(
     get,
     path = "/v1/certs/domains/{id}",
     tag = "Certificates",
+    security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "域名唯一标识")
     ),
     responses(
         (status = 200, description = "域名详情", body = CertDomain),
+        (status = 401, description = "未授权", body = CertApiError),
         (status = 404, description = "域名不存在", body = CertApiError)
     )
 )]
@@ -249,6 +257,7 @@ async fn get_domain(
     put,
     path = "/v1/certs/domains/{id}",
     tag = "Certificates",
+    security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "域名唯一标识")
     ),
@@ -256,6 +265,7 @@ async fn get_domain(
     responses(
         (status = 200, description = "域名更新成功", body = CertDomain),
         (status = 400, description = "请求参数错误", body = CertApiError),
+        (status = 401, description = "未授权", body = CertApiError),
         (status = 404, description = "域名不存在", body = CertApiError)
     )
 )]
@@ -296,11 +306,13 @@ async fn update_domain(
     delete,
     path = "/v1/certs/domains/{id}",
     tag = "Certificates",
+    security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "域名唯一标识")
     ),
     responses(
         (status = 204, description = "域名已删除"),
+        (status = 401, description = "未授权", body = CertApiError),
         (status = 404, description = "域名不存在", body = CertApiError)
     )
 )]
@@ -326,8 +338,10 @@ async fn delete_domain(
     get,
     path = "/v1/certs/status",
     tag = "Certificates",
+    security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "所有域名的最新检查结果", body = Vec<CertCheckResult>)
+        (status = 200, description = "所有域名的最新检查结果", body = Vec<CertCheckResult>),
+        (status = 401, description = "未授权", body = CertApiError)
     )
 )]
 async fn cert_status_all(State(state): State<AppState>) -> impl IntoResponse {
@@ -347,11 +361,13 @@ async fn cert_status_all(State(state): State<AppState>) -> impl IntoResponse {
     get,
     path = "/v1/certs/status/{domain}",
     tag = "Certificates",
+    security(("bearer_auth" = [])),
     params(
         ("domain" = String, Path, description = "域名地址")
     ),
     responses(
         (status = 200, description = "最新检查结果", body = CertCheckResult),
+        (status = 401, description = "未授权", body = CertApiError),
         (status = 404, description = "域名不存在", body = CertApiError)
     )
 )]
@@ -401,11 +417,13 @@ async fn cert_status_by_domain(
     post,
     path = "/v1/certs/domains/{id}/check",
     tag = "Certificates",
+    security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "域名唯一标识")
     ),
     responses(
         (status = 200, description = "证书检查结果", body = CertCheckResult),
+        (status = 401, description = "未授权", body = CertApiError),
         (status = 404, description = "域名不存在", body = CertApiError)
     )
 )]
@@ -449,8 +467,10 @@ async fn check_single_domain(
     post,
     path = "/v1/certs/check",
     tag = "Certificates",
+    security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "所有域名的证书检查结果", body = Vec<CertCheckResult>)
+        (status = 200, description = "所有域名的证书检查结果", body = Vec<CertCheckResult>),
+        (status = 401, description = "未授权", body = CertApiError)
     )
 )]
 async fn check_all_domains(State(state): State<AppState>) -> impl IntoResponse {

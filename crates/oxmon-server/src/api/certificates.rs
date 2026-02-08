@@ -35,11 +35,13 @@ fn default_limit() -> usize {
 #[utoipa::path(
     get,
     path = "/api/v1/certificates/{id}",
+    security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "证书唯一标识")
     ),
     responses(
         (status = 200, description = "证书详情", body = CertificateDetails),
+        (status = 401, description = "未认证"),
         (status = 404, description = "证书不存在"),
         (status = 500, description = "服务器错误")
     ),
@@ -73,11 +75,13 @@ async fn get_certificate(
 #[utoipa::path(
     get,
     path = "/api/v1/certificates",
+    security(("bearer_auth" = [])),
     params(
         CertificateListQuery
     ),
     responses(
         (status = 200, description = "证书列表", body = Vec<CertificateDetails>),
+        (status = 401, description = "未认证"),
         (status = 500, description = "服务器错误")
     ),
     tag = "Certificates"
@@ -125,11 +129,13 @@ struct CertificateChainInfo {
 #[utoipa::path(
     get,
     path = "/api/v1/certificates/{id}/chain",
+    security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "证书唯一标识")
     ),
     responses(
         (status = 200, description = "证书链信息", body = CertificateChainInfo),
+        (status = 401, description = "未认证"),
         (status = 404, description = "证书不存在"),
         (status = 500, description = "服务器错误")
     ),

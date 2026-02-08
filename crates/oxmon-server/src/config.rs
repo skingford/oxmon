@@ -19,6 +19,8 @@ pub struct ServerConfig {
     pub notification: NotificationConfig,
     #[serde(default)]
     pub cert_check: CertCheckConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -168,6 +170,41 @@ fn default_aggregation_window_secs() -> u64 {
 
 fn default_require_agent_auth() -> bool {
     false
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuthConfig {
+    #[serde(default)]
+    pub jwt_secret: Option<String>,
+    #[serde(default = "default_token_expire_secs")]
+    pub token_expire_secs: u64,
+    #[serde(default = "default_username")]
+    pub default_username: String,
+    #[serde(default = "default_password")]
+    pub default_password: String,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            jwt_secret: None,
+            token_expire_secs: default_token_expire_secs(),
+            default_username: default_username(),
+            default_password: default_password(),
+        }
+    }
+}
+
+fn default_token_expire_secs() -> u64 {
+    86400
+}
+
+fn default_username() -> String {
+    "admin".to_string()
+}
+
+fn default_password() -> String {
+    "changeme".to_string()
 }
 
 impl ServerConfig {

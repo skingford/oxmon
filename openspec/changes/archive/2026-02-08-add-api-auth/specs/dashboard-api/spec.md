@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: API SHALL list registered agents
 The REST API SHALL provide an endpoint to list all known agents and their status. This endpoint SHALL require a valid JWT Bearer token in the Authorization header.

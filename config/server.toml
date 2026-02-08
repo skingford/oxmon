@@ -12,8 +12,24 @@ data_dir = "data"
 # How many days to retain metric data
 retention_days = 7
 
+# Require agent authentication (default: false)
+# When enabled, agents must provide a valid token in the whitelist
+# Manage whitelist via: POST/GET/DELETE /api/v1/agents/whitelist
+require_agent_auth = false
+
+# REST API Authentication (JWT)
+# All REST API endpoints (except health check and login) require a valid JWT token.
+# Obtain a token via: POST /api/v1/auth/login
+[auth]
+# JWT signing secret. If not set, a random secret is generated on each startup
+# (tokens will be invalidated on restart). Set a fixed value for production.
+jwt_secret = "oxmon-jwt-secret-please-change-in-production"
+token_expire_secs = 86400       # Token validity period (default: 24 hours)
+default_username = "admin"      # Default admin username (created on first startup)
+default_password = "changeme"   # Default admin password (created on first startup)
+
 # Alert Rules
-# Supported types: "threshold", "rate_of_change", "trend_prediction"
+# Supported types: "threshold", "rate_of_change", "trend_prediction", "cert_expiration"
 
 [[alert.rules]]
 name = "high-cpu"
@@ -47,28 +63,16 @@ min_data_points = 10
 severity = "info"
 silence_secs = 3600
 
-# Certificate expiry warning (30 days)
+# Certificate expiration alert (uses dedicated cert_expiration rule type)
+# Triggers warning at 30 days, critical at 7 days before expiry
 [[alert.rules]]
-name = "cert-expiry-warning"
-type = "threshold"
+name = "cert-expiry"
+type = "cert_expiration"
 metric = "certificate.days_until_expiry"
 agent_pattern = "cert-checker"
-operator = "less_than"
-value = 30.0
-duration_secs = 0
-severity = "warning"
-silence_secs = 86400
-
-# Certificate expiry critical (7 days)
-[[alert.rules]]
-name = "cert-expiry-critical"
-type = "threshold"
-metric = "certificate.days_until_expiry"
-agent_pattern = "cert-checker"
-operator = "less_than"
-value = 7.0
-duration_secs = 0
 severity = "critical"
+warning_days = 30
+critical_days = 7
 silence_secs = 86400
 
 # Certificate invalid

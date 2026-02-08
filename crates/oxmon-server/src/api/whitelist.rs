@@ -18,8 +18,10 @@ use utoipa_axum::{router::OpenApiRouter, routes};
     post,
     path = "/api/v1/agents/whitelist",
     request_body = AddAgentRequest,
+    security(("bearer_auth" = [])),
     responses(
         (status = 200, description = "Agent 添加成功", body = AddAgentResponse),
+        (status = 401, description = "未认证"),
         (status = 409, description = "Agent ID 已存在"),
         (status = 500, description = "服务器错误")
     ),
@@ -86,8 +88,10 @@ async fn add_agent(
 #[utoipa::path(
     get,
     path = "/api/v1/agents/whitelist",
+    security(("bearer_auth" = [])),
     responses(
         (status = 200, description = "Agent 列表", body = Vec<AgentWhitelistDetail>),
+        (status = 401, description = "未认证"),
         (status = 500, description = "服务器错误")
     ),
     tag = "Agents"
@@ -133,11 +137,13 @@ async fn list_agents(
     put,
     path = "/api/v1/agents/whitelist/{id}",
     request_body = UpdateAgentRequest,
+    security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "Agent 白名单唯一标识")
     ),
     responses(
         (status = 200, description = "Agent 更新成功", body = AgentWhitelistDetail),
+        (status = 401, description = "未认证"),
         (status = 404, description = "Agent 不存在"),
         (status = 500, description = "服务器错误")
     ),
@@ -209,11 +215,13 @@ async fn update_agent(
 #[utoipa::path(
     post,
     path = "/api/v1/agents/whitelist/{id}/token",
+    security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "Agent 白名单唯一标识")
     ),
     responses(
         (status = 200, description = "Token 重新生成成功", body = RegenerateTokenResponse),
+        (status = 401, description = "未认证"),
         (status = 404, description = "Agent 不存在"),
         (status = 500, description = "服务器错误")
     ),
@@ -275,11 +283,13 @@ async fn regenerate_token(
 #[utoipa::path(
     delete,
     path = "/api/v1/agents/whitelist/{id}",
+    security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "Agent 白名单唯一标识")
     ),
     responses(
         (status = 200, description = "Agent 删除成功"),
+        (status = 401, description = "未认证"),
         (status = 404, description = "Agent 不存在"),
         (status = 500, description = "服务器错误")
     ),

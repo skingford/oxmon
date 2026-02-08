@@ -1,4 +1,5 @@
 mod api;
+mod auth;
 mod cert;
 mod config;
 mod grpc;
@@ -32,6 +33,7 @@ use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use tower_http::cors::{Any, CorsLayer};
+use axum::middleware;
 
 use crate::state::{AgentRegistry, AppState};
 
@@ -188,6 +190,40 @@ async fn main() -> Result<()> {
     let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(30)));
     let cert_store = Arc::new(CertStore::new(Path::new(&config.data_dir))?);
 
+    // JWT secret: use configured value or generate random
+    let jwt_secret = match &config.auth.jwt_secret {
+        Some(secret) => Arc::new(secret.clone()),
+        None => {
+            let secret = oxmon_storage::auth::generate_token();
+            tracing::warn!("No jwt_secret configured. A random secret was generated and will change on restart. Set [auth].jwt_secret in config for production use.");
+            Arc::new(secret)
+        }
+    };
+
+    // Default admin account: create if users table is empty
+    match cert_store.count_users() {
+        Ok(0) => {
+            let password_hash = oxmon_storage::auth::hash_token(&config.auth.default_password)?;
+            match cert_store.create_user(&config.auth.default_username, &password_hash) {
+                Ok(_) => {
+                    tracing::info!(
+                        username = %config.auth.default_username,
+                        "Created default admin account"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to create default admin account");
+                }
+            }
+        }
+        Ok(count) => {
+            tracing::info!(count, "Users table already has accounts, skipping default admin creation");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to check users table");
+        }
+    }
+
     let state = AppState {
         storage: storage.clone(),
         alert_engine,
@@ -196,6 +232,8 @@ async fn main() -> Result<()> {
         cert_store: cert_store.clone(),
         connect_timeout_secs: config.cert_check.connect_timeout_secs,
         start_time: Utc::now(),
+        jwt_secret,
+        token_expire_secs: config.auth.token_expire_secs,
     };
 
     // gRPC server
@@ -218,22 +256,52 @@ async fn main() -> Result<()> {
         ),
         tags(
             (name = "Health", description = "服务健康检查"),
+            (name = "Auth", description = "认证鉴权"),
             (name = "Agents", description = "Agent 管理"),
             (name = "Metrics", description = "指标查询"),
             (name = "Alerts", description = "告警规则与历史"),
             (name = "Certificates", description = "证书监控")
-        )
+        ),
+        modifiers(&SecurityAddon)
     )]
     struct ApiDoc;
 
-    let (api_router, api_spec) = api::api_routes()
+    struct SecurityAddon;
+
+    impl utoipa::Modify for SecurityAddon {
+        fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+            if let Some(components) = openapi.components.as_mut() {
+                components.add_security_scheme(
+                    "bearer_auth",
+                    utoipa::openapi::security::SecurityScheme::Http(
+                        utoipa::openapi::security::Http::new(
+                            utoipa::openapi::security::HttpAuthScheme::Bearer,
+                        ),
+                    ),
+                );
+            }
+        }
+    }
+
+    // Public routes (no auth required): health + login
+    let (public_router, public_spec) = api::public_routes()
+        .split_for_parts();
+
+    // Login route
+    let (login_router, login_spec) = api::auth_routes()
+        .split_for_parts();
+
+    // Protected routes (JWT auth required)
+    let (protected_router, protected_spec) = api::protected_routes()
         .split_for_parts();
 
     let (cert_router, cert_spec) = cert::api::cert_routes()
         .split_for_parts();
 
     let mut merged_spec = ApiDoc::openapi();
-    merged_spec.merge(api_spec);
+    merged_spec.merge(public_spec);
+    merged_spec.merge(login_spec);
+    merged_spec.merge(protected_spec);
     merged_spec.merge(cert_spec);
     let spec = Arc::new(merged_spec.clone());
 
@@ -242,8 +310,16 @@ async fn main() -> Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let app = api_router
-        .merge(cert_router)
+    let app = public_router
+        .merge(login_router)
+        .merge(
+            protected_router
+                .merge(cert_router)
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    auth::jwt_auth_middleware,
+                ))
+        )
         .with_state(state.clone())
         .merge(SwaggerUi::new("/docs").url("/v1/openapi.json", merged_spec))
         .merge(openapi::yaml_route(spec))

@@ -296,3 +296,39 @@ pub struct CertificateDetailsFilter {
     /// 按颁发者过滤
     pub issuer: Option<String>,
 }
+
+// User & Auth types
+
+/// 用户帐号
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct User {
+    /// 唯一标识
+    pub id: String,
+    /// 用户名
+    pub username: String,
+    /// 密码哈希（bcrypt）
+    #[serde(skip_serializing)]
+    pub password_hash: String,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 更新时间
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 登录请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct LoginRequest {
+    /// 用户名
+    pub username: String,
+    /// 密码
+    pub password: String,
+}
+
+/// 登录响应
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct LoginResponse {
+    /// JWT Token
+    pub token: String,
+    /// Token 有效期（秒）
+    pub expires_in: u64,
+}
