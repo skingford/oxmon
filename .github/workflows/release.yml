@@ -10,6 +10,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   PROTOC_VERSION: "25.1"
+  AWS_LC_SYS_CMAKE_BUILDER: "1"
 
 jobs:
   # --------------- Linux targets (cross-compiled) ---------------
@@ -25,9 +26,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: arduino/setup-protoc@v3
-        with:
-          version: ${{ env.PROTOC_VERSION }}
+      - name: Install protoc
+        run: |
+          PB_REL="https://github.com/protocolbuffers/protobuf/releases"
+          curl -fsSL "$PB_REL/download/v${{ env.PROTOC_VERSION }}/protoc-${{ env.PROTOC_VERSION }}-linux-x86_64.zip" -o protoc.zip
+          sudo unzip -o protoc.zip -d /usr/local bin/protoc 'include/*'
+          rm protoc.zip
+          protoc --version
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -56,12 +61,10 @@ jobs:
   build-macos:
     strategy:
       matrix:
-        include:
-          - target: x86_64-apple-darwin
-            os: macos-13
-          - target: aarch64-apple-darwin
-            os: macos-latest
-    runs-on: ${{ matrix.os }}
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -69,9 +72,10 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - uses: arduino/setup-protoc@v3
-        with:
-          version: ${{ env.PROTOC_VERSION }}
+      - name: Install protoc
+        run: |
+          brew install protobuf
+          protoc --version
 
       - uses: Swatinem/rust-cache@v2
         with:
