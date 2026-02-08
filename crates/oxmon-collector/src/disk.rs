@@ -48,32 +48,44 @@ impl Collector for DiskCollector {
             labels.insert("mount".to_string(), mount);
 
             points.push(MetricDataPoint {
+                id: oxmon_common::id::next_id(),
                 timestamp: now,
                 agent_id: agent_id.to_string(),
                 metric_name: "disk.total".to_string(),
                 value: total as f64,
                 labels: labels.clone(),
+                created_at: now,
+                updated_at: now,
             });
             points.push(MetricDataPoint {
+                id: oxmon_common::id::next_id(),
                 timestamp: now,
                 agent_id: agent_id.to_string(),
                 metric_name: "disk.used".to_string(),
                 value: used as f64,
                 labels: labels.clone(),
+                created_at: now,
+                updated_at: now,
             });
             points.push(MetricDataPoint {
+                id: oxmon_common::id::next_id(),
                 timestamp: now,
                 agent_id: agent_id.to_string(),
                 metric_name: "disk.available".to_string(),
                 value: available as f64,
                 labels: labels.clone(),
+                created_at: now,
+                updated_at: now,
             });
             points.push(MetricDataPoint {
+                id: oxmon_common::id::next_id(),
                 timestamp: now,
                 agent_id: agent_id.to_string(),
                 metric_name: "disk.used_percent".to_string(),
                 value: usage_pct,
                 labels,
+                created_at: now,
+                updated_at: now,
             });
         }
 

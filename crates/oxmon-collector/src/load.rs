@@ -31,32 +31,44 @@ impl Collector for LoadCollector {
 
         let points = vec![
             MetricDataPoint {
+                id: oxmon_common::id::next_id(),
                 timestamp: now,
                 agent_id: agent_id.to_string(),
                 metric_name: "system.load_1".to_string(),
                 value: load_avg.one,
                 labels: HashMap::new(),
+                created_at: now,
+                updated_at: now,
             },
             MetricDataPoint {
+                id: oxmon_common::id::next_id(),
                 timestamp: now,
                 agent_id: agent_id.to_string(),
                 metric_name: "system.load_5".to_string(),
                 value: load_avg.five,
                 labels: HashMap::new(),
+                created_at: now,
+                updated_at: now,
             },
             MetricDataPoint {
+                id: oxmon_common::id::next_id(),
                 timestamp: now,
                 agent_id: agent_id.to_string(),
                 metric_name: "system.load_15".to_string(),
                 value: load_avg.fifteen,
                 labels: HashMap::new(),
+                created_at: now,
+                updated_at: now,
             },
             MetricDataPoint {
+                id: oxmon_common::id::next_id(),
                 timestamp: now,
                 agent_id: agent_id.to_string(),
                 metric_name: "system.uptime".to_string(),
                 value: uptime as f64,
                 labels: HashMap::new(),
+                created_at: now,
+                updated_at: now,
             },
         ];
 

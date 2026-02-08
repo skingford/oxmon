@@ -97,7 +97,7 @@ impl AlertRule for ThresholdRule {
 
         let latest = recent.last().unwrap();
         Some(AlertEvent {
-            id: format!("{}-{}-{}", self.id, latest.agent_id, now.timestamp_millis()),
+            id: oxmon_common::id::next_id(),
             rule_id: self.id.clone(),
             agent_id: latest.agent_id.clone(),
             metric_name: self.metric.clone(),
@@ -110,6 +110,8 @@ impl AlertRule for ThresholdRule {
             threshold: self.value,
             timestamp: now,
             predicted_breach: None,
+            created_at: now,
+            updated_at: now,
         })
     }
 }

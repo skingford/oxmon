@@ -8,17 +8,22 @@ use oxmon_common::types::{MetricDataPoint, Severity};
 use std::collections::HashMap;
 
 fn make_dp(agent: &str, metric: &str, value: f64, secs_ago: i64) -> MetricDataPoint {
+    let ts = Utc::now() - Duration::seconds(secs_ago);
     MetricDataPoint {
-        timestamp: Utc::now() - Duration::seconds(secs_ago),
+        id: oxmon_common::id::next_id(),
+        timestamp: ts,
         agent_id: agent.to_string(),
         metric_name: metric.to_string(),
         value,
         labels: HashMap::new(),
+        created_at: ts,
+        updated_at: ts,
     }
 }
 
 #[test]
 fn threshold_rule_fires_when_sustained() {
+    oxmon_common::id::init(1, 1);
     let rule = ThresholdRule {
         id: "high-cpu".into(),
         metric: "cpu.usage".into(),
@@ -44,6 +49,7 @@ fn threshold_rule_fires_when_sustained() {
 
 #[test]
 fn threshold_rule_does_not_fire_below_threshold() {
+    oxmon_common::id::init(1, 1);
     let rule = ThresholdRule {
         id: "high-cpu".into(),
         metric: "cpu.usage".into(),
@@ -64,6 +70,7 @@ fn threshold_rule_does_not_fire_below_threshold() {
 
 #[test]
 fn threshold_rule_does_not_fire_when_partially_exceeded() {
+    oxmon_common::id::init(1, 1);
     let rule = ThresholdRule {
         id: "high-cpu".into(),
         metric: "cpu.usage".into(),
@@ -86,6 +93,7 @@ fn threshold_rule_does_not_fire_when_partially_exceeded() {
 
 #[test]
 fn rate_of_change_fires_on_spike() {
+    oxmon_common::id::init(1, 1);
     let rule = RateOfChangeRule {
         id: "mem-spike".into(),
         metric: "memory.used_percent".into(),
@@ -107,6 +115,7 @@ fn rate_of_change_fires_on_spike() {
 
 #[test]
 fn rate_of_change_does_not_fire_on_small_change() {
+    oxmon_common::id::init(1, 1);
     let rule = RateOfChangeRule {
         id: "mem-spike".into(),
         metric: "memory.used_percent".into(),
@@ -127,6 +136,7 @@ fn rate_of_change_does_not_fire_on_small_change() {
 
 #[test]
 fn trend_prediction_fires_when_breach_within_horizon() {
+    oxmon_common::id::init(1, 1);
     let rule = TrendPredictionRule {
         id: "disk-full".into(),
         metric: "disk.used_percent".into(),
@@ -142,25 +152,34 @@ fn trend_prediction_fires_when_breach_within_horizon() {
     let now = Utc::now();
     let window = vec![
         MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now - Duration::hours(2),
             agent_id: "db-01".into(),
             metric_name: "disk.used_percent".into(),
             value: 60.0,
             labels: HashMap::new(),
+            created_at: now - Duration::hours(2),
+            updated_at: now - Duration::hours(2),
         },
         MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now - Duration::hours(1),
             agent_id: "db-01".into(),
             metric_name: "disk.used_percent".into(),
             value: 70.0,
             labels: HashMap::new(),
+            created_at: now - Duration::hours(1),
+            updated_at: now - Duration::hours(1),
         },
         MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now,
             agent_id: "db-01".into(),
             metric_name: "disk.used_percent".into(),
             value: 80.0,
             labels: HashMap::new(),
+            created_at: now,
+            updated_at: now,
         },
     ];
 
@@ -172,6 +191,7 @@ fn trend_prediction_fires_when_breach_within_horizon() {
 
 #[test]
 fn trend_prediction_does_not_fire_when_decreasing() {
+    oxmon_common::id::init(1, 1);
     let rule = TrendPredictionRule {
         id: "disk-full".into(),
         metric: "disk.used_percent".into(),
@@ -186,25 +206,34 @@ fn trend_prediction_does_not_fire_when_decreasing() {
     let now = Utc::now();
     let window = vec![
         MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now - Duration::hours(2),
             agent_id: "db-01".into(),
             metric_name: "disk.used_percent".into(),
             value: 80.0,
             labels: HashMap::new(),
+            created_at: now - Duration::hours(2),
+            updated_at: now - Duration::hours(2),
         },
         MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now - Duration::hours(1),
             agent_id: "db-01".into(),
             metric_name: "disk.used_percent".into(),
             value: 70.0,
             labels: HashMap::new(),
+            created_at: now - Duration::hours(1),
+            updated_at: now - Duration::hours(1),
         },
         MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now,
             agent_id: "db-01".into(),
             metric_name: "disk.used_percent".into(),
             value: 60.0,
             labels: HashMap::new(),
+            created_at: now,
+            updated_at: now,
         },
     ];
 
@@ -213,6 +242,7 @@ fn trend_prediction_does_not_fire_when_decreasing() {
 
 #[test]
 fn engine_deduplication() {
+    oxmon_common::id::init(1, 1);
     let rule = ThresholdRule {
         id: "high-cpu".into(),
         metric: "cpu.usage".into(),
@@ -238,6 +268,7 @@ fn engine_deduplication() {
 
 #[test]
 fn engine_glob_pattern_matching() {
+    oxmon_common::id::init(1, 1);
     let rule = ThresholdRule {
         id: "high-cpu".into(),
         metric: "cpu.usage".into(),

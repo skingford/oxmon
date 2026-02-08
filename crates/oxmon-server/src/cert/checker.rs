@@ -26,7 +26,7 @@ pub async fn check_certificate(
 
     match do_check(domain, port, timeout_secs).await {
         Ok(result) => CertCheckResult {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: oxmon_common::id::next_id(),
             domain_id: domain_id.to_string(),
             domain: domain.to_string(),
             is_valid: result.is_valid,
@@ -40,9 +40,11 @@ pub async fn check_certificate(
             resolved_ips: ips_field,
             error: None,
             checked_at: now,
+            created_at: now,
+            updated_at: now,
         },
         Err(e) => CertCheckResult {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: oxmon_common::id::next_id(),
             domain_id: domain_id.to_string(),
             domain: domain.to_string(),
             is_valid: false,
@@ -56,6 +58,8 @@ pub async fn check_certificate(
             resolved_ips: ips_field,
             error: Some(e.to_string()),
             checked_at: now,
+            created_at: now,
+            updated_at: now,
         },
     }
 }

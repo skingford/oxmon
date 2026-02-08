@@ -1,6 +1,9 @@
 use anyhow::Result;
 use base64::{Engine as _, engine::general_purpose};
 use rand::Rng;
+use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
+use ring::rand::{SecureRandom, SystemRandom};
+use std::path::Path;
 
 /// 生成一个 32 字节的加密安全随机 token
 pub fn generate_token() -> String {
@@ -20,9 +23,84 @@ pub fn verify_token(token: &str, hash: &str) -> Result<bool> {
     Ok(bcrypt::verify(token, hash)?)
 }
 
+/// Token 加密器，使用 AES-256-GCM
+pub struct TokenEncryptor {
+    key_bytes: Vec<u8>,
+}
+
+impl TokenEncryptor {
+    /// 从密钥文件加载或自动生成
+    pub fn load_or_create(data_dir: &Path) -> Result<Self> {
+        let key_path = data_dir.join("token.key");
+        let key_bytes = if key_path.exists() {
+            std::fs::read(&key_path)?
+        } else {
+            let rng = SystemRandom::new();
+            let mut key = vec![0u8; 32];
+            rng.fill(&mut key)
+                .map_err(|_| anyhow::anyhow!("Failed to generate encryption key"))?;
+            std::fs::write(&key_path, &key)?;
+            tracing::info!(path = %key_path.display(), "Generated new token encryption key");
+            key
+        };
+
+        if key_bytes.len() != 32 {
+            anyhow::bail!("Invalid token encryption key length: expected 32 bytes, got {}", key_bytes.len());
+        }
+
+        Ok(Self { key_bytes })
+    }
+
+    /// 加密 token，返回 base64 编码的 nonce + ciphertext
+    pub fn encrypt(&self, plaintext: &str) -> Result<String> {
+        let unbound_key = UnboundKey::new(&AES_256_GCM, &self.key_bytes)
+            .map_err(|_| anyhow::anyhow!("Invalid encryption key"))?;
+        let key = LessSafeKey::new(unbound_key);
+
+        let rng = SystemRandom::new();
+        let mut nonce_bytes = [0u8; NONCE_LEN];
+        rng.fill(&mut nonce_bytes)
+            .map_err(|_| anyhow::anyhow!("Failed to generate nonce"))?;
+        let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+
+        let mut in_out = plaintext.as_bytes().to_vec();
+        key.seal_in_place_append_tag(nonce, Aad::empty(), &mut in_out)
+            .map_err(|_| anyhow::anyhow!("Encryption failed"))?;
+
+        // nonce (12 bytes) + ciphertext + tag
+        let mut result = nonce_bytes.to_vec();
+        result.extend_from_slice(&in_out);
+        Ok(general_purpose::STANDARD.encode(&result))
+    }
+
+    /// 解密 base64 编码的 nonce + ciphertext，返回原始 token
+    pub fn decrypt(&self, encrypted: &str) -> Result<String> {
+        let data = general_purpose::STANDARD.decode(encrypted)?;
+        if data.len() < NONCE_LEN + aead::AES_256_GCM.tag_len() {
+            anyhow::bail!("Encrypted data too short");
+        }
+
+        let unbound_key = UnboundKey::new(&AES_256_GCM, &self.key_bytes)
+            .map_err(|_| anyhow::anyhow!("Invalid encryption key"))?;
+        let key = LessSafeKey::new(unbound_key);
+
+        let (nonce_bytes, ciphertext) = data.split_at(NONCE_LEN);
+        let nonce = Nonce::try_assume_unique_for_key(nonce_bytes)
+            .map_err(|_| anyhow::anyhow!("Invalid nonce"))?;
+
+        let mut in_out = ciphertext.to_vec();
+        let plaintext = key
+            .open_in_place(nonce, Aad::empty(), &mut in_out)
+            .map_err(|_| anyhow::anyhow!("Decryption failed"))?;
+
+        Ok(String::from_utf8(plaintext.to_vec())?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_generate_token() {
@@ -38,5 +116,50 @@ mod tests {
         let hash = hash_token(&token).unwrap();
         assert!(verify_token(&token, &hash).unwrap());
         assert!(!verify_token("wrong_token", &hash).unwrap());
+    }
+
+    #[test]
+    fn test_encrypt_decrypt() {
+        let dir = TempDir::new().unwrap();
+        let enc = TokenEncryptor::load_or_create(dir.path()).unwrap();
+
+        let token = generate_token();
+        let encrypted = enc.encrypt(&token).unwrap();
+
+        // 密文不等于原文
+        assert_ne!(encrypted, token);
+
+        // 解密后等于原文
+        let decrypted = enc.decrypt(&encrypted).unwrap();
+        assert_eq!(decrypted, token);
+    }
+
+    #[test]
+    fn test_encryptor_key_persistence() {
+        let dir = TempDir::new().unwrap();
+
+        let enc1 = TokenEncryptor::load_or_create(dir.path()).unwrap();
+        let token = "test-token-123";
+        let encrypted = enc1.encrypt(token).unwrap();
+
+        // 重新加载应使用同一密钥
+        let enc2 = TokenEncryptor::load_or_create(dir.path()).unwrap();
+        let decrypted = enc2.decrypt(&encrypted).unwrap();
+        assert_eq!(decrypted, token);
+    }
+
+    #[test]
+    fn test_wrong_key_fails() {
+        let dir1 = TempDir::new().unwrap();
+        let dir2 = TempDir::new().unwrap();
+
+        let enc1 = TokenEncryptor::load_or_create(dir1.path()).unwrap();
+        let enc2 = TokenEncryptor::load_or_create(dir2.path()).unwrap();
+
+        let token = "secret-token";
+        let encrypted = enc1.encrypt(token).unwrap();
+
+        // 不同密钥解密应失败
+        assert!(enc2.decrypt(&encrypted).is_err());
     }
 }

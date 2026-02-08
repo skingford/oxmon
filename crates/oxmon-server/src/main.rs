@@ -154,6 +154,9 @@ async fn main() -> Result<()> {
         .install_default()
         .expect("Failed to install default CryptoProvider");
 
+    // 初始化 Snowflake ID 生成器 (machine_id=1, node_id=1)
+    oxmon_common::id::init(1, 1);
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("oxmon=info".parse()?))
         .init();

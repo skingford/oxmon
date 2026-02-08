@@ -31,12 +31,12 @@ fn default_limit() -> usize {
     100
 }
 
-/// 获取指定域名的证书详情
+/// 获取指定证书详情（按 ID）
 #[utoipa::path(
     get,
-    path = "/api/v1/certificates/{domain}",
+    path = "/api/v1/certificates/{id}",
     params(
-        ("domain" = String, Path, description = "域名")
+        ("id" = String, Path, description = "证书唯一标识")
     ),
     responses(
         (status = 200, description = "证书详情", body = CertificateDetails),
@@ -47,11 +47,11 @@ fn default_limit() -> usize {
 )]
 async fn get_certificate(
     State(state): State<AppState>,
-    Path(domain): Path<String>,
+    Path(id): Path<String>,
 ) -> Result<Json<CertificateDetails>, (StatusCode, Json<serde_json::Value>)> {
     let details = state
         .cert_store
-        .get_certificate_details(&domain)
+        .get_certificate_details_by_id(&id)
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get certificate details");
             (
@@ -62,7 +62,7 @@ async fn get_certificate(
         .ok_or_else(|| {
             (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error": format!("Certificate for domain '{}' not found", domain)})),
+                Json(json!({"error": format!("Certificate with id '{}' not found", id)})),
             )
         })?;
 
@@ -109,6 +109,8 @@ async fn list_certificates(
 /// 证书链信息
 #[derive(Debug, Serialize, ToSchema)]
 struct CertificateChainInfo {
+    /// 证书唯一标识
+    id: String,
     /// 域名
     domain: String,
     /// 证书链是否有效
@@ -119,12 +121,12 @@ struct CertificateChainInfo {
     last_checked: chrono::DateTime<chrono::Utc>,
 }
 
-/// 获取证书链验证详情
+/// 获取证书链验证详情（按 ID）
 #[utoipa::path(
     get,
-    path = "/api/v1/certificates/{domain}/chain",
+    path = "/api/v1/certificates/{id}/chain",
     params(
-        ("domain" = String, Path, description = "域名")
+        ("id" = String, Path, description = "证书唯一标识")
     ),
     responses(
         (status = 200, description = "证书链信息", body = CertificateChainInfo),
@@ -135,11 +137,11 @@ struct CertificateChainInfo {
 )]
 async fn get_certificate_chain(
     State(state): State<AppState>,
-    Path(domain): Path<String>,
+    Path(id): Path<String>,
 ) -> Result<Json<CertificateChainInfo>, (StatusCode, Json<serde_json::Value>)> {
     let details = state
         .cert_store
-        .get_certificate_details(&domain)
+        .get_certificate_details_by_id(&id)
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get certificate details");
             (
@@ -150,11 +152,12 @@ async fn get_certificate_chain(
         .ok_or_else(|| {
             (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error": format!("Certificate for domain '{}' not found", domain)})),
+                Json(json!({"error": format!("Certificate with id '{}' not found", id)})),
             )
         })?;
 
     Ok(Json(CertificateChainInfo {
+        id: details.id,
         domain: details.domain,
         chain_valid: details.chain_valid,
         chain_error: details.chain_error,

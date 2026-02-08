@@ -43,11 +43,11 @@ impl MetricService for MetricServiceImpl {
                 .ok_or_else(|| Status::unauthenticated("Missing agent-id in metadata"))?
                 .to_string();
 
-            // 从数据库获取 token hash
-            let token_hash = self
+            // 从数据库获取 token 和 hash
+            let (stored_token, token_hash) = self
                 .state
                 .cert_store
-                .get_agent_token_hash(&agent_id)
+                .get_agent_auth(&agent_id)
                 .map_err(|e| {
                     tracing::error!(error = %e, "Failed to query agent whitelist");
                     Status::internal("Authentication error")
@@ -57,11 +57,15 @@ impl MetricService for MetricServiceImpl {
                     Status::unauthenticated("Agent not authorized")
                 })?;
 
-            // 验证 token
-            let valid = oxmon_storage::auth::verify_token(&token, &token_hash).map_err(|e| {
-                tracing::error!(error = %e, "Token verification failed");
-                Status::internal("Authentication error")
-            })?;
+            // 验证 token：优先直接比对，兼容旧 bcrypt 数据
+            let valid = if let Some(ref stored) = stored_token {
+                stored == &token
+            } else {
+                oxmon_storage::auth::verify_token(&token, &token_hash).map_err(|e| {
+                    tracing::error!(error = %e, "Token verification failed");
+                    Status::internal("Authentication error")
+                })?
+            };
 
             if !valid {
                 tracing::warn!(agent_id = %agent_id, "Invalid token");
@@ -103,11 +107,14 @@ impl MetricService for MetricServiceImpl {
             .filter_map(|dp| {
                 let timestamp = DateTime::from_timestamp_millis(dp.timestamp_ms)?;
                 Some(MetricDataPoint {
+                    id: oxmon_common::id::next_id(),
                     timestamp,
                     agent_id: dp.agent_id,
                     metric_name: dp.metric_name,
                     value: dp.value,
                     labels: dp.labels,
+                    created_at: timestamp,
+                    updated_at: timestamp,
                 })
             })
             .collect();

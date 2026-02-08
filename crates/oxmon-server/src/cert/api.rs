@@ -507,20 +507,26 @@ fn store_check_result(
 
     let mut data_points = Vec::new();
     data_points.push(MetricDataPoint {
+        id: oxmon_common::id::next_id(),
         timestamp: now,
         agent_id: agent_id.clone(),
         metric_name: "certificate.is_valid".to_string(),
         value: if result.is_valid { 1.0 } else { 0.0 },
         labels: labels.clone(),
+        created_at: now,
+        updated_at: now,
     });
 
     if let Some(days) = result.days_until_expiry {
         data_points.push(MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now,
             agent_id: agent_id.clone(),
             metric_name: "certificate.days_until_expiry".to_string(),
             value: days as f64,
             labels,
+            created_at: now,
+            updated_at: now,
         });
     }
 

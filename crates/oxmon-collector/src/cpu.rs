@@ -35,22 +35,28 @@ impl Collector for CpuCollector {
 
         let global_usage = self.system.global_cpu_usage();
         points.push(MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now,
             agent_id: agent_id.to_string(),
             metric_name: "cpu.usage".to_string(),
             value: global_usage as f64,
             labels: HashMap::new(),
+            created_at: now,
+            updated_at: now,
         });
 
         for (i, cpu) in self.system.cpus().iter().enumerate() {
             let mut labels = HashMap::new();
             labels.insert("core".to_string(), i.to_string());
             points.push(MetricDataPoint {
+                id: oxmon_common::id::next_id(),
                 timestamp: now,
                 agent_id: agent_id.to_string(),
                 metric_name: "cpu.core_usage".to_string(),
                 value: cpu.cpu_usage() as f64,
                 labels,
+                created_at: now,
+                updated_at: now,
             });
         }
 

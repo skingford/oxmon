@@ -71,32 +71,44 @@ impl Collector for NetworkCollector {
             self.prev_packets_transmitted.insert(name.clone(), packets_transmitted);
 
             points.push(MetricDataPoint {
+                id: oxmon_common::id::next_id(),
                 timestamp: now,
                 agent_id: agent_id.to_string(),
                 metric_name: "network.bytes_recv".to_string(),
                 value: rx_delta as f64,
                 labels: labels.clone(),
+                created_at: now,
+                updated_at: now,
             });
             points.push(MetricDataPoint {
+                id: oxmon_common::id::next_id(),
                 timestamp: now,
                 agent_id: agent_id.to_string(),
                 metric_name: "network.bytes_sent".to_string(),
                 value: tx_delta as f64,
                 labels: labels.clone(),
+                created_at: now,
+                updated_at: now,
             });
             points.push(MetricDataPoint {
+                id: oxmon_common::id::next_id(),
                 timestamp: now,
                 agent_id: agent_id.to_string(),
                 metric_name: "network.packets_recv".to_string(),
                 value: prx_delta as f64,
                 labels: labels.clone(),
+                created_at: now,
+                updated_at: now,
             });
             points.push(MetricDataPoint {
+                id: oxmon_common::id::next_id(),
                 timestamp: now,
                 agent_id: agent_id.to_string(),
                 metric_name: "network.packets_sent".to_string(),
                 value: ptx_delta as f64,
                 labels,
+                created_at: now,
+                updated_at: now,
             });
         }
 

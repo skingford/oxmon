@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use tempfile::TempDir;
 
 fn setup() -> (TempDir, SqliteStorageEngine) {
+    oxmon_common::id::init(1, 1);
     let dir = TempDir::new().unwrap();
     let engine = SqliteStorageEngine::new(dir.path()).unwrap();
     (dir, engine)
@@ -18,12 +19,18 @@ fn make_batch(agent: &str, metric: &str, values: &[(f64, i64)]) -> MetricBatch {
         timestamp: now,
         data_points: values
             .iter()
-            .map(|(value, secs_ago)| MetricDataPoint {
-                timestamp: now - Duration::seconds(*secs_ago),
-                agent_id: agent.to_string(),
-                metric_name: metric.to_string(),
-                value: *value,
-                labels: HashMap::new(),
+            .map(|(value, secs_ago)| {
+                let ts = now - Duration::seconds(*secs_ago);
+                MetricDataPoint {
+                    id: oxmon_common::id::next_id(),
+                    timestamp: ts,
+                    agent_id: agent.to_string(),
+                    metric_name: metric.to_string(),
+                    value: *value,
+                    labels: HashMap::new(),
+                    created_at: ts,
+                    updated_at: ts,
+                }
             })
             .collect(),
     }
@@ -79,6 +86,8 @@ fn write_and_query_alert_events() {
         threshold: 90.0,
         timestamp: now,
         predicted_breach: None,
+        created_at: now,
+        updated_at: now,
     };
 
     engine.write_alert_event(&event).unwrap();
@@ -97,6 +106,7 @@ fn query_alert_history_filters() {
 
     let now = Utc::now();
     for i in 0..3 {
+        let ts = now - Duration::seconds(i * 10);
         let event = AlertEvent {
             id: format!("alert-{i}"),
             rule_id: "rule-1".to_string(),
@@ -106,8 +116,10 @@ fn query_alert_history_filters() {
             message: format!("Alert {i}"),
             value: 95.0,
             threshold: 90.0,
-            timestamp: now - Duration::seconds(i * 10),
+            timestamp: ts,
             predicted_breach: None,
+            created_at: ts,
+            updated_at: ts,
         };
         engine.write_alert_event(&event).unwrap();
     }
@@ -147,6 +159,7 @@ fn pagination() {
 
     let now = Utc::now();
     for i in 0..10 {
+        let ts = now - Duration::seconds(i);
         let event = AlertEvent {
             id: format!("alert-{i}"),
             rule_id: "rule-1".to_string(),
@@ -156,8 +169,10 @@ fn pagination() {
             message: format!("Alert {i}"),
             value: 95.0,
             threshold: 90.0,
-            timestamp: now - Duration::seconds(i),
+            timestamp: ts,
             predicted_breach: None,
+            created_at: ts,
+            updated_at: ts,
         };
         engine.write_alert_event(&event).unwrap();
     }

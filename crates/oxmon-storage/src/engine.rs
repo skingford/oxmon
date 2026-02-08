@@ -25,16 +25,20 @@ impl StorageEngine for SqliteStorageEngine {
             let tx = conn.unchecked_transaction()?;
             {
                 let mut stmt = tx.prepare_cached(
-                    "INSERT INTO metrics (timestamp, agent_id, metric_name, value, labels) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO metrics (id, timestamp, agent_id, metric_name, value, labels, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 )?;
                 for dp in &batch.data_points {
                     let labels_json = serde_json::to_string(&dp.labels)?;
+                    let now = chrono::Utc::now().timestamp();
                     stmt.execute(rusqlite::params![
+                        dp.id,
                         dp.timestamp.timestamp_millis(),
                         &dp.agent_id,
                         &dp.metric_name,
                         dp.value,
                         labels_json,
+                        now,
+                        now,
                     ])?;
                 }
             }
@@ -52,33 +56,39 @@ impl StorageEngine for SqliteStorageEngine {
         for key in keys {
             self.partitions.with_partition(&key, |conn| {
                 let mut stmt = conn.prepare_cached(
-                    "SELECT timestamp, agent_id, metric_name, value, labels FROM metrics
+                    "SELECT id, timestamp, agent_id, metric_name, value, labels, created_at, updated_at FROM metrics
                      WHERE agent_id = ?1 AND metric_name = ?2 AND timestamp >= ?3 AND timestamp <= ?4
                      ORDER BY timestamp ASC",
                 )?;
                 let rows = stmt.query_map(
                     rusqlite::params![&query.agent_id, &query.metric_name, from_ms, to_ms],
                     |row| {
-                        let ts_ms: i64 = row.get(0)?;
-                        let agent_id: String = row.get(1)?;
-                        let metric_name: String = row.get(2)?;
-                        let value: f64 = row.get(3)?;
-                        let labels_str: String = row.get(4)?;
-                        Ok((ts_ms, agent_id, metric_name, value, labels_str))
+                        let id: String = row.get(0)?;
+                        let ts_ms: i64 = row.get(1)?;
+                        let agent_id: String = row.get(2)?;
+                        let metric_name: String = row.get(3)?;
+                        let value: f64 = row.get(4)?;
+                        let labels_str: String = row.get(5)?;
+                        let created_at: i64 = row.get(6)?;
+                        let updated_at: i64 = row.get(7)?;
+                        Ok((id, ts_ms, agent_id, metric_name, value, labels_str, created_at, updated_at))
                     },
                 )?;
                 for row in rows {
-                    let (ts_ms, agent_id, metric_name, value, labels_str) = row?;
+                    let (id, ts_ms, agent_id, metric_name, value, labels_str, created_at, updated_at) = row?;
                     let timestamp = DateTime::from_timestamp_millis(ts_ms)
                         .unwrap_or_default();
                     let labels: HashMap<String, String> =
                         serde_json::from_str(&labels_str).unwrap_or_default();
                     results.push(MetricDataPoint {
+                        id,
                         timestamp,
                         agent_id,
                         metric_name,
                         value,
                         labels,
+                        created_at: DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
+                        updated_at: DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
                     });
                 }
                 Ok(())
@@ -96,9 +106,10 @@ impl StorageEngine for SqliteStorageEngine {
     fn write_alert_event(&self, event: &AlertEvent) -> Result<()> {
         let key = self.partitions.get_or_create(event.timestamp)?;
         self.partitions.with_partition(&key, |conn| {
+            let now = chrono::Utc::now().timestamp();
             conn.execute(
-                "INSERT OR REPLACE INTO alert_events (id, rule_id, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT OR REPLACE INTO alert_events (id, rule_id, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 rusqlite::params![
                     &event.id,
                     &event.rule_id,
@@ -110,6 +121,8 @@ impl StorageEngine for SqliteStorageEngine {
                     event.threshold,
                     event.timestamp.timestamp_millis(),
                     event.predicted_breach.map(|t| t.timestamp_millis()),
+                    now,
+                    now,
                 ],
             )?;
             Ok(())
@@ -133,7 +146,7 @@ impl StorageEngine for SqliteStorageEngine {
         for key in keys {
             self.partitions.with_partition(&key, |conn| {
                 let mut sql = String::from(
-                    "SELECT id, rule_id, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach
+                    "SELECT id, rule_id, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach, created_at, updated_at
                      FROM alert_events WHERE timestamp >= ?1 AND timestamp <= ?2",
                 );
                 let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
@@ -160,6 +173,8 @@ impl StorageEngine for SqliteStorageEngine {
                     let ts_ms: i64 = row.get(8)?;
                     let predicted_ms: Option<i64> = row.get(9)?;
                     let sev_str: String = row.get(4)?;
+                    let created_at: i64 = row.get(10)?;
+                    let updated_at: i64 = row.get(11)?;
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
@@ -171,11 +186,13 @@ impl StorageEngine for SqliteStorageEngine {
                         row.get::<_, f64>(7)?,
                         ts_ms,
                         predicted_ms,
+                        created_at,
+                        updated_at,
                     ))
                 })?;
 
                 for row in rows {
-                    let (id, rule_id, agent_id, metric_name, sev_str, message, value, threshold, ts_ms, predicted_ms) = row?;
+                    let (id, rule_id, agent_id, metric_name, sev_str, message, value, threshold, ts_ms, predicted_ms, created_at, updated_at) = row?;
                     let timestamp = DateTime::from_timestamp_millis(ts_ms)
                         .unwrap_or_default();
                     let predicted_breach = predicted_ms
@@ -192,6 +209,8 @@ impl StorageEngine for SqliteStorageEngine {
                         threshold,
                         timestamp,
                         predicted_breach,
+                        created_at: DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
+                        updated_at: DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
                     });
                 }
                 Ok(())

@@ -4,11 +4,14 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricDataPoint {
+    pub id: String,
     pub timestamp: DateTime<Utc>,
     pub agent_id: String,
     pub metric_name: String,
     pub value: f64,
     pub labels: HashMap<String, String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +65,8 @@ pub struct AlertEvent {
     pub timestamp: DateTime<Utc>,
     /// For trend prediction rules: predicted time to breach
     pub predicted_breach: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,6 +132,10 @@ pub struct CertCheckResult {
     pub error: Option<String>,
     /// 检查时间
     pub checked_at: DateTime<Utc>,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 更新时间
+    pub updated_at: DateTime<Utc>,
 }
 
 /// 创建域名请求
@@ -167,12 +176,18 @@ pub struct BatchCreateDomainsRequest {
 /// Agent 白名单条目
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AgentWhitelistEntry {
+    /// 唯一标识
+    pub id: String,
     /// Agent 唯一标识
     pub agent_id: String,
     /// 创建时间
     pub created_at: DateTime<Utc>,
+    /// 更新时间
+    pub updated_at: DateTime<Utc>,
     /// 描述信息
     pub description: Option<String>,
+    /// 认证 Token（用于 Agent gRPC 配置）
+    pub token: Option<String>,
 }
 
 /// 添加 Agent 到白名单请求
@@ -187,6 +202,8 @@ pub struct AddAgentRequest {
 /// 添加 Agent 响应（包含生成的 token）
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AddAgentResponse {
+    /// 唯一标识
+    pub id: String,
     /// Agent 唯一标识
     pub agent_id: String,
     /// 生成的认证 token（仅在创建时返回一次）
@@ -205,12 +222,18 @@ pub struct UpdateAgentRequest {
 /// Agent 白名单详情（包含在线状态）
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AgentWhitelistDetail {
+    /// 唯一标识
+    pub id: String,
     /// Agent 唯一标识
     pub agent_id: String,
     /// 创建时间
     pub created_at: DateTime<Utc>,
+    /// 更新时间
+    pub updated_at: DateTime<Utc>,
     /// 描述信息
     pub description: Option<String>,
+    /// 认证 Token（用于 Agent gRPC 配置）
+    pub token: Option<String>,
     /// 最后上报时间
     pub last_seen: Option<DateTime<Utc>>,
     /// 在线状态（active / inactive / unknown）
@@ -231,6 +254,8 @@ pub struct RegenerateTokenResponse {
 /// 证书详细信息
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CertificateDetails {
+    /// 唯一标识
+    pub id: String,
     /// 域名
     pub domain: String,
     /// 证书生效时间
@@ -255,6 +280,10 @@ pub struct CertificateDetails {
     pub chain_error: Option<String>,
     /// 最后检查时间
     pub last_checked: DateTime<Utc>,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 更新时间
+    pub updated_at: DateTime<Utc>,
 }
 
 /// 证书详情查询过滤器

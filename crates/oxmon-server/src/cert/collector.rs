@@ -43,6 +43,7 @@ impl CertificateCollector {
                 Ok(details) => {
                     // 成功获取证书，返回结果（包含所有解析的 IP）
                     return Ok(CertificateDetails {
+                        id: String::new(), // upsert 时由存储层生成
                         domain: domain.to_string(),
                         not_before: details.not_before,
                         not_after: details.not_after,
@@ -55,6 +56,8 @@ impl CertificateCollector {
                         chain_valid: details.chain_valid,
                         chain_error: details.chain_error,
                         last_checked: Utc::now(),
+                        created_at: Utc::now(),
+                        updated_at: Utc::now(),
                     });
                 }
                 Err(e) => {
@@ -230,6 +233,7 @@ impl CertificateCollector {
         };
 
         Ok(CertificateDetails {
+            id: String::new(), // upsert 时由存储层生成
             domain: domain.to_string(),
             not_before,
             not_after,
@@ -242,6 +246,8 @@ impl CertificateCollector {
             chain_valid,
             chain_error,
             last_checked: Utc::now(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         })
     }
 }

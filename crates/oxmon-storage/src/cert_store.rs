@@ -5,6 +5,8 @@ use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::auth::TokenEncryptor;
+
 const CERT_DOMAINS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS cert_domains (
     id TEXT PRIMARY KEY,
@@ -45,16 +47,20 @@ CREATE INDEX IF NOT EXISTS idx_cert_results_domain ON cert_check_results(domain)
 
 const AGENT_WHITELIST_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS agent_whitelist (
-    agent_id TEXT PRIMARY KEY,
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL UNIQUE,
     token_hash TEXT NOT NULL,
+    encrypted_token TEXT,
+    description TEXT,
     created_at INTEGER NOT NULL,
-    description TEXT
+    updated_at INTEGER NOT NULL
 );
 ";
 
 const CERTIFICATE_DETAILS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS certificate_details (
-    domain TEXT PRIMARY KEY,
+    id TEXT PRIMARY KEY,
+    domain TEXT NOT NULL UNIQUE,
     not_before INTEGER NOT NULL,
     not_after INTEGER NOT NULL,
     ip_addresses TEXT NOT NULL,
@@ -65,14 +71,18 @@ CREATE TABLE IF NOT EXISTS certificate_details (
     subject_alt_names TEXT,
     chain_valid INTEGER NOT NULL,
     chain_error TEXT,
-    last_checked INTEGER NOT NULL
+    last_checked INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_cert_details_not_after ON certificate_details(not_after);
+CREATE INDEX IF NOT EXISTS idx_cert_details_domain ON certificate_details(domain);
 ";
 
 pub struct CertStore {
     conn: Mutex<Connection>,
     _db_path: PathBuf,
+    token_encryptor: TokenEncryptor,
 }
 
 impl CertStore {
@@ -83,24 +93,186 @@ impl CertStore {
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         conn.execute_batch(CERT_DOMAINS_SCHEMA)?;
         conn.execute_batch(CERT_CHECK_RESULTS_SCHEMA)?;
-        conn.execute_batch(AGENT_WHITELIST_SCHEMA)?;
-        conn.execute_batch(CERTIFICATE_DETAILS_SCHEMA)?;
+
+        // 迁移 agent_whitelist：如果旧表缺少 id 列（以 agent_id 为主键），则重建
+        Self::migrate_agent_whitelist(&conn)?;
+
+        // 迁移 certificate_details：如果旧表缺少 id 列（以 domain 为主键），则重建
+        Self::migrate_certificate_details(&conn)?;
+
         // 迁移：为已有的 cert_check_results 表添加 resolved_ips 列
         let _ = conn.execute_batch(
             "ALTER TABLE cert_check_results ADD COLUMN resolved_ips TEXT;",
         );
+        // 迁移：为已有的 cert_check_results 表添加 created_at / updated_at 列
+        let _ = conn.execute_batch(
+            "ALTER TABLE cert_check_results ADD COLUMN created_at INTEGER;",
+        );
+        let _ = conn.execute_batch(
+            "ALTER TABLE cert_check_results ADD COLUMN updated_at INTEGER;",
+        );
+
+        let token_encryptor = TokenEncryptor::load_or_create(data_dir)?;
         tracing::info!(path = %db_path.display(), "Initialized cert store");
         Ok(Self {
             conn: Mutex::new(conn),
             _db_path: db_path,
+            token_encryptor,
         })
+    }
+
+    /// 迁移 agent_whitelist 表：从 agent_id 主键迁移到 UUID id 主键
+    fn migrate_agent_whitelist(conn: &Connection) -> Result<()> {
+        // 检查旧表是否存在
+        let table_exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='agent_whitelist'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        if !table_exists {
+            // 新建表
+            conn.execute_batch(AGENT_WHITELIST_SCHEMA)?;
+            return Ok(());
+        }
+
+        // 检查是否已有 id 列（新 schema）
+        let has_id_col = Self::table_has_column(conn, "agent_whitelist", "id")?;
+        let has_updated_at_col = Self::table_has_column(conn, "agent_whitelist", "updated_at")?;
+
+        if has_id_col && has_updated_at_col {
+            // 已经是新 schema，无需迁移
+            return Ok(());
+        }
+
+        tracing::info!("Migrating agent_whitelist table to new schema with Snowflake id");
+
+        // 重建表
+        conn.execute_batch("
+            CREATE TABLE agent_whitelist_new (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL UNIQUE,
+                token_hash TEXT NOT NULL,
+                encrypted_token TEXT,
+                description TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+        ")?;
+
+        // 检查旧表是否有 encrypted_token 列
+        let has_encrypted_token = Self::table_has_column(conn, "agent_whitelist", "encrypted_token")?;
+
+        if has_encrypted_token {
+            // 包含 encrypted_token 列的旧表
+            conn.execute_batch("
+                INSERT INTO agent_whitelist_new (id, agent_id, token_hash, encrypted_token, description, created_at, updated_at)
+                SELECT CAST(abs(random()) AS TEXT),
+                       agent_id, token_hash, encrypted_token, description, created_at, created_at
+                FROM agent_whitelist;
+            ")?;
+        } else {
+            // 没有 encrypted_token 列的旧表
+            conn.execute_batch("
+                INSERT INTO agent_whitelist_new (id, agent_id, token_hash, description, created_at, updated_at)
+                SELECT CAST(abs(random()) AS TEXT),
+                       agent_id, token_hash, description, created_at, created_at
+                FROM agent_whitelist;
+            ")?;
+        }
+
+        conn.execute_batch("
+            DROP TABLE agent_whitelist;
+            ALTER TABLE agent_whitelist_new RENAME TO agent_whitelist;
+        ")?;
+
+        tracing::info!("agent_whitelist migration completed");
+        Ok(())
+    }
+
+    /// 迁移 certificate_details 表：从 domain 主键迁移到 UUID id 主键
+    fn migrate_certificate_details(conn: &Connection) -> Result<()> {
+        // 检查旧表是否存在
+        let table_exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='certificate_details'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        if !table_exists {
+            // 新建表
+            conn.execute_batch(CERTIFICATE_DETAILS_SCHEMA)?;
+            return Ok(());
+        }
+
+        // 检查是否已有 id 列（新 schema）
+        let has_id_col = Self::table_has_column(conn, "certificate_details", "id")?;
+        let has_updated_at_col = Self::table_has_column(conn, "certificate_details", "updated_at")?;
+
+        if has_id_col && has_updated_at_col {
+            // 已经是新 schema，无需迁移
+            return Ok(());
+        }
+
+        tracing::info!("Migrating certificate_details table to new schema with Snowflake id");
+
+        conn.execute_batch("
+            CREATE TABLE certificate_details_new (
+                id TEXT PRIMARY KEY,
+                domain TEXT NOT NULL UNIQUE,
+                not_before INTEGER NOT NULL,
+                not_after INTEGER NOT NULL,
+                ip_addresses TEXT NOT NULL,
+                issuer_cn TEXT,
+                issuer_o TEXT,
+                issuer_ou TEXT,
+                issuer_c TEXT,
+                subject_alt_names TEXT,
+                chain_valid INTEGER NOT NULL,
+                chain_error TEXT,
+                last_checked INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+        ")?;
+
+        conn.execute_batch("
+            INSERT INTO certificate_details_new (id, domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c, subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at)
+            SELECT CAST(abs(random()) AS TEXT),
+                   domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c, subject_alt_names, chain_valid, chain_error, last_checked, last_checked, last_checked
+            FROM certificate_details;
+        ")?;
+
+        conn.execute_batch("
+            DROP TABLE certificate_details;
+            ALTER TABLE certificate_details_new RENAME TO certificate_details;
+            CREATE INDEX IF NOT EXISTS idx_cert_details_not_after ON certificate_details(not_after);
+            CREATE INDEX IF NOT EXISTS idx_cert_details_domain ON certificate_details(domain);
+        ")?;
+
+        tracing::info!("certificate_details migration completed");
+        Ok(())
+    }
+
+    fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+        let sql = format!("PRAGMA table_info({})", table);
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map([], |row| {
+            row.get::<_, String>(1) // column name is at index 1
+        })?;
+        for row in rows {
+            if row? == column {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     // ---- cert_domains CRUD ----
 
     pub fn insert_domain(&self, req: &CreateDomainRequest) -> Result<CertDomain> {
         let conn = self.conn.lock().unwrap();
-        let id = uuid::Uuid::new_v4().to_string();
+        let id = oxmon_common::id::next_id();
         let now = Utc::now().timestamp();
         let port = req.port.unwrap_or(443);
         let check_interval_secs = req.check_interval_secs.map(|v| v as i64);
@@ -125,7 +297,7 @@ impl CertStore {
                  VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7)",
             )?;
             for req in reqs {
-                let id = uuid::Uuid::new_v4().to_string();
+                let id = oxmon_common::id::next_id();
                 let port = req.port.unwrap_or(443);
                 let check_interval_secs = req.check_interval_secs.map(|v| v as i64);
                 stmt.execute(rusqlite::params![
@@ -340,9 +512,10 @@ impl CertStore {
             .resolved_ips
             .as_ref()
             .map(|v| serde_json::to_string(v).unwrap_or_default());
+        let now = Utc::now().timestamp();
         conn.execute(
-            "INSERT INTO cert_check_results (id, domain_id, domain, is_valid, chain_valid, not_before, not_after, days_until_expiry, issuer, subject, san_list, resolved_ips, error, checked_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO cert_check_results (id, domain_id, domain, is_valid, chain_valid, not_before, not_after, days_until_expiry, issuer, subject, san_list, resolved_ips, error, checked_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             rusqlite::params![
                 result.id,
                 result.domain_id,
@@ -358,6 +531,8 @@ impl CertStore {
                 ips_json,
                 result.error,
                 result.checked_at.timestamp(),
+                now,
+                now,
             ],
         )?;
         Ok(())
@@ -366,7 +541,7 @@ impl CertStore {
     pub fn query_latest_results(&self) -> Result<Vec<CertCheckResult>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT r.id, r.domain_id, r.domain, r.is_valid, r.chain_valid, r.not_before, r.not_after, r.days_until_expiry, r.issuer, r.subject, r.san_list, r.resolved_ips, r.error, r.checked_at
+            "SELECT r.id, r.domain_id, r.domain, r.is_valid, r.chain_valid, r.not_before, r.not_after, r.days_until_expiry, r.issuer, r.subject, r.san_list, r.resolved_ips, r.error, r.checked_at, r.created_at, r.updated_at
              FROM cert_check_results r
              INNER JOIN (
                  SELECT domain_id, MAX(checked_at) AS max_checked
@@ -387,7 +562,7 @@ impl CertStore {
     pub fn query_result_by_domain(&self, domain: &str) -> Result<Option<CertCheckResult>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, domain_id, domain, is_valid, chain_valid, not_before, not_after, days_until_expiry, issuer, subject, san_list, resolved_ips, error, checked_at
+            "SELECT id, domain_id, domain, is_valid, chain_valid, not_before, not_after, days_until_expiry, issuer, subject, san_list, resolved_ips, error, checked_at, created_at, updated_at
              FROM cert_check_results
              WHERE domain = ?1
              ORDER BY checked_at DESC
@@ -434,6 +609,9 @@ impl CertStore {
         let san_str: Option<String> = row.get(10)?;
         let ips_str: Option<String> = row.get(11)?;
         let checked: i64 = row.get(13)?;
+        let created: Option<i64> = row.get(14)?;
+        let updated: Option<i64> = row.get(15)?;
+        let now = Utc::now();
         Ok(CertCheckResult {
             id: row.get(0)?,
             domain_id: row.get(1)?,
@@ -449,6 +627,12 @@ impl CertStore {
             resolved_ips: ips_str.and_then(|s| serde_json::from_str(&s).ok()),
             error: row.get(12)?,
             checked_at: DateTime::from_timestamp(checked, 0).unwrap_or_default(),
+            created_at: created
+                .and_then(|ts| DateTime::from_timestamp(ts, 0))
+                .unwrap_or(now),
+            updated_at: updated
+                .and_then(|ts| DateTime::from_timestamp(ts, 0))
+                .unwrap_or(now),
         })
     }
 
@@ -457,16 +641,19 @@ impl CertStore {
     pub fn add_agent_to_whitelist(
         &self,
         agent_id: &str,
+        token: &str,
         token_hash: &str,
         description: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let conn = self.conn.lock().unwrap();
+        let id = oxmon_common::id::next_id();
         let now = Utc::now().timestamp();
+        let encrypted_token = self.token_encryptor.encrypt(token)?;
         conn.execute(
-            "INSERT INTO agent_whitelist (agent_id, token_hash, created_at, description) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![agent_id, token_hash, now, description],
+            "INSERT INTO agent_whitelist (id, agent_id, token_hash, created_at, updated_at, description, encrypted_token) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![id, agent_id, token_hash, now, now, description, encrypted_token],
         )?;
-        Ok(())
+        Ok(id)
     }
 
     pub fn get_agent_token_hash(&self, agent_id: &str) -> Result<Option<String>> {
@@ -480,55 +667,125 @@ impl CertStore {
         }
     }
 
+    /// 获取 agent 的加密 token 和 token_hash，用于认证验证
+    pub fn get_agent_auth(&self, agent_id: &str) -> Result<Option<(Option<String>, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT encrypted_token, token_hash FROM agent_whitelist WHERE agent_id = ?1")?;
+        let mut rows = stmt.query_map(rusqlite::params![agent_id], |row| {
+            Ok((row.get::<_, Option<String>>(0)?, row.get::<_, String>(1)?))
+        })?;
+        match rows.next() {
+            Some(Ok((encrypted, hash))) => {
+                // 解密 token 用于直接比对
+                let token = encrypted.and_then(|e| self.token_encryptor.decrypt(&e).ok());
+                Ok(Some((token, hash)))
+            }
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
     pub fn list_agents(&self) -> Result<Vec<oxmon_common::types::AgentWhitelistEntry>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT agent_id, created_at, description FROM agent_whitelist ORDER BY created_at DESC",
+            "SELECT id, agent_id, created_at, updated_at, description, encrypted_token FROM agent_whitelist ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
-            let created: i64 = row.get(1)?;
-            Ok(oxmon_common::types::AgentWhitelistEntry {
-                agent_id: row.get(0)?,
-                created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
-                description: row.get(2)?,
-            })
+            let created: i64 = row.get(2)?;
+            let updated: i64 = row.get(3)?;
+            let encrypted_token: Option<String> = row.get(5)?;
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, created, updated, row.get::<_, Option<String>>(4)?, encrypted_token))
         })?;
         let mut agents = Vec::new();
         for row in rows {
-            agents.push(row?);
+            let (id, agent_id, created, updated, description, encrypted_token) = row?;
+            let token = encrypted_token.and_then(|e| self.token_encryptor.decrypt(&e).ok());
+            agents.push(oxmon_common::types::AgentWhitelistEntry {
+                id,
+                agent_id,
+                created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+                updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+                description,
+                token,
+            });
         }
         Ok(agents)
     }
 
-    pub fn delete_agent_from_whitelist(&self, agent_id: &str) -> Result<bool> {
+    pub fn delete_agent_from_whitelist(&self, id: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
+        // 尝试按 id 删除，如果不匹配则按 agent_id 删除（向后兼容）
         let deleted = conn.execute(
-            "DELETE FROM agent_whitelist WHERE agent_id = ?1",
-            rusqlite::params![agent_id],
+            "DELETE FROM agent_whitelist WHERE id = ?1 OR agent_id = ?1",
+            rusqlite::params![id],
         )?;
         Ok(deleted > 0)
     }
 
+    /// 根据 agent_id 获取白名单条目的 UUID id
+    pub fn get_agent_id_by_agent_id(&self, agent_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id FROM agent_whitelist WHERE agent_id = ?1")?;
+        let mut rows = stmt.query_map(rusqlite::params![agent_id], |row| row.get(0))?;
+        match rows.next() {
+            Some(Ok(id)) => Ok(Some(id)),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
     pub fn update_agent_whitelist(
         &self,
-        agent_id: &str,
+        id: &str,
         description: Option<&str>,
     ) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
+        let now = Utc::now().timestamp();
         let updated = conn.execute(
-            "UPDATE agent_whitelist SET description = ?2 WHERE agent_id = ?1",
-            rusqlite::params![agent_id, description],
+            "UPDATE agent_whitelist SET description = ?2, updated_at = ?3 WHERE id = ?1",
+            rusqlite::params![id, description, now],
         )?;
         Ok(updated > 0)
     }
 
-    pub fn update_agent_token_hash(&self, agent_id: &str, token_hash: &str) -> Result<bool> {
+    pub fn update_agent_token_hash(&self, id: &str, token: &str, token_hash: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
+        let now = Utc::now().timestamp();
+        let encrypted_token = self.token_encryptor.encrypt(token)?;
         let updated = conn.execute(
-            "UPDATE agent_whitelist SET token_hash = ?2 WHERE agent_id = ?1",
-            rusqlite::params![agent_id, token_hash],
+            "UPDATE agent_whitelist SET token_hash = ?2, encrypted_token = ?3, updated_at = ?4 WHERE id = ?1",
+            rusqlite::params![id, token_hash, encrypted_token, now],
         )?;
         Ok(updated > 0)
+    }
+
+    /// 按 id 获取单个 agent 白名单条目
+    pub fn get_agent_by_id(&self, id: &str) -> Result<Option<oxmon_common::types::AgentWhitelistEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, agent_id, created_at, updated_at, description, encrypted_token FROM agent_whitelist WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
+            let created: i64 = row.get(2)?;
+            let updated: i64 = row.get(3)?;
+            let encrypted_token: Option<String> = row.get(5)?;
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, created, updated, row.get::<_, Option<String>>(4)?, encrypted_token))
+        })?;
+        match rows.next() {
+            Some(Ok((id, agent_id, created, updated, description, encrypted_token))) => {
+                let token = encrypted_token.and_then(|e| self.token_encryptor.decrypt(&e).ok());
+                Ok(Some(oxmon_common::types::AgentWhitelistEntry {
+                    id,
+                    agent_id,
+                    created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+                    updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+                    description,
+                    token,
+                }))
+            }
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
     }
 
     // ---- Certificate details operations ----
@@ -540,11 +797,16 @@ impl CertStore {
         let conn = self.conn.lock().unwrap();
         let ip_json = serde_json::to_string(&details.ip_addresses)?;
         let san_json = serde_json::to_string(&details.subject_alt_names)?;
-        conn.execute(
-            "INSERT OR REPLACE INTO certificate_details
-             (domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
-              subject_alt_names, chain_valid, chain_error, last_checked)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        let now = Utc::now().timestamp();
+
+        // 尝试更新已有记录
+        let updated = conn.execute(
+            "UPDATE certificate_details SET
+                not_before = ?2, not_after = ?3, ip_addresses = ?4,
+                issuer_cn = ?5, issuer_o = ?6, issuer_ou = ?7, issuer_c = ?8,
+                subject_alt_names = ?9, chain_valid = ?10, chain_error = ?11,
+                last_checked = ?12, updated_at = ?13
+             WHERE domain = ?1",
             rusqlite::params![
                 details.domain,
                 details.not_before.timestamp(),
@@ -558,8 +820,37 @@ impl CertStore {
                 details.chain_valid as i32,
                 details.chain_error,
                 details.last_checked.timestamp(),
+                now,
             ],
         )?;
+
+        if updated == 0 {
+            // 不存在，插入新记录
+            let id = oxmon_common::id::next_id();
+            conn.execute(
+                "INSERT INTO certificate_details
+                 (id, domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
+                  subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                rusqlite::params![
+                    id,
+                    details.domain,
+                    details.not_before.timestamp(),
+                    details.not_after.timestamp(),
+                    ip_json,
+                    details.issuer_cn,
+                    details.issuer_o,
+                    details.issuer_ou,
+                    details.issuer_c,
+                    san_json,
+                    details.chain_valid as i32,
+                    details.chain_error,
+                    details.last_checked.timestamp(),
+                    now,
+                    now,
+                ],
+            )?;
+        }
         Ok(())
     }
 
@@ -569,11 +860,33 @@ impl CertStore {
     ) -> Result<Option<oxmon_common::types::CertificateDetails>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
-                    subject_alt_names, chain_valid, chain_error, last_checked
+            "SELECT id, domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
+                    subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at
              FROM certificate_details WHERE domain = ?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![domain], |row| {
+            Ok(Self::row_to_cert_details(row))
+        })?;
+        match rows.next() {
+            Some(Ok(Ok(details))) => Ok(Some(details)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    /// 按 id 获取证书详情
+    pub fn get_certificate_details_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<oxmon_common::types::CertificateDetails>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
+                    subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at
+             FROM certificate_details WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
             Ok(Self::row_to_cert_details(row))
         })?;
         match rows.next() {
@@ -592,8 +905,8 @@ impl CertStore {
     ) -> Result<Vec<oxmon_common::types::CertificateDetails>> {
         let conn = self.conn.lock().unwrap();
         let mut sql = String::from(
-            "SELECT domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
-                    subject_alt_names, chain_valid, chain_error, last_checked
+            "SELECT id, domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
+                    subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at
              FROM certificate_details WHERE 1=1",
         );
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -636,29 +949,34 @@ impl CertStore {
     }
 
     fn row_to_cert_details(row: &rusqlite::Row) -> Result<oxmon_common::types::CertificateDetails> {
-        let not_before: i64 = row.get(1)?;
-        let not_after: i64 = row.get(2)?;
-        let ip_json: String = row.get(3)?;
-        let san_json: String = row.get(8)?;
-        let chain_valid_int: i32 = row.get(9)?;
-        let last_checked: i64 = row.get(11)?;
+        let not_before: i64 = row.get(2)?;
+        let not_after: i64 = row.get(3)?;
+        let ip_json: String = row.get(4)?;
+        let san_json: String = row.get(9)?;
+        let chain_valid_int: i32 = row.get(10)?;
+        let last_checked: i64 = row.get(12)?;
+        let created: i64 = row.get(13)?;
+        let updated: i64 = row.get(14)?;
 
         let ip_addresses: Vec<String> = serde_json::from_str(&ip_json).unwrap_or_default();
         let subject_alt_names: Vec<String> = serde_json::from_str(&san_json).unwrap_or_default();
 
         Ok(oxmon_common::types::CertificateDetails {
-            domain: row.get(0)?,
+            id: row.get(0)?,
+            domain: row.get(1)?,
             not_before: DateTime::from_timestamp(not_before, 0).unwrap_or_default(),
             not_after: DateTime::from_timestamp(not_after, 0).unwrap_or_default(),
             ip_addresses,
-            issuer_cn: row.get(4)?,
-            issuer_o: row.get(5)?,
-            issuer_ou: row.get(6)?,
-            issuer_c: row.get(7)?,
+            issuer_cn: row.get(5)?,
+            issuer_o: row.get(6)?,
+            issuer_ou: row.get(7)?,
+            issuer_c: row.get(8)?,
             subject_alt_names,
             chain_valid: chain_valid_int != 0,
-            chain_error: row.get(10)?,
+            chain_error: row.get(11)?,
             last_checked: DateTime::from_timestamp(last_checked, 0).unwrap_or_default(),
+            created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+            updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
         })
     }
 }
@@ -669,6 +987,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn setup() -> (TempDir, CertStore) {
+        oxmon_common::id::init(1, 1);
         let dir = TempDir::new().unwrap();
         let store = CertStore::new(dir.path()).unwrap();
         (dir, store)
@@ -784,7 +1103,7 @@ mod tests {
             .unwrap();
 
         let result = CertCheckResult {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: oxmon_common::id::next_id(),
             domain_id: domain.id.clone(),
             domain: "delete.com".to_string(),
             is_valid: true,
@@ -798,6 +1117,8 @@ mod tests {
             resolved_ips: None,
             error: None,
             checked_at: Utc::now(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         };
         store.insert_check_result(&result).unwrap();
 
@@ -837,7 +1158,7 @@ mod tests {
             .unwrap();
 
         let result = CertCheckResult {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: oxmon_common::id::next_id(),
             domain_id: domain.id.clone(),
             domain: "cert.com".to_string(),
             is_valid: true,
@@ -851,6 +1172,8 @@ mod tests {
             resolved_ips: Some(vec!["1.2.3.4".to_string(), "2001:db8::1".to_string()]),
             error: None,
             checked_at: Utc::now(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         };
         store.insert_check_result(&result).unwrap();
 

@@ -95,7 +95,7 @@ impl AlertRule for CertExpirationRule {
         };
 
         Some(AlertEvent {
-            id: format!("{}-{}-{}", self.id, domain, now.timestamp_millis()),
+            id: oxmon_common::id::next_id(),
             rule_id: self.id.clone(),
             agent_id: latest.agent_id.clone(),
             metric_name: self.metric.clone(),
@@ -109,6 +109,8 @@ impl AlertRule for CertExpirationRule {
             },
             timestamp: now,
             predicted_breach: None,
+            created_at: now,
+            updated_at: now,
         })
     }
 }
@@ -125,17 +127,22 @@ mod tests {
     fn make_dp(days: f64, domain: &str) -> MetricDataPoint {
         let mut labels = HashMap::new();
         labels.insert("domain".to_string(), domain.to_string());
+        let ts = Utc::now();
         MetricDataPoint {
-            timestamp: Utc::now(),
+            id: oxmon_common::id::next_id(),
+            timestamp: ts,
             agent_id: "cert-checker".to_string(),
             metric_name: "certificate.days_until_expiry".to_string(),
             value: days,
             labels,
+            created_at: ts,
+            updated_at: ts,
         }
     }
 
     #[test]
     fn test_no_alert_when_days_sufficient() {
+        oxmon_common::id::init(1, 1);
         let rule = make_rule();
         let dp = make_dp(90.0, "example.com");
         let result = rule.evaluate(&[dp], Utc::now());
@@ -144,6 +151,7 @@ mod tests {
 
     #[test]
     fn test_warning_alert() {
+        oxmon_common::id::init(1, 1);
         let rule = make_rule();
         let dp = make_dp(20.0, "example.com");
         let result = rule.evaluate(&[dp], Utc::now());
@@ -156,6 +164,7 @@ mod tests {
 
     #[test]
     fn test_critical_alert() {
+        oxmon_common::id::init(1, 1);
         let rule = make_rule();
         let dp = make_dp(5.0, "example.com");
         let result = rule.evaluate(&[dp], Utc::now());
@@ -166,6 +175,7 @@ mod tests {
 
     #[test]
     fn test_expired_cert() {
+        oxmon_common::id::init(1, 1);
         let rule = make_rule();
         let dp = make_dp(-3.0, "expired.com");
         let result = rule.evaluate(&[dp], Utc::now());
@@ -177,6 +187,7 @@ mod tests {
 
     #[test]
     fn test_boundary_warning() {
+        oxmon_common::id::init(1, 1);
         let rule = make_rule();
         let dp = make_dp(30.0, "example.com");
         let result = rule.evaluate(&[dp], Utc::now());
@@ -186,6 +197,7 @@ mod tests {
 
     #[test]
     fn test_boundary_critical() {
+        oxmon_common::id::init(1, 1);
         let rule = make_rule();
         let dp = make_dp(7.0, "example.com");
         let result = rule.evaluate(&[dp], Utc::now());

@@ -90,7 +90,7 @@ impl AlertRule for TrendPredictionRule {
         let last = window.last().unwrap();
 
         Some(AlertEvent {
-            id: format!("{}-{}-{}", self.id, last.agent_id, now.timestamp_millis()),
+            id: oxmon_common::id::next_id(),
             rule_id: self.id.clone(),
             agent_id: last.agent_id.clone(),
             metric_name: self.metric.clone(),
@@ -103,6 +103,8 @@ impl AlertRule for TrendPredictionRule {
             threshold: self.predict_threshold,
             timestamp: now,
             predicted_breach: Some(breach_time),
+            created_at: now,
+            updated_at: now,
         })
     }
 }

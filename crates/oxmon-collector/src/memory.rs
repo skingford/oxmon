@@ -43,32 +43,44 @@ impl Collector for MemoryCollector {
         };
 
         points.push(MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now,
             agent_id: agent_id.to_string(),
             metric_name: "memory.total".to_string(),
             value: total as f64,
             labels: HashMap::new(),
+            created_at: now,
+            updated_at: now,
         });
         points.push(MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now,
             agent_id: agent_id.to_string(),
             metric_name: "memory.used".to_string(),
             value: used as f64,
             labels: HashMap::new(),
+            created_at: now,
+            updated_at: now,
         });
         points.push(MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now,
             agent_id: agent_id.to_string(),
             metric_name: "memory.available".to_string(),
             value: available as f64,
             labels: HashMap::new(),
+            created_at: now,
+            updated_at: now,
         });
         points.push(MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now,
             agent_id: agent_id.to_string(),
             metric_name: "memory.used_percent".to_string(),
             value: usage_pct,
             labels: HashMap::new(),
+            created_at: now,
+            updated_at: now,
         });
 
         // Swap
@@ -81,25 +93,34 @@ impl Collector for MemoryCollector {
         };
 
         points.push(MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now,
             agent_id: agent_id.to_string(),
             metric_name: "memory.swap_total".to_string(),
             value: swap_total as f64,
             labels: HashMap::new(),
+            created_at: now,
+            updated_at: now,
         });
         points.push(MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now,
             agent_id: agent_id.to_string(),
             metric_name: "memory.swap_used".to_string(),
             value: swap_used as f64,
             labels: HashMap::new(),
+            created_at: now,
+            updated_at: now,
         });
         points.push(MetricDataPoint {
+            id: oxmon_common::id::next_id(),
             timestamp: now,
             agent_id: agent_id.to_string(),
             metric_name: "memory.swap_percent".to_string(),
             value: swap_pct,
             labels: HashMap::new(),
+            created_at: now,
+            updated_at: now,
         });
 
         Ok(points)

@@ -69,14 +69,15 @@ webpki-roots = "1"
 x509-parser = "0.18"
 trust-dns-resolver = "0.23"
 
-# UUID
-uuid = { version = "1", features = ["v4"] }
+# Snowflake ID
+rs-snowflake = "0.6"
 
 # Crypto (HMAC signing)
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
 bcrypt = "0.16"
+ring = "0.17"
 
 # URL encoding
 urlencoding = "2"

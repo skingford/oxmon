@@ -1447,6 +1447,7 @@ dependencies = [
  "chrono",
  "prost",
  "prost-types",
+ "rs-snowflake",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1504,7 +1505,6 @@ dependencies = [
  "utoipa",
  "utoipa-axum",
  "utoipa-swagger-ui",
- "uuid",
  "webpki-roots",
  "x509-parser",
 ]
@@ -1520,13 +1520,13 @@ dependencies = [
  "chrono",
  "oxmon-common",
  "rand 0.8.5",
+ "ring",
  "rusqlite",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -1969,6 +1969,12 @@ dependencies = [
  "untrusted",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "rs-snowflake"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e60ef3b82994702bbe4e134d98aadca4b49ed04440148985678d415c68127666"
 
 [[package]]
 name = "rsqlite-vfs"
@@ -3008,17 +3014,6 @@ dependencies = [
  "url",
  "utoipa",
  "zip",
-]
-
-[[package]]
-name = "uuid"
-version = "1.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee48d38b119b0cd71fe4141b30f5ba9c7c5d9f4e7a3a8b4a674e4b6ef789976f"
-dependencies = [
- "getrandom 0.3.4",
- "js-sys",
- "wasm-bindgen",
 ]
 
 [[package]]

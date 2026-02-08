@@ -49,7 +49,7 @@ impl AlertRule for RateOfChangeRule {
 
         if rate.abs() > self.rate_threshold {
             Some(AlertEvent {
-                id: format!("{}-{}-{}", self.id, last.agent_id, now.timestamp_millis()),
+                id: oxmon_common::id::next_id(),
                 rule_id: self.id.clone(),
                 agent_id: last.agent_id.clone(),
                 metric_name: self.metric.clone(),
@@ -62,6 +62,8 @@ impl AlertRule for RateOfChangeRule {
                 threshold: self.rate_threshold,
                 timestamp: now,
                 predicted_breach: None,
+                created_at: now,
+                updated_at: now,
             })
         } else {
             None

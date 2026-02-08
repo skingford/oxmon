@@ -13,6 +13,7 @@ prost-types = { workspace = true }
 tonic = { workspace = true }
 tonic-prost = { workspace = true }
 utoipa = { workspace = true }
+rs-snowflake = { workspace = true }
 
 [build-dependencies]
 tonic-prost-build = { workspace = true }

@@ -8,11 +8,14 @@ use tracing;
 
 const METRICS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS metrics (
+    id TEXT PRIMARY KEY,
     timestamp INTEGER NOT NULL,
     agent_id TEXT NOT NULL,
     metric_name TEXT NOT NULL,
     value REAL NOT NULL,
-    labels TEXT NOT NULL DEFAULT '{}'
+    labels TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_metrics_agent_metric_time
     ON metrics(agent_id, metric_name, timestamp);
@@ -31,7 +34,9 @@ CREATE TABLE IF NOT EXISTS alert_events (
     value REAL NOT NULL,
     threshold REAL NOT NULL,
     timestamp INTEGER NOT NULL,
-    predicted_breach INTEGER
+    predicted_breach INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_time ON alert_events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alert_events(severity);

@@ -122,6 +122,8 @@ impl NotificationManager {
                     threshold: events[0].threshold,
                     timestamp: now,
                     predicted_breach: None,
+                    created_at: now,
+                    updated_at: now,
                 };
                 self.send_to_channels(&summary).await;
             }

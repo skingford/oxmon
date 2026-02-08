@@ -126,21 +126,27 @@ impl CertCheckScheduler {
 
                 // certificate.is_valid
                 data_points.push(MetricDataPoint {
+                    id: oxmon_common::id::next_id(),
                     timestamp: now,
                     agent_id: agent_id.clone(),
                     metric_name: "certificate.is_valid".to_string(),
                     value: if result.is_valid { 1.0 } else { 0.0 },
                     labels: labels.clone(),
+                    created_at: now,
+                    updated_at: now,
                 });
 
                 // certificate.days_until_expiry
                 if let Some(days) = result.days_until_expiry {
                     data_points.push(MetricDataPoint {
+                        id: oxmon_common::id::next_id(),
                         timestamp: now,
                         agent_id: agent_id.clone(),
                         metric_name: "certificate.days_until_expiry".to_string(),
                         value: days as f64,
                         labels: labels.clone(),
+                        created_at: now,
+                        updated_at: now,
                     });
                 }
 

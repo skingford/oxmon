@@ -37,6 +37,10 @@ impl AgentRegistry {
             .collect()
     }
 
+    pub fn remove_agent(&mut self, agent_id: &str) -> bool {
+        self.agents.remove(agent_id).is_some()
+    }
+
     pub fn get_agent(&self, agent_id: &str) -> Option<AgentInfo> {
         let now = Utc::now();
         let timeout = Duration::seconds((self.collection_interval_secs * 3) as i64);
