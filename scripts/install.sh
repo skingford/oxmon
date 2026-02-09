@@ -357,6 +357,7 @@ main() {
     if [[ "$PM2_ONLY" == true ]]; then
         info "PM2-only mode: skipping binary download"
         sudo mkdir -p /var/log/oxmon
+        sudo chown "$(id -u):$(id -g)" /var/log/oxmon
         setup_pm2
         echo ""
         info "${GREEN}PM2 config generated. Done!${NC}"
@@ -367,8 +368,10 @@ main() {
 
     # Create directories
     sudo mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" /var/log/oxmon
+    sudo chown "$(id -u):$(id -g)" /var/log/oxmon
     if [[ "$COMPONENT" == "server" ]]; then
         sudo mkdir -p "$DATA_DIR"
+        sudo chown "$(id -u):$(id -g)" "$DATA_DIR"
     fi
 
     # Download and install binary
@@ -413,7 +416,15 @@ main() {
             echo -e "    ${CYAN}oxmon-agent ${CONFIG_DIR}/agent.toml${NC}"
         fi
         echo ""
-        echo -e "  Or use PM2 for process management:"
+        echo -e "  Or start with PM2 directly:"
+        if [[ "$COMPONENT" == "server" ]]; then
+            echo -e "    ${CYAN}pm2 start ${INSTALL_DIR}/oxmon-server --name oxmon-server --log-date-format=\"YYYY-MM-DD HH:mm:ss Z\" -- ${CONFIG_DIR}/server.toml${NC}"
+        else
+            echo -e "    ${CYAN}pm2 start ${INSTALL_DIR}/oxmon-agent --name oxmon-agent --log-date-format=\"YYYY-MM-DD HH:mm:ss Z\" -- ${CONFIG_DIR}/agent.toml${NC}"
+        fi
+        echo -e "    ${CYAN}pm2 save && pm2 startup${NC}"
+        echo ""
+        echo -e "  Or generate PM2 ecosystem config:"
         echo -e "    ${CYAN}curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/scripts/install.sh | bash -s -- ${COMPONENT} --pm2-only${NC}"
     fi
     echo ""

@@ -62,7 +62,14 @@ cp config/agent.example.toml config/agent.toml
 ### 3. 启动服务端
 
 ```bash
-./target/release/oxmon-server config/server.toml
+# 手动启动
+oxmon-server /etc/oxmon/server.toml
+
+# 或使用 PM2 进程守护
+pm2 start oxmon-server --name oxmon-server \
+  --log-date-format="YYYY-MM-DD HH:mm:ss Z" \
+  -- /etc/oxmon/server.toml
+pm2 save && pm2 startup
 ```
 
 Server 启动后监听 gRPC 端口 9090 和 REST API 端口 8080（可配置）。
@@ -70,7 +77,14 @@ Server 启动后监听 gRPC 端口 9090 和 REST API 端口 8080（可配置）�
 ### 4. 启动采集端
 
 ```bash
-./target/release/oxmon-agent config/agent.toml
+# 手动启动
+oxmon-agent /etc/oxmon/agent.toml
+
+# 或使用 PM2 进程守护
+pm2 start oxmon-agent --name oxmon-agent \
+  --log-date-format="YYYY-MM-DD HH:mm:ss Z" \
+  -- /etc/oxmon/agent.toml
+pm2 save && pm2 startup
 ```
 
 Agent 每 10 秒（可配置）采集一次系统指标，通过 gRPC 上报给 Server。

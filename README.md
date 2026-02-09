@@ -62,7 +62,14 @@ Edit the configuration files for your environment. See [Configuration](#configur
 ### 3. Start the Server
 
 ```bash
-./target/release/oxmon-server config/server.toml
+# Start manually
+oxmon-server /etc/oxmon/server.toml
+
+# Or start with PM2 for process management
+pm2 start oxmon-server --name oxmon-server \
+  --log-date-format="YYYY-MM-DD HH:mm:ss Z" \
+  -- /etc/oxmon/server.toml
+pm2 save && pm2 startup
 ```
 
 The server listens on gRPC port 9090 and REST API port 8080 (configurable).
@@ -70,7 +77,14 @@ The server listens on gRPC port 9090 and REST API port 8080 (configurable).
 ### 4. Start the Agent
 
 ```bash
-./target/release/oxmon-agent config/agent.toml
+# Start manually
+oxmon-agent /etc/oxmon/agent.toml
+
+# Or start with PM2 for process management
+pm2 start oxmon-agent --name oxmon-agent \
+  --log-date-format="YYYY-MM-DD HH:mm:ss Z" \
+  -- /etc/oxmon/agent.toml
+pm2 save && pm2 startup
 ```
 
 The agent collects system metrics every 10 seconds (configurable) and reports them to the server via gRPC.
