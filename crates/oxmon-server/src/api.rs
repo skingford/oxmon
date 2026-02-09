@@ -281,6 +281,8 @@ struct MetricDataPointResponse {
     metric_name: String,
     /// 指标值
     value: f64,
+    /// 指标标签（如 mount=/、interface=eth0、core=0）
+    labels: HashMap<String, String>,
     /// 创建时间
     created_at: DateTime<Utc>,
 }
@@ -327,6 +329,7 @@ async fn query_all_metrics(
                     agent_id: dp.agent_id,
                     metric_name: dp.metric_name,
                     value: dp.value,
+                    labels: dp.labels,
                     created_at: dp.created_at,
                 })
                 .collect();

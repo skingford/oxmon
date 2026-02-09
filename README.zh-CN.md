@@ -387,6 +387,24 @@ curl "http://localhost:8080/v1/metrics"
 curl "http://localhost:8080/v1/metrics?limit=50&offset=100"
 ```
 
+响应示例：
+
+```json
+[
+  {
+    "id": "m_01JABCDEF1234567890",
+    "timestamp": "2026-02-09T10:00:00Z",
+    "agent_id": "web-server-01",
+    "metric_name": "cpu.usage",
+    "value": 37.5,
+    "labels": {
+      "core": "0"
+    },
+    "created_at": "2026-02-09T10:00:01Z"
+  }
+]
+```
+
 ### `GET /v1/alerts/rules`
 
 列出所有已配置的告警规则。
@@ -733,6 +751,12 @@ sqlite3 data/2026-02-09.db
 .schema users
 PRAGMA table_info(users);
 .quit
+
+-- 例子
+sqlite3 2026-02-09.db 
+sqlite3 2026-02-09.db .tables
+sqlite3 2026-02-09.db ".schema metrics"
+sqlite3 -header -column 2026-02-09.db "SELECT * FROM metrics LIMIT 1;"
 ```
 
 基础查询（SELECT）：

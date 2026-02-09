@@ -387,6 +387,24 @@ curl "http://localhost:8080/v1/metrics"
 curl "http://localhost:8080/v1/metrics?limit=50&offset=100"
 ```
 
+Response example:
+
+```json
+[
+  {
+    "id": "m_01JABCDEF1234567890",
+    "timestamp": "2026-02-09T10:00:00Z",
+    "agent_id": "web-server-01",
+    "metric_name": "cpu.usage",
+    "value": 37.5,
+    "labels": {
+      "core": "0"
+    },
+    "created_at": "2026-02-09T10:00:01Z"
+  }
+]
+```
+
 ### `GET /v1/alerts/rules`
 
 List all configured alert rules.
