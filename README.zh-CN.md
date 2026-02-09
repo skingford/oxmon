@@ -96,7 +96,8 @@ Agent 每 10 秒（可配置）采集一次系统指标，通过 gRPC 上报给 
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
 | `agent_id` | 该节点唯一标识，用于区分不同服务器 | `"web-server-01"` |
-| `server_endpoint` | Server 的 gRPC 地址 | `"http://127.0.0.1:9090"` |
+| `server_endpoint` | Server 的 gRPC 地址（`host:port`） | `"127.0.0.1:9090"` |
+| `tls` | 启用 gRPC TLS 加密连接 | `false` |
 | `auth_token` | 认证 token（可选，Server 启用认证时必填） | 无 |
 | `collection_interval_secs` | 指标采集间隔（秒） | `10` |
 | `buffer_max_size` | Server 不可达时本地缓冲的最大批次数 | `1000` |
@@ -105,7 +106,8 @@ Agent 每 10 秒（可配置）采集一次系统指标，通过 gRPC 上报给 
 
 ```toml
 agent_id = "web-server-01"
-server_endpoint = "http://10.0.1.100:9090"
+server_endpoint = "10.0.1.100:9090"
+# tls = true  # 启用 gRPC TLS 加密连接
 # auth_token = "your-token-here"  # Server 启用认证时填写
 collection_interval_secs = 10
 buffer_max_size = 1000
@@ -743,11 +745,11 @@ curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/instal
 ```bash
 # 指向 Server 的 gRPC 地址
 curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent \
-  --server-endpoint http://10.0.1.100:9090
+  --server-endpoint 10.0.1.100:9090
 
 # 自定义 Agent ID + PM2
 curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent \
-  --server-endpoint http://10.0.1.100:9090 \
+  --server-endpoint 10.0.1.100:9090 \
   --agent-id web-server-01 \
   --setup-pm2
 ```
@@ -796,7 +798,7 @@ pm2 restart oxmon-server   # 或: pm2 reload oxmon-server
 | `--config-dir` | 配置文件路径 | `/etc/oxmon` |
 | `--data-dir` | Server 数据存储目录（仅 server） | `/var/lib/oxmon` |
 | `--agent-id` | Agent 标识（仅 agent） | `$(hostname)` |
-| `--server-endpoint` | Agent 连接的 gRPC 地址（仅 agent） | `http://127.0.0.1:9090` |
+| `--server-endpoint` | Agent 连接的 gRPC 地址（仅 agent） | `127.0.0.1:9090` |
 | `--setup-pm2` | 生成 PM2 配置并启动服务 | 关闭 |
 | `--pm2-only` | 仅生成 PM2 配置（跳过下载） | 关闭 |
 

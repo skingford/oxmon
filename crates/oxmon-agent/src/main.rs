@@ -127,7 +127,7 @@ async fn main() -> Result<()> {
 
                 // Try to connect if not connected
                 if client.is_none() {
-                    client = try_connect(&config.server_endpoint).await;
+                    client = try_connect(&config.grpc_endpoint()).await;
                 }
 
                 // Try to send (current batch + buffered)

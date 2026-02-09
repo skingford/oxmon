@@ -96,7 +96,8 @@ The agent collects system metrics every 10 seconds (configurable) and reports th
 | Field | Description | Default |
 |-------|-------------|---------|
 | `agent_id` | Unique identifier for this node | `"web-server-01"` |
-| `server_endpoint` | Server gRPC address | `"http://127.0.0.1:9090"` |
+| `server_endpoint` | Server gRPC address (`host:port`) | `"127.0.0.1:9090"` |
+| `tls` | Enable TLS for gRPC connection | `false` |
 | `auth_token` | Authentication token (optional, required when server auth is enabled) | none |
 | `collection_interval_secs` | Metric collection interval (seconds) | `10` |
 | `buffer_max_size` | Max buffered batches when server is unreachable | `1000` |
@@ -105,7 +106,8 @@ Example:
 
 ```toml
 agent_id = "web-server-01"
-server_endpoint = "http://10.0.1.100:9090"
+server_endpoint = "10.0.1.100:9090"
+# tls = true  # Enable TLS for gRPC connection
 # auth_token = "your-token-here"  # Required when server has require_agent_auth enabled
 collection_interval_secs = 10
 buffer_max_size = 1000
@@ -743,11 +745,11 @@ curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/instal
 ```bash
 # Point to the server's gRPC address
 curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent \
-  --server-endpoint http://10.0.1.100:9090
+  --server-endpoint 10.0.1.100:9090
 
 # Custom agent ID + PM2
 curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent \
-  --server-endpoint http://10.0.1.100:9090 \
+  --server-endpoint 10.0.1.100:9090 \
   --agent-id web-server-01 \
   --setup-pm2
 ```
@@ -796,7 +798,7 @@ pm2 restart oxmon-server   # or: pm2 reload oxmon-server
 | `--config-dir` | Config file path | `/etc/oxmon` |
 | `--data-dir` | Server data storage (server only) | `/var/lib/oxmon` |
 | `--agent-id` | Agent identifier (agent only) | `$(hostname)` |
-| `--server-endpoint` | gRPC server address (agent only) | `http://127.0.0.1:9090` |
+| `--server-endpoint` | gRPC server address (agent only) | `127.0.0.1:9090` |
 | `--setup-pm2` | Generate PM2 config and start service | off |
 | `--pm2-only` | Only generate PM2 config (skip download) | off |
 

@@ -6,7 +6,7 @@
 #   Install server:
 #     curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- server
 #   Install agent:
-#     curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent --server-endpoint http://10.0.1.100:9090
+#     curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent --server-endpoint 10.0.1.100:9090
 #
 # Options:
 #   server | agent                  Component to install (required)
@@ -15,7 +15,7 @@
 #   --config-dir <path>             Config directory (default: /etc/oxmon)
 #   --data-dir <path>               Data directory for server (default: /var/lib/oxmon)
 #   --agent-id <id>                 Agent ID (default: hostname)
-#   --server-endpoint <url>         gRPC server endpoint for agent (default: http://127.0.0.1:9090)
+#   --server-endpoint <url>         gRPC server endpoint for agent (default: 127.0.0.1:9090)
 #   --setup-pm2                     Generate PM2 ecosystem config and start services
 #   --pm2-only                      Only generate PM2 config (skip binary install)
 #
@@ -30,7 +30,7 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/oxmon"
 DATA_DIR="/var/lib/oxmon"
 AGENT_ID=""
-SERVER_ENDPOINT="http://127.0.0.1:9090"
+SERVER_ENDPOINT="127.0.0.1:9090"
 SETUP_PM2=false
 PM2_ONLY=false
 
@@ -58,7 +58,7 @@ usage() {
     echo "  curl -fsSL .../install.sh | bash -s -- server --setup-pm2"
     echo ""
     echo -e "  ${CYAN}# Monitored host${NC}"
-    echo "  curl -fsSL .../install.sh | bash -s -- agent --server-endpoint http://10.0.1.100:9090"
+    echo "  curl -fsSL .../install.sh | bash -s -- agent --server-endpoint 10.0.1.100:9090"
     echo "  curl -fsSL .../install.sh | bash -s -- agent --agent-id web-01 --setup-pm2"
     echo ""
     echo "Options:"
@@ -67,7 +67,7 @@ usage() {
     echo "  --config-dir <path>       Config file path (default: /etc/oxmon)"
     echo "  --data-dir <path>         Server data dir (default: /var/lib/oxmon)"
     echo "  --agent-id <id>           Agent identifier (default: hostname)"
-    echo "  --server-endpoint <url>   gRPC server address (default: http://127.0.0.1:9090)"
+    echo "  --server-endpoint <url>   gRPC server address (default: 127.0.0.1:9090)"
     echo "  --setup-pm2               Generate PM2 config and start service"
     echo "  --pm2-only                Only generate PM2 config (skip download)"
     echo ""
@@ -250,6 +250,7 @@ generate_agent_config() {
 
 agent_id = "${agent_id}"
 server_endpoint = "${SERVER_ENDPOINT}"
+# tls = true  # Enable TLS for gRPC connection
 # auth_token = "your-token-here"
 collection_interval_secs = 10
 buffer_max_size = 1000

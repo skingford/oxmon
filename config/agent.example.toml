@@ -3,8 +3,11 @@
 # Unique identifier for this agent (defaults to hostname if not set)
 agent_id = "web-server-01"
 
-# Server gRPC endpoint to report metrics to
-server_endpoint = "http://127.0.0.1:9090"
+# Server gRPC endpoint (host:port)
+server_endpoint = "127.0.0.1:9090"
+
+# Enable TLS for gRPC connection (default: false)
+# tls = true
 
 # Authentication token (optional, required if server has require_agent_auth enabled)
 # Generate a token by calling: POST /v1/agents/whitelist on the server
