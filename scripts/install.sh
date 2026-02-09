@@ -275,8 +275,14 @@ setup_pm2() {
 
     generate_pm2_config
 
-    info "Starting oxmon-${COMPONENT} with PM2..."
-    pm2 start "${CONFIG_DIR}/ecosystem.config.js"
+    local app_name="oxmon-${COMPONENT}"
+    if pm2 describe "$app_name" &>/dev/null; then
+        info "Reloading ${app_name} with PM2..."
+        pm2 reload "${CONFIG_DIR}/ecosystem.config.js"
+    else
+        info "Starting ${app_name} with PM2..."
+        pm2 start "${CONFIG_DIR}/ecosystem.config.js"
+    fi
     pm2 save
 
     info "Setting up PM2 startup hook..."
@@ -308,6 +314,7 @@ module.exports = {
       max_restarts: 10,
       restart_delay: 5000,
       env: {
+        TZ: 'Asia/Shanghai',
         RUST_LOG: 'oxmon=info',
       },
       error_file: '/var/log/oxmon/server-error.log',
@@ -329,6 +336,7 @@ module.exports = {
       max_restarts: 10,
       restart_delay: 5000,
       env: {
+        TZ: 'Asia/Shanghai',
         RUST_LOG: 'oxmon=info',
       },
       error_file: '/var/log/oxmon/agent-error.log',
@@ -418,9 +426,9 @@ main() {
         echo ""
         echo -e "  Or start with PM2 directly:"
         if [[ "$COMPONENT" == "server" ]]; then
-            echo -e "    ${CYAN}pm2 start ${INSTALL_DIR}/oxmon-server --name oxmon-server --log-date-format=\"YYYY-MM-DD HH:mm:ss Z\" -- ${CONFIG_DIR}/server.toml${NC}"
+            echo -e "    ${CYAN}TZ=Asia/Shanghai pm2 start ${INSTALL_DIR}/oxmon-server --name oxmon-server --log-date-format=\"YYYY-MM-DD HH:mm:ss Z\" -- ${CONFIG_DIR}/server.toml${NC}"
         else
-            echo -e "    ${CYAN}pm2 start ${INSTALL_DIR}/oxmon-agent --name oxmon-agent --log-date-format=\"YYYY-MM-DD HH:mm:ss Z\" -- ${CONFIG_DIR}/agent.toml${NC}"
+            echo -e "    ${CYAN}TZ=Asia/Shanghai pm2 start ${INSTALL_DIR}/oxmon-agent --name oxmon-agent --log-date-format=\"YYYY-MM-DD HH:mm:ss Z\" -- ${CONFIG_DIR}/agent.toml${NC}"
         fi
         echo -e "    ${CYAN}pm2 save && pm2 startup${NC}"
         echo ""

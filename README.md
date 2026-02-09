@@ -65,8 +65,8 @@ Edit the configuration files for your environment. See [Configuration](#configur
 # Start manually
 oxmon-server /etc/oxmon/server.toml
 
-# Or start with PM2 for process management
-pm2 start oxmon-server --name oxmon-server \
+# Or start with PM2 for process management (Beijing timezone)
+TZ=Asia/Shanghai pm2 start oxmon-server --name oxmon-server \
   --log-date-format="YYYY-MM-DD HH:mm:ss Z" \
   -- /etc/oxmon/server.toml
 pm2 save && pm2 startup
@@ -80,8 +80,8 @@ The server listens on gRPC port 9090 and REST API port 8080 (configurable).
 # Start manually
 oxmon-agent /etc/oxmon/agent.toml
 
-# Or start with PM2 for process management
-pm2 start oxmon-agent --name oxmon-agent \
+# Or start with PM2 for process management (Beijing timezone)
+TZ=Asia/Shanghai pm2 start oxmon-agent --name oxmon-agent \
   --log-date-format="YYYY-MM-DD HH:mm:ss Z" \
   -- /etc/oxmon/agent.toml
 pm2 save && pm2 startup
@@ -683,6 +683,15 @@ pm2 restart oxmon-agent       # Restart agent
 pm2 stop oxmon-server         # Stop service
 pm2 startup                   # Enable auto-start on boot
 pm2 save                      # Save current process list
+```
+
+### Troubleshooting
+
+If PM2 fails with `EACCES: permission denied` on log or data directories, fix ownership:
+
+```bash
+sudo chown $(id -u):$(id -g) /var/log/oxmon /var/lib/oxmon
+pm2 restart oxmon-server   # or: pm2 reload oxmon-server
 ```
 
 ### Install Script Options

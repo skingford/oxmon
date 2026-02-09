@@ -65,8 +65,8 @@ cp config/agent.example.toml config/agent.toml
 # 手动启动
 oxmon-server /etc/oxmon/server.toml
 
-# 或使用 PM2 进程守护
-pm2 start oxmon-server --name oxmon-server \
+# 或使用 PM2 进程守护（默认北京时间）
+TZ=Asia/Shanghai pm2 start oxmon-server --name oxmon-server \
   --log-date-format="YYYY-MM-DD HH:mm:ss Z" \
   -- /etc/oxmon/server.toml
 pm2 save && pm2 startup
@@ -80,8 +80,8 @@ Server 启动后监听 gRPC 端口 9090 和 REST API 端口 8080（可配置）�
 # 手动启动
 oxmon-agent /etc/oxmon/agent.toml
 
-# 或使用 PM2 进程守护
-pm2 start oxmon-agent --name oxmon-agent \
+# 或使用 PM2 进程守护（默认北京时间）
+TZ=Asia/Shanghai pm2 start oxmon-agent --name oxmon-agent \
   --log-date-format="YYYY-MM-DD HH:mm:ss Z" \
   -- /etc/oxmon/agent.toml
 pm2 save && pm2 startup
@@ -683,6 +683,15 @@ pm2 restart oxmon-agent       # 重启 Agent
 pm2 stop oxmon-server         # 停止服务
 pm2 startup                   # 设置开机自启
 pm2 save                      # 保存当前进程列表
+```
+
+### 常见问题
+
+如果 PM2 启动时报 `EACCES: permission denied` 权限错误，需要修复目录所有权：
+
+```bash
+sudo chown $(id -u):$(id -g) /var/log/oxmon /var/lib/oxmon
+pm2 restart oxmon-server   # 或: pm2 reload oxmon-server
 ```
 
 ### 安装脚本参数
