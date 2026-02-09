@@ -278,10 +278,10 @@ setup_pm2() {
     local app_name="oxmon-${COMPONENT}"
     if pm2 describe "$app_name" &>/dev/null; then
         info "Reloading ${app_name} with PM2..."
-        pm2 reload "${CONFIG_DIR}/ecosystem.config.js"
+        pm2 reload "$app_name"
     else
         info "Starting ${app_name} with PM2..."
-        pm2 start "${CONFIG_DIR}/ecosystem.config.js"
+        pm2 start "${CONFIG_DIR}/ecosystem.config.js" --only "$app_name"
     fi
     pm2 save
 
