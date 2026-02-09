@@ -26,7 +26,6 @@ impl FromStr for CompareOp {
 }
 
 impl CompareOp {
-
     fn eval(&self, value: f64, threshold: f64) -> bool {
         match self {
             Self::GreaterThan => value > threshold,
@@ -78,10 +77,8 @@ impl AlertRule for ThresholdRule {
         let cutoff = now - duration;
 
         // Check if ALL data points within the duration window exceed the threshold
-        let recent: Vec<&MetricDataPoint> = window
-            .iter()
-            .filter(|dp| dp.timestamp >= cutoff)
-            .collect();
+        let recent: Vec<&MetricDataPoint> =
+            window.iter().filter(|dp| dp.timestamp >= cutoff).collect();
 
         if recent.is_empty() {
             return None;
@@ -104,7 +101,10 @@ impl AlertRule for ThresholdRule {
             severity: self.severity,
             message: format!(
                 "{} has been {} {:.1} for the configured duration on {}",
-                self.metric, op_str(&self.operator), self.value, latest.agent_id,
+                self.metric,
+                op_str(&self.operator),
+                self.value,
+                latest.agent_id,
             ),
             value: latest.value,
             threshold: self.value,

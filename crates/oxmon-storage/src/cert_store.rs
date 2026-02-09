@@ -112,16 +112,10 @@ impl CertStore {
         Self::migrate_certificate_details(&conn)?;
 
         // 迁移：为已有的 cert_check_results 表添加 resolved_ips 列
-        let _ = conn.execute_batch(
-            "ALTER TABLE cert_check_results ADD COLUMN resolved_ips TEXT;",
-        );
+        let _ = conn.execute_batch("ALTER TABLE cert_check_results ADD COLUMN resolved_ips TEXT;");
         // 迁移：为已有的 cert_check_results 表添加 created_at / updated_at 列
-        let _ = conn.execute_batch(
-            "ALTER TABLE cert_check_results ADD COLUMN created_at INTEGER;",
-        );
-        let _ = conn.execute_batch(
-            "ALTER TABLE cert_check_results ADD COLUMN updated_at INTEGER;",
-        );
+        let _ = conn.execute_batch("ALTER TABLE cert_check_results ADD COLUMN created_at INTEGER;");
+        let _ = conn.execute_batch("ALTER TABLE cert_check_results ADD COLUMN updated_at INTEGER;");
 
         conn.execute_batch(USERS_SCHEMA)?;
 
@@ -166,7 +160,8 @@ impl CertStore {
         tracing::info!("Migrating agent_whitelist table to new schema with Snowflake id");
 
         // 重建表
-        conn.execute_batch("
+        conn.execute_batch(
+            "
             CREATE TABLE agent_whitelist_new (
                 id TEXT PRIMARY KEY,
                 agent_id TEXT NOT NULL UNIQUE,
@@ -176,10 +171,12 @@ impl CertStore {
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
-        ")?;
+        ",
+        )?;
 
         // 检查旧表是否有 encrypted_token 列
-        let has_encrypted_token = Self::table_has_column(conn, "agent_whitelist", "encrypted_token")?;
+        let has_encrypted_token =
+            Self::table_has_column(conn, "agent_whitelist", "encrypted_token")?;
 
         if has_encrypted_token {
             // 包含 encrypted_token 列的旧表
@@ -199,10 +196,12 @@ impl CertStore {
             ")?;
         }
 
-        conn.execute_batch("
+        conn.execute_batch(
+            "
             DROP TABLE agent_whitelist;
             ALTER TABLE agent_whitelist_new RENAME TO agent_whitelist;
-        ")?;
+        ",
+        )?;
 
         tracing::info!("agent_whitelist migration completed");
         Ok(())
@@ -234,7 +233,8 @@ impl CertStore {
 
         tracing::info!("Migrating certificate_details table to new schema with Snowflake id");
 
-        conn.execute_batch("
+        conn.execute_batch(
+            "
             CREATE TABLE certificate_details_new (
                 id TEXT PRIMARY KEY,
                 domain TEXT NOT NULL UNIQUE,
@@ -252,7 +252,8 @@ impl CertStore {
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
-        ")?;
+        ",
+        )?;
 
         conn.execute_batch("
             INSERT INTO certificate_details_new (id, domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c, subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at)
@@ -261,12 +262,14 @@ impl CertStore {
             FROM certificate_details;
         ")?;
 
-        conn.execute_batch("
+        conn.execute_batch(
+            "
             DROP TABLE certificate_details;
             ALTER TABLE certificate_details_new RENAME TO certificate_details;
             CREATE INDEX IF NOT EXISTS idx_cert_details_not_after ON certificate_details(not_after);
             CREATE INDEX IF NOT EXISTS idx_cert_details_domain ON certificate_details(domain);
-        ")?;
+        ",
+        )?;
 
         tracing::info!("certificate_details migration completed");
         Ok(())
@@ -373,9 +376,7 @@ impl CertStore {
         let mut stmt = conn.prepare(&sql)?;
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt.query_map(param_refs.as_slice(), |row| {
-            Ok(Self::row_to_domain(row))
-        })?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| Ok(Self::row_to_domain(row)))?;
 
         let mut domains = Vec::new();
         for row in rows {
@@ -389,9 +390,7 @@ impl CertStore {
         let mut stmt = conn.prepare(
             "SELECT id, domain, port, enabled, check_interval_secs, note, last_checked_at, created_at, updated_at FROM cert_domains WHERE id = ?1",
         )?;
-        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
-            Ok(Self::row_to_domain(row))
-        })?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_domain(row)))?;
         match rows.next() {
             Some(Ok(Ok(d))) => Ok(Some(d)),
             Some(Ok(Err(e))) => Err(e),
@@ -486,7 +485,10 @@ impl CertStore {
 
     // ---- Scheduler queries ----
 
-    pub fn query_domains_due_for_check(&self, default_interval_secs: u64) -> Result<Vec<CertDomain>> {
+    pub fn query_domains_due_for_check(
+        &self,
+        default_interval_secs: u64,
+    ) -> Result<Vec<CertDomain>> {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().timestamp();
         let default_interval = default_interval_secs as i64;
@@ -683,7 +685,8 @@ impl CertStore {
 
     pub fn get_agent_token_hash(&self, agent_id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT token_hash FROM agent_whitelist WHERE agent_id = ?1")?;
+        let mut stmt =
+            conn.prepare("SELECT token_hash FROM agent_whitelist WHERE agent_id = ?1")?;
         let mut rows = stmt.query_map(rusqlite::params![agent_id], |row| row.get(0))?;
         match rows.next() {
             Some(Ok(hash)) => Ok(Some(hash)),
@@ -695,7 +698,9 @@ impl CertStore {
     /// 获取 agent 的加密 token 和 token_hash，用于认证验证
     pub fn get_agent_auth(&self, agent_id: &str) -> Result<Option<(Option<String>, String)>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT encrypted_token, token_hash FROM agent_whitelist WHERE agent_id = ?1")?;
+        let mut stmt = conn.prepare(
+            "SELECT encrypted_token, token_hash FROM agent_whitelist WHERE agent_id = ?1",
+        )?;
         let mut rows = stmt.query_map(rusqlite::params![agent_id], |row| {
             Ok((row.get::<_, Option<String>>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -723,7 +728,14 @@ impl CertStore {
             let created: i64 = row.get(2)?;
             let updated: i64 = row.get(3)?;
             let encrypted_token: Option<String> = row.get(5)?;
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, created, updated, row.get::<_, Option<String>>(4)?, encrypted_token))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                created,
+                updated,
+                row.get::<_, Option<String>>(4)?,
+                encrypted_token,
+            ))
         })?;
         let mut agents = Vec::new();
         for row in rows {
@@ -763,11 +775,7 @@ impl CertStore {
         }
     }
 
-    pub fn update_agent_whitelist(
-        &self,
-        id: &str,
-        description: Option<&str>,
-    ) -> Result<bool> {
+    pub fn update_agent_whitelist(&self, id: &str, description: Option<&str>) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().timestamp();
         let updated = conn.execute(
@@ -789,7 +797,10 @@ impl CertStore {
     }
 
     /// 按 id 获取单个 agent 白名单条目
-    pub fn get_agent_by_id(&self, id: &str) -> Result<Option<oxmon_common::types::AgentWhitelistEntry>> {
+    pub fn get_agent_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<oxmon_common::types::AgentWhitelistEntry>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, agent_id, created_at, updated_at, description, encrypted_token FROM agent_whitelist WHERE id = ?1",
@@ -798,7 +809,14 @@ impl CertStore {
             let created: i64 = row.get(2)?;
             let updated: i64 = row.get(3)?;
             let encrypted_token: Option<String> = row.get(5)?;
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, created, updated, row.get::<_, Option<String>>(4)?, encrypted_token))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                created,
+                updated,
+                row.get::<_, Option<String>>(4)?,
+                encrypted_token,
+            ))
         })?;
         match rows.next() {
             Some(Ok((id, agent_id, created, updated, description, encrypted_token))) => {
@@ -821,7 +839,10 @@ impl CertStore {
 
     // ---- User operations ----
 
-    pub fn get_user_by_username(&self, username: &str) -> Result<Option<oxmon_common::types::User>> {
+    pub fn get_user_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<oxmon_common::types::User>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, username, password_hash, token_version, created_at, updated_at FROM users WHERE username = ?1",
@@ -1016,7 +1037,9 @@ impl CertStore {
             idx += 1;
         }
         if let Some(issuer) = &filter.issuer_contains {
-            sql.push_str(&format!(" AND (issuer_cn LIKE ?{idx} OR issuer_o LIKE ?{idx})"));
+            sql.push_str(&format!(
+                " AND (issuer_cn LIKE ?{idx} OR issuer_o LIKE ?{idx})"
+            ));
             params.push(Box::new(format!("%{issuer}%")));
             idx += 1;
         }
@@ -1173,7 +1196,13 @@ mod tests {
             .unwrap();
 
         let updated = store
-            .update_domain(&domain.id, Some(8443), Some(false), Some(Some(7200)), Some("updated".to_string()))
+            .update_domain(
+                &domain.id,
+                Some(8443),
+                Some(false),
+                Some(Some(7200)),
+                Some("updated".to_string()),
+            )
             .unwrap()
             .unwrap();
         assert_eq!(updated.port, 8443);
@@ -1216,7 +1245,10 @@ mod tests {
 
         assert!(store.delete_domain(&domain.id).unwrap());
         assert!(store.get_domain_by_id(&domain.id).unwrap().is_none());
-        assert!(store.query_result_by_domain("delete.com").unwrap().is_none());
+        assert!(store
+            .query_result_by_domain("delete.com")
+            .unwrap()
+            .is_none());
     }
 
     #[test]

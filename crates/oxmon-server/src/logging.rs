@@ -97,8 +97,12 @@ pub async fn request_logging(req: Request, next: Next) -> Response {
         .to_string();
     let mc = method_color(&method);
 
-    // Read request body for logging (POST/PUT/PATCH)
-    let has_body = matches!(method.as_str(), "POST" | "PUT" | "PATCH");
+    // Sensitive paths: never log request/response bodies for these
+    let is_sensitive = path.starts_with("/v1/auth/")
+        || path.starts_with("/v1/agents/whitelist");
+
+    // Read request body for logging (POST/PUT/PATCH), but skip sensitive endpoints
+    let has_body = !is_sensitive && matches!(method.as_str(), "POST" | "PUT" | "PATCH");
     let (req, req_body_snippet) = if has_body {
         let (parts, body) = req.into_parts();
         let body_bytes = axum::body::to_bytes(body, 1024 * 1024)
@@ -155,7 +159,7 @@ pub async fn request_logging(req: Request, next: Next) -> Response {
         .await
         .unwrap_or_default();
 
-    let body_snippet = if is_json && !body_bytes.is_empty() {
+    let body_snippet = if !is_sensitive && is_json && !body_bytes.is_empty() {
         truncate_body(&body_bytes, MAX_BODY_LOG_CHARS)
     } else {
         String::new()

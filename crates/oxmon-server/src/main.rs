@@ -8,6 +8,7 @@ mod openapi;
 mod state;
 
 use anyhow::Result;
+use axum::middleware;
 use chrono::Utc;
 use oxmon_alert::engine::AlertEngine;
 use oxmon_alert::rules::cert_expiration::CertExpirationRule;
@@ -30,11 +31,10 @@ use std::sync::{Arc, Mutex};
 use tokio::signal;
 use tokio::time::{interval, Duration};
 use tonic::transport::Server as TonicServer;
+use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
-use tower_http::cors::{Any, CorsLayer};
-use axum::middleware;
 
 use crate::state::{AgentRegistry, AppState};
 
@@ -218,7 +218,10 @@ async fn main() -> Result<()> {
             }
         }
         Ok(count) => {
-            tracing::info!(count, "Users table already has accounts, skipping default admin creation");
+            tracing::info!(
+                count,
+                "Users table already has accounts, skipping default admin creation"
+            );
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to check users table");
@@ -239,9 +242,10 @@ async fn main() -> Result<()> {
 
     // gRPC server
     let grpc_addr: SocketAddr = format!("0.0.0.0:{}", config.grpc_port).parse()?;
-    let grpc_service = MetricServiceServer::new(
-        grpc::MetricServiceImpl::new(state.clone(), config.require_agent_auth)
-    );
+    let grpc_service = MetricServiceServer::new(grpc::MetricServiceImpl::new(
+        state.clone(),
+        config.require_agent_auth,
+    ));
     let grpc_server = TonicServer::builder()
         .add_service(grpc_service)
         .serve(grpc_addr);
@@ -284,19 +288,15 @@ async fn main() -> Result<()> {
     }
 
     // Public routes (no auth required): health + login
-    let (public_router, public_spec) = api::public_routes()
-        .split_for_parts();
+    let (public_router, public_spec) = api::public_routes().split_for_parts();
 
     // Login route
-    let (login_router, login_spec) = api::auth_routes()
-        .split_for_parts();
+    let (login_router, login_spec) = api::auth_routes().split_for_parts();
 
     // Protected routes (JWT auth required)
-    let (protected_router, protected_spec) = api::protected_routes()
-        .split_for_parts();
+    let (protected_router, protected_spec) = api::protected_routes().split_for_parts();
 
-    let (cert_router, cert_spec) = cert::api::cert_routes()
-        .split_for_parts();
+    let (cert_router, cert_spec) = cert::api::cert_routes().split_for_parts();
 
     let mut merged_spec = ApiDoc::openapi();
     merged_spec.merge(public_spec);
@@ -318,7 +318,7 @@ async fn main() -> Result<()> {
                 .layer(middleware::from_fn_with_state(
                     state.clone(),
                     auth::jwt_auth_middleware,
-                ))
+                )),
         )
         .with_state(state.clone())
         .merge(SwaggerUi::new("/docs").url("/v1/openapi.json", merged_spec))

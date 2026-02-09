@@ -415,7 +415,7 @@ async fn query_all_metrics(
         Err(e) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
-            &format!("Query failed: {e}"),
+            "Internal query error",
         )
         .into_response(),
     }
@@ -581,7 +581,7 @@ async fn alert_history(
         Err(e) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
-            &format!("Query failed: {e}"),
+            "Internal query error",
         )
         .into_response(),
     }

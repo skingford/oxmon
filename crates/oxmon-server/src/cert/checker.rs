@@ -103,13 +103,10 @@ async fn do_check(domain: &str, port: i32, timeout_secs: u64) -> Result<CertInfo
         .map_err(|e| anyhow::anyhow!("Invalid domain name: {e}"))?;
 
     // Connect with timeout
-    let tcp = tokio::time::timeout(
-        Duration::from_secs(timeout_secs),
-        TcpStream::connect(&addr),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("Connection timed out after {timeout_secs}s"))?
-    .map_err(|e| anyhow::anyhow!("TCP connection failed: {e}"))?;
+    let tcp = tokio::time::timeout(Duration::from_secs(timeout_secs), TcpStream::connect(&addr))
+        .await
+        .map_err(|_| anyhow::anyhow!("Connection timed out after {timeout_secs}s"))?
+        .map_err(|e| anyhow::anyhow!("TCP connection failed: {e}"))?;
 
     // TLS handshake - if chain is invalid, rustls will return an error
     let tls_stream = match tokio::time::timeout(
@@ -155,8 +152,10 @@ async fn do_check(domain: &str, port: i32, timeout_secs: u64) -> Result<CertInfo
     let now = Utc::now();
     let not_before_time = cert.validity().not_before.to_datetime();
     let not_after_time = cert.validity().not_after.to_datetime();
-    let not_before = DateTime::from_timestamp(not_before_time.unix_timestamp(), 0).unwrap_or_default();
-    let not_after = DateTime::from_timestamp(not_after_time.unix_timestamp(), 0).unwrap_or_default();
+    let not_before =
+        DateTime::from_timestamp(not_before_time.unix_timestamp(), 0).unwrap_or_default();
+    let not_after =
+        DateTime::from_timestamp(not_after_time.unix_timestamp(), 0).unwrap_or_default();
     let days_until_expiry = (not_after - now).num_days();
     let is_valid = now >= not_before && now <= not_after;
 

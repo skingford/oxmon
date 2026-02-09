@@ -25,9 +25,7 @@ impl EmailChannel {
         from: &str,
         recipients: Vec<String>,
     ) -> Result<Self> {
-        let mut builder =
-            AsyncSmtpTransport::<Tokio1Executor>::relay(smtp_host)?
-                .port(smtp_port);
+        let mut builder = AsyncSmtpTransport::<Tokio1Executor>::relay(smtp_host)?.port(smtp_port);
 
         if let (Some(user), Some(pass)) = (username, password) {
             builder = builder.credentials(Credentials::new(user.to_string(), pass.to_string()));
@@ -58,7 +56,10 @@ impl EmailChannel {
 #[async_trait]
 impl NotificationChannel for EmailChannel {
     async fn send(&self, alert: &AlertEvent) -> Result<()> {
-        let subject = format!("[oxmon][{}] {} - {}", alert.severity, alert.metric_name, alert.agent_id);
+        let subject = format!(
+            "[oxmon][{}] {} - {}",
+            alert.severity, alert.metric_name, alert.agent_id
+        );
         let body = Self::format_body(alert);
 
         for recipient in &self.recipients {

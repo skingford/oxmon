@@ -108,10 +108,21 @@ impl NotificationManager {
                     agent_id: if events.iter().all(|e| e.agent_id == events[0].agent_id) {
                         events[0].agent_id.clone()
                     } else {
-                        format!("{} agents", events.iter().map(|e| &e.agent_id).collect::<std::collections::HashSet<_>>().len())
+                        format!(
+                            "{} agents",
+                            events
+                                .iter()
+                                .map(|e| &e.agent_id)
+                                .collect::<std::collections::HashSet<_>>()
+                                .len()
+                        )
                     },
                     metric_name: events[0].metric_name.clone(),
-                    severity: events.iter().map(|e| e.severity).max().unwrap_or(events[0].severity),
+                    severity: events
+                        .iter()
+                        .map(|e| e.severity)
+                        .max()
+                        .unwrap_or(events[0].severity),
                     message: format!(
                         "{} similar alerts aggregated since {}: {}",
                         events.len(),

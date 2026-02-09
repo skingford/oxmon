@@ -50,8 +50,7 @@ impl AlertEngine {
             window.push(data_point.clone());
             window.evict(now);
 
-            let window_data: Vec<MetricDataPoint> =
-                window.data().iter().cloned().collect();
+            let window_data: Vec<MetricDataPoint> = window.data().iter().cloned().collect();
 
             if let Some(event) = rule.evaluate(&window_data, now) {
                 // Check deduplication

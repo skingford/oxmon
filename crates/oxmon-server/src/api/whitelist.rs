@@ -154,7 +154,7 @@ async fn list_agents(
                 created_at: entry.created_at,
                 updated_at: entry.updated_at,
                 description: entry.description,
-                token: entry.token,
+                token: None, // Never expose tokens in list responses
                 last_seen: agent_info.as_ref().map(|a| a.last_seen),
                 status: match &agent_info {
                     Some(a) if a.active => "active".to_string(),
@@ -247,7 +247,7 @@ async fn update_agent(
             created_at: entry.created_at,
             updated_at: entry.updated_at,
             description: entry.description,
-            token: entry.token,
+            token: None, // Never expose tokens in update responses
             last_seen: agent_info.as_ref().map(|a| a.last_seen),
             status: match &agent_info {
                 Some(a) if a.active => "active".to_string(),

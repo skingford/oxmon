@@ -144,8 +144,8 @@ impl CertificateCollector {
             .with_no_client_auth();
 
         let connector = TlsConnector::from(Arc::new(config));
-        let server_name = ServerName::try_from(domain.to_string())
-            .context("Invalid server name")?;
+        let server_name =
+            ServerName::try_from(domain.to_string()).context("Invalid server name")?;
 
         // TLS 握手
         let tls_stream = timeout(
@@ -168,14 +168,14 @@ impl CertificateCollector {
 
         // 解析第一个证书（服务器证书）
         let cert_der = &certs[0];
-        let (_, cert) = X509Certificate::from_der(cert_der)
-            .context("Failed to parse certificate")?;
+        let (_, cert) =
+            X509Certificate::from_der(cert_der).context("Failed to parse certificate")?;
 
         // 提取证书信息
-        let not_before = DateTime::from_timestamp(cert.validity().not_before.timestamp(), 0)
-            .unwrap_or_default();
-        let not_after = DateTime::from_timestamp(cert.validity().not_after.timestamp(), 0)
-            .unwrap_or_default();
+        let not_before =
+            DateTime::from_timestamp(cert.validity().not_before.timestamp(), 0).unwrap_or_default();
+        let not_after =
+            DateTime::from_timestamp(cert.validity().not_after.timestamp(), 0).unwrap_or_default();
 
         // 提取颁发者信息
         let issuer = cert.issuer();
@@ -210,7 +210,8 @@ impl CertificateCollector {
                     }
                     GeneralName::IPAddress(ip_bytes) => {
                         if ip_bytes.len() == 4 {
-                            let ip = IpAddr::from([ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]]);
+                            let ip =
+                                IpAddr::from([ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]]);
                             subject_alt_names.push(ip.to_string());
                         } else if ip_bytes.len() == 16 {
                             let mut octets = [0u8; 16];

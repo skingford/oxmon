@@ -1,10 +1,10 @@
-use crate::state::AppState;
 use crate::grpc::auth::AuthInterceptor;
-use oxmon_storage::StorageEngine;
+use crate::state::AppState;
 use chrono::{DateTime, Utc};
 use oxmon_common::proto::metric_service_server::MetricService;
 use oxmon_common::proto::{MetricBatchProto, ReportResponse};
 use oxmon_common::types::{MetricBatch, MetricDataPoint};
+use oxmon_storage::StorageEngine;
 use tonic::{Request, Response, Status};
 
 pub struct MetricServiceImpl {
@@ -57,9 +57,9 @@ impl MetricService for MetricServiceImpl {
                     Status::unauthenticated("Agent not authorized")
                 })?;
 
-            // 验证 token：优先直接比对，兼容旧 bcrypt 数据
+            // 验证 token：优先直接比对（常量时间），兼容旧 bcrypt 数据
             let valid = if let Some(ref stored) = stored_token {
-                stored == &token
+                oxmon_storage::auth::constant_time_eq(stored, &token)
             } else {
                 oxmon_storage::auth::verify_token(&token, &token_hash).map_err(|e| {
                     tracing::error!(error = %e, "Token verification failed");
@@ -86,6 +86,20 @@ impl MetricService for MetricServiceImpl {
 
         let proto = request.into_inner();
 
+        // Cross-validate: authenticated agent_id must match payload agent_id
+        if let Some(ref auth_id) = authenticated_agent_id {
+            if auth_id != &proto.agent_id {
+                tracing::warn!(
+                    authenticated = %auth_id,
+                    payload = %proto.agent_id,
+                    "Agent ID mismatch between auth and payload"
+                );
+                return Err(Status::permission_denied(
+                    "agent_id in payload does not match authenticated identity",
+                ));
+            }
+        }
+
         // Validate
         if proto.agent_id.is_empty() {
             return Ok(Response::new(ReportResponse {
@@ -97,6 +111,17 @@ impl MetricService for MetricServiceImpl {
             return Ok(Response::new(ReportResponse {
                 success: false,
                 message: "data_points cannot be empty".to_string(),
+            }));
+        }
+        const MAX_BATCH_SIZE: usize = 10_000;
+        if proto.data_points.len() > MAX_BATCH_SIZE {
+            return Ok(Response::new(ReportResponse {
+                success: false,
+                message: format!(
+                    "batch too large: {} data points (max {})",
+                    proto.data_points.len(),
+                    MAX_BATCH_SIZE
+                ),
             }));
         }
 
@@ -132,7 +157,7 @@ impl MetricService for MetricServiceImpl {
             tracing::error!(error = %e, "Failed to write metric batch");
             return Ok(Response::new(ReportResponse {
                 success: false,
-                message: format!("storage error: {e}"),
+                message: "Internal storage error".to_string(),
             }));
         }
 

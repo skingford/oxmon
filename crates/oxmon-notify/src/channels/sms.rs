@@ -79,8 +79,7 @@ impl NotificationChannel for SmsChannel {
                         last_err = Some(e.into());
                     }
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt)))
-                    .await;
+                tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt))).await;
             }
 
             if let Some(e) = last_err {

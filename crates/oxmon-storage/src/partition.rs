@@ -125,6 +125,8 @@ impl PartitionManager {
         let cutoff_date = cutoff.date_naive();
         let mut removed = 0u32;
 
+        // Collect expired partition dates first
+        let mut expired_dates: Vec<(String, PathBuf)> = Vec::new();
         let entries = std::fs::read_dir(&self.data_dir)?;
         for entry in entries {
             let entry = entry?;
@@ -132,17 +134,41 @@ impl PartitionManager {
             if let Some(date_str) = name.strip_suffix(".db") {
                 if let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
                     if date < cutoff_date {
-                        // Remove from connection cache
-                        {
-                            let mut conns = self.connections.lock().unwrap();
-                            conns.remove(date_str);
-                        }
-                        std::fs::remove_file(entry.path())?;
-                        tracing::info!(partition = %date_str, "Removed expired partition");
-                        removed += 1;
+                        expired_dates.push((date_str.to_string(), entry.path()));
                     }
                 }
             }
+        }
+
+        // Delete expired partitions (best-effort: log errors, don't abort)
+        for (date_str, db_path) in &expired_dates {
+            // Remove from connection cache (drops the Connection, triggering WAL checkpoint)
+            {
+                let mut conns = self.connections.lock().unwrap();
+                conns.remove(date_str.as_str());
+            }
+
+            // Remove .db file and associated WAL/SHM files
+            if let Err(e) = std::fs::remove_file(db_path) {
+                tracing::error!(partition = %date_str, error = %e, "Failed to remove partition file");
+                continue;
+            }
+            // Clean up SQLite WAL mode auxiliary files
+            let wal_path = self.data_dir.join(format!("{date_str}.db-wal"));
+            let shm_path = self.data_dir.join(format!("{date_str}.db-shm"));
+            if wal_path.exists() {
+                if let Err(e) = std::fs::remove_file(&wal_path) {
+                    tracing::warn!(path = %wal_path.display(), error = %e, "Failed to remove WAL file");
+                }
+            }
+            if shm_path.exists() {
+                if let Err(e) = std::fs::remove_file(&shm_path) {
+                    tracing::warn!(path = %shm_path.display(), error = %e, "Failed to remove SHM file");
+                }
+            }
+
+            tracing::info!(partition = %date_str, "Removed expired partition");
+            removed += 1;
         }
 
         Ok(removed)
@@ -159,4 +185,60 @@ fn migrate_partition(conn: &Connection) {
     // alert_events table: add created_at, updated_at
     let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN created_at INTEGER;");
     let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN updated_at INTEGER;");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_cleanup_removes_expired_partitions_and_wal_files() {
+        let tmp = TempDir::new().unwrap();
+        let pm = PartitionManager::new(tmp.path()).unwrap();
+
+        // Create a partition 10 days ago (should be cleaned with retention_days=7)
+        let old_ts = Utc::now() - Duration::days(10);
+        let old_key = pm.get_or_create(old_ts).unwrap();
+        let old_db = tmp.path().join(format!("{old_key}.db"));
+
+        // Create today's partition (should NOT be cleaned)
+        let today_key = pm.get_or_create(Utc::now()).unwrap();
+        let today_db = tmp.path().join(format!("{today_key}.db"));
+
+        // Verify both partitions exist
+        assert!(old_db.exists(), "old partition should exist");
+        assert!(today_db.exists(), "today partition should exist");
+
+        // Simulate WAL/SHM files for the old partition (SQLite WAL mode creates these)
+        let old_wal = tmp.path().join(format!("{old_key}.db-wal"));
+        let old_shm = tmp.path().join(format!("{old_key}.db-shm"));
+        std::fs::write(&old_wal, b"wal data").unwrap();
+        std::fs::write(&old_shm, b"shm data").unwrap();
+
+        // Run cleanup with 7-day retention
+        let removed = pm.cleanup_older_than(7).unwrap();
+
+        assert_eq!(removed, 1);
+        assert!(!old_db.exists(), "old .db should be deleted");
+        assert!(!old_wal.exists(), "old .db-wal should be deleted");
+        assert!(!old_shm.exists(), "old .db-shm should be deleted");
+        assert!(today_db.exists(), "today partition should still exist");
+    }
+
+    #[test]
+    fn test_cleanup_keeps_recent_partitions() {
+        let tmp = TempDir::new().unwrap();
+        let pm = PartitionManager::new(tmp.path()).unwrap();
+
+        // Create partitions for the last 3 days
+        for i in 0..3 {
+            let ts = Utc::now() - Duration::days(i);
+            pm.get_or_create(ts).unwrap();
+        }
+
+        let removed = pm.cleanup_older_than(7).unwrap();
+        assert_eq!(removed, 0);
+    }
 }

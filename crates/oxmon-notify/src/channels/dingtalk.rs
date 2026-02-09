@@ -40,13 +40,9 @@ impl DingTalkChannel {
         mac.update(string_to_sign.as_bytes());
         let result = mac.finalize();
         let sign = base64::engine::general_purpose::STANDARD.encode(result.into_bytes());
-        let sign_encoded =
-            urlencoding::encode(&sign);
+        let sign_encoded = urlencoding::encode(&sign);
 
-        format!(
-            "{}&timestamp={}&sign={}",
-            base_url, timestamp, sign_encoded
-        )
+        format!("{}&timestamp={}&sign={}", base_url, timestamp, sign_encoded)
     }
 
     fn format_markdown(alert: &AlertEvent) -> (String, String) {
@@ -186,9 +182,6 @@ impl ChannelPlugin for DingTalkPlugin {
     fn create_channel(&self, config: &Value) -> Result<Box<dyn NotificationChannel>> {
         let cfg: DingTalkConfig = serde_json::from_value(config.clone())
             .map_err(|e| anyhow::anyhow!("Invalid dingtalk config: {e}"))?;
-        Ok(Box::new(DingTalkChannel::new(
-            &cfg.webhook_url,
-            cfg.secret,
-        )))
+        Ok(Box::new(DingTalkChannel::new(&cfg.webhook_url, cfg.secret)))
     }
 }

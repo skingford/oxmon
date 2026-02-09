@@ -95,7 +95,9 @@ fn registry_unknown_plugin_returns_error() {
     let registry = ChannelRegistry::default();
     let config = serde_json::json!({});
     let result = registry.create_channel("nonexistent", &config);
-    let err = result.err().expect("should return error for unknown plugin");
+    let err = result
+        .err()
+        .expect("should return error for unknown plugin");
     assert!(
         err.to_string().contains("Unknown channel plugin type"),
         "error message was: {}",
@@ -118,7 +120,9 @@ fn dingtalk_plugin_validates_config() {
     let valid_no_secret = serde_json::json!({
         "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test"
     });
-    assert!(registry.create_channel("dingtalk", &valid_no_secret).is_ok());
+    assert!(registry
+        .create_channel("dingtalk", &valid_no_secret)
+        .is_ok());
 
     // Missing required webhook_url
     let invalid = serde_json::json!({});
@@ -149,7 +153,9 @@ fn dingtalk_hmac_signing_produces_correct_url_format() {
     let signed_url = channel.sign_url("https://oapi.dingtalk.com/robot/send?access_token=test");
     assert!(signed_url.contains("&timestamp="));
     assert!(signed_url.contains("&sign="));
-    assert!(signed_url.starts_with("https://oapi.dingtalk.com/robot/send?access_token=test&timestamp="));
+    assert!(
+        signed_url.starts_with("https://oapi.dingtalk.com/robot/send?access_token=test&timestamp=")
+    );
 }
 
 #[test]

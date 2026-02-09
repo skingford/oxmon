@@ -1,9 +1,11 @@
 use anyhow::Result;
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
 use rand::Rng;
 use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
 use std::path::Path;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 /// 生成一个 32 字节的加密安全随机 token
 pub fn generate_token() -> String {
@@ -23,6 +25,11 @@ pub fn verify_token(token: &str, hash: &str) -> Result<bool> {
     Ok(bcrypt::verify(token, hash)?)
 }
 
+/// Constant-time token comparison to prevent timing side-channel attacks.
+pub fn constant_time_eq(a: &str, b: &str) -> bool {
+    ring::constant_time::verify_slices_are_equal(a.as_bytes(), b.as_bytes()).is_ok()
+}
+
 /// Token 加密器，使用 AES-256-GCM
 pub struct TokenEncryptor {
     key_bytes: Vec<u8>,
@@ -40,12 +47,21 @@ impl TokenEncryptor {
             rng.fill(&mut key)
                 .map_err(|_| anyhow::anyhow!("Failed to generate encryption key"))?;
             std::fs::write(&key_path, &key)?;
+            // Restrict file permissions to owner-only (0600) on Unix
+            #[cfg(unix)]
+            {
+                let perms = std::fs::Permissions::from_mode(0o600);
+                std::fs::set_permissions(&key_path, perms)?;
+            }
             tracing::info!(path = %key_path.display(), "Generated new token encryption key");
             key
         };
 
         if key_bytes.len() != 32 {
-            anyhow::bail!("Invalid token encryption key length: expected 32 bytes, got {}", key_bytes.len());
+            anyhow::bail!(
+                "Invalid token encryption key length: expected 32 bytes, got {}",
+                key_bytes.len()
+            );
         }
 
         Ok(Self { key_bytes })

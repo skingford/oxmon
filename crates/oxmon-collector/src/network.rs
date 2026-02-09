@@ -52,23 +52,29 @@ impl Collector for NetworkCollector {
             let packets_transmitted = data.total_packets_transmitted();
 
             // Calculate delta (bytes/sec approximation per collection interval)
-            let rx_delta = received.saturating_sub(
-                *self.prev_received.get(name).unwrap_or(&received),
-            );
-            let tx_delta = transmitted.saturating_sub(
-                *self.prev_transmitted.get(name).unwrap_or(&transmitted),
-            );
+            let rx_delta =
+                received.saturating_sub(*self.prev_received.get(name).unwrap_or(&received));
+            let tx_delta = transmitted
+                .saturating_sub(*self.prev_transmitted.get(name).unwrap_or(&transmitted));
             let prx_delta = packets_received.saturating_sub(
-                *self.prev_packets_received.get(name).unwrap_or(&packets_received),
+                *self
+                    .prev_packets_received
+                    .get(name)
+                    .unwrap_or(&packets_received),
             );
             let ptx_delta = packets_transmitted.saturating_sub(
-                *self.prev_packets_transmitted.get(name).unwrap_or(&packets_transmitted),
+                *self
+                    .prev_packets_transmitted
+                    .get(name)
+                    .unwrap_or(&packets_transmitted),
             );
 
             self.prev_received.insert(name.clone(), received);
             self.prev_transmitted.insert(name.clone(), transmitted);
-            self.prev_packets_received.insert(name.clone(), packets_received);
-            self.prev_packets_transmitted.insert(name.clone(), packets_transmitted);
+            self.prev_packets_received
+                .insert(name.clone(), packets_received);
+            self.prev_packets_transmitted
+                .insert(name.clone(), packets_transmitted);
 
             points.push(MetricDataPoint {
                 id: oxmon_common::id::next_id(),

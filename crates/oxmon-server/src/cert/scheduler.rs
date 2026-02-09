@@ -65,7 +65,10 @@ impl CertCheckScheduler {
             return Ok(());
         }
 
-        tracing::info!(count = domains.len(), "Checking certificates for due domains");
+        tracing::info!(
+            count = domains.len(),
+            "Checking certificates for due domains"
+        );
 
         let semaphore = Arc::new(Semaphore::new(self.max_concurrent));
         let mut handles = Vec::new();
@@ -77,13 +80,8 @@ impl CertCheckScheduler {
             let timeout = self.connect_timeout_secs;
 
             let handle = tokio::spawn(async move {
-                let result = check_certificate(
-                    &domain.domain,
-                    domain.port,
-                    &domain.id,
-                    timeout,
-                )
-                .await;
+                let result =
+                    check_certificate(&domain.domain, domain.port, &domain.id, timeout).await;
 
                 // Write detailed result to cert store
                 if let Err(e) = cert_store.insert_check_result(&result) {

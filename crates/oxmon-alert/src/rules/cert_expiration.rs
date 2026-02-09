@@ -18,12 +18,7 @@ pub struct CertExpirationRule {
 }
 
 impl CertExpirationRule {
-    pub fn new(
-        id: String,
-        warning_days: i64,
-        critical_days: i64,
-        silence_secs: u64,
-    ) -> Self {
+    pub fn new(id: String, warning_days: i64, critical_days: i64, silence_secs: u64) -> Self {
         Self {
             id,
             metric: "certificate.days_until_expiry".to_string(),

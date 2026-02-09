@@ -93,7 +93,14 @@ fn write_and_query_alert_events() {
     engine.write_alert_event(&event).unwrap();
 
     let results = engine
-        .query_alert_history(now - Duration::minutes(1), now + Duration::seconds(1), None, None, 100, 0)
+        .query_alert_history(
+            now - Duration::minutes(1),
+            now + Duration::seconds(1),
+            None,
+            None,
+            100,
+            0,
+        )
         .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id, "test-alert-1");
@@ -112,7 +119,11 @@ fn query_alert_history_filters() {
             rule_id: "rule-1".to_string(),
             agent_id: if i < 2 { "web-01" } else { "db-01" }.to_string(),
             metric_name: "cpu.usage".to_string(),
-            severity: if i == 0 { Severity::Critical } else { Severity::Warning },
+            severity: if i == 0 {
+                Severity::Critical
+            } else {
+                Severity::Warning
+            },
             message: format!("Alert {i}"),
             value: 95.0,
             threshold: 90.0,
@@ -126,13 +137,27 @@ fn query_alert_history_filters() {
 
     // Filter by severity
     let critical = engine
-        .query_alert_history(now - Duration::hours(1), now + Duration::seconds(1), Some("critical"), None, 100, 0)
+        .query_alert_history(
+            now - Duration::hours(1),
+            now + Duration::seconds(1),
+            Some("critical"),
+            None,
+            100,
+            0,
+        )
         .unwrap();
     assert_eq!(critical.len(), 1);
 
     // Filter by agent
     let db_alerts = engine
-        .query_alert_history(now - Duration::hours(1), now + Duration::seconds(1), None, Some("db-01"), 100, 0)
+        .query_alert_history(
+            now - Duration::hours(1),
+            now + Duration::seconds(1),
+            None,
+            Some("db-01"),
+            100,
+            0,
+        )
         .unwrap();
     assert_eq!(db_alerts.len(), 1);
 }
@@ -178,12 +203,26 @@ fn pagination() {
     }
 
     let page1 = engine
-        .query_alert_history(now - Duration::hours(1), now + Duration::seconds(1), None, None, 3, 0)
+        .query_alert_history(
+            now - Duration::hours(1),
+            now + Duration::seconds(1),
+            None,
+            None,
+            3,
+            0,
+        )
         .unwrap();
     assert_eq!(page1.len(), 3);
 
     let page2 = engine
-        .query_alert_history(now - Duration::hours(1), now + Duration::seconds(1), None, None, 3, 3)
+        .query_alert_history(
+            now - Duration::hours(1),
+            now + Duration::seconds(1),
+            None,
+            None,
+            3,
+            3,
+        )
         .unwrap();
     assert_eq!(page2.len(), 3);
 

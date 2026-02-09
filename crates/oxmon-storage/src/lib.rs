@@ -1,7 +1,7 @@
-pub mod partition;
-pub mod engine;
-pub mod cert_store;
 pub mod auth;
+pub mod cert_store;
+pub mod engine;
+pub mod partition;
 
 #[cfg(test)]
 mod tests;

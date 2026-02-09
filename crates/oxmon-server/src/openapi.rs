@@ -17,12 +17,7 @@ pub fn yaml_route(spec: Arc<OpenApi>) -> Router {
 
 async fn openapi_yaml(spec: Arc<OpenApi>) -> impl IntoResponse {
     match serde_yaml::to_string(spec.as_ref()) {
-        Ok(yaml) => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "text/yaml")],
-            yaml,
-        )
-            .into_response(),
+        Ok(yaml) => (StatusCode::OK, [(header::CONTENT_TYPE, "text/yaml")], yaml).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to serialize YAML: {e}"),

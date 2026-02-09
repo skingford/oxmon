@@ -25,7 +25,11 @@ impl ChannelRegistry {
         self.plugins.insert(name, plugin);
     }
 
-    pub fn create_channel(&self, type_name: &str, config: &Value) -> Result<Box<dyn NotificationChannel>> {
+    pub fn create_channel(
+        &self,
+        type_name: &str,
+        config: &Value,
+    ) -> Result<Box<dyn NotificationChannel>> {
         let plugin = self
             .plugins
             .get(type_name)
