@@ -1,5 +1,6 @@
 use crate::api::pagination::PaginationParams;
 use crate::api::{error_response, success_empty_response, success_response};
+use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::response::IntoResponse;
 use axum::{
@@ -31,7 +32,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
     tag = "Agents"
 )]
 async fn add_agent(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Json(req): Json<AddAgentRequest>,
 ) -> impl IntoResponse {
@@ -130,8 +131,8 @@ async fn add_agent(
     ),
     tag = "Agents"
 )]
-async fn list_agents(
-    Extension(trace_id): Extension<String>,
+async fn list_whitelist_agents(
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
@@ -198,7 +199,7 @@ async fn list_agents(
     tag = "Agents"
 )]
 async fn update_agent(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateAgentRequest>,
@@ -296,7 +297,7 @@ async fn update_agent(
     tag = "Agents"
 )]
 async fn regenerate_token(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
@@ -384,7 +385,7 @@ async fn regenerate_token(
     tag = "Agents"
 )]
 async fn delete_agent(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
@@ -453,7 +454,7 @@ async fn delete_agent(
 pub fn whitelist_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(add_agent))
-        .routes(routes!(list_agents))
+        .routes(routes!(list_whitelist_agents))
         .routes(routes!(update_agent))
         .routes(routes!(regenerate_token))
         .routes(routes!(delete_agent))

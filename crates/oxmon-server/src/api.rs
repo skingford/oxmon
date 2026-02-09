@@ -2,6 +2,7 @@ pub mod certificates;
 pub mod pagination;
 pub mod whitelist;
 
+use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
@@ -129,7 +130,7 @@ struct HealthResponse {
     )
 )]
 async fn health(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     let uptime = (Utc::now() - state.start_time).num_seconds();
@@ -176,7 +177,7 @@ struct AgentResponse {
     )
 )]
 async fn list_agents(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
@@ -237,7 +238,7 @@ struct LatestMetric {
     )
 )]
 async fn agent_latest(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
 ) -> impl IntoResponse {
@@ -398,7 +399,7 @@ struct MetricDataPointResponse {
     )
 )]
 async fn query_all_metrics(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(params): Query<MetricsPageParams>,
 ) -> impl IntoResponse {
@@ -473,7 +474,7 @@ struct AlertRuleResponse {
     )
 )]
 async fn list_alert_rules(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
@@ -570,7 +571,7 @@ struct AlertEventResponse {
     )
 )]
 async fn alert_history(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(params): Query<AlertHistoryPageParams>,
 ) -> impl IntoResponse {

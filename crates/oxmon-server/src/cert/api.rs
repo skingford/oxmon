@@ -1,5 +1,6 @@
 use crate::api::pagination::PaginationParams;
 use crate::api::{error_response as common_error_response, success_response};
+use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
@@ -34,7 +35,7 @@ use super::checker::check_certificate;
     )
 )]
 async fn create_domain(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Json(req): Json<CreateDomainRequest>,
 ) -> impl IntoResponse {
@@ -114,7 +115,7 @@ async fn create_domain(
     )
 )]
 async fn create_domains_batch(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Json(req): Json<BatchCreateDomainsRequest>,
 ) -> impl IntoResponse {
@@ -206,7 +207,7 @@ struct ListDomainsParams {
     )
 )]
 async fn list_domains(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(params): Query<ListDomainsParams>,
 ) -> impl IntoResponse {
@@ -256,7 +257,7 @@ struct CertStatusListParams {
     )
 )]
 async fn get_domain(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
@@ -296,7 +297,7 @@ async fn get_domain(
     )
 )]
 async fn update_domain(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateDomainRequest>,
@@ -353,7 +354,7 @@ async fn update_domain(
     )
 )]
 async fn delete_domain(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
@@ -388,7 +389,7 @@ async fn delete_domain(
     )
 )]
 async fn cert_status_all(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(params): Query<CertStatusListParams>,
 ) -> impl IntoResponse {
@@ -427,7 +428,7 @@ async fn cert_status_all(
     )
 )]
 async fn cert_status_by_domain(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(domain): Path<String>,
 ) -> impl IntoResponse {
@@ -493,7 +494,7 @@ async fn cert_status_by_domain(
     )
 )]
 async fn check_single_domain(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
@@ -543,7 +544,7 @@ async fn check_single_domain(
     )
 )]
 async fn check_all_domains(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     let domains = match state.cert_store.query_domains(Some(true), None, 10000, 0) {

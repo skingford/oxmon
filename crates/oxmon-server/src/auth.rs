@@ -10,6 +10,7 @@ use oxmon_storage::auth::{hash_token, verify_token};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{error_response, success_empty_response, success_response, ApiError};
+use crate::logging::TraceId;
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,8 +67,8 @@ pub async fn jwt_auth_middleware(
     // Extract trace_id from request extensions (set by logging middleware)
     let trace_id = req
         .extensions()
-        .get::<String>()
-        .cloned()
+        .get::<TraceId>()
+        .map(|t| t.0.clone())
         .unwrap_or_default();
 
     let auth_header = req
@@ -136,7 +137,7 @@ pub async fn jwt_auth_middleware(
     )
 )]
 pub async fn login(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
 ) -> impl IntoResponse {
@@ -225,7 +226,7 @@ pub async fn login(
     )
 )]
 pub async fn change_password(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<ChangePasswordRequest>,

@@ -10,6 +10,21 @@ use rand::Rng;
 use std::fmt::Write;
 use std::time::Instant;
 
+/// Newtype wrapper for trace IDs stored in request extensions.
+///
+/// Using a dedicated type instead of bare `String` prevents conflicts
+/// with other extensions and avoids silent 500 errors when the
+/// extension is missing.
+#[derive(Clone)]
+pub struct TraceId(pub String);
+
+impl std::ops::Deref for TraceId {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Generate a 16-character hex trace ID (8 random bytes).
 fn generate_trace_id() -> String {
     let bytes: [u8; 8] = rand::thread_rng().gen();
@@ -81,7 +96,7 @@ pub async fn request_logging(mut req: Request, next: Next) -> Response {
     let trace_id = generate_trace_id();
 
     // Insert trace_id into request extensions for handlers to access
-    req.extensions_mut().insert(trace_id.clone());
+    req.extensions_mut().insert(TraceId(trace_id.clone()));
 
     let method = req.method().clone();
     let uri = req.uri().clone();

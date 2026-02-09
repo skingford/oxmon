@@ -1,5 +1,6 @@
 use crate::api::pagination::PaginationParams;
 use crate::api::{error_response, success_response};
+use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::response::IntoResponse;
 use axum::{
@@ -45,7 +46,7 @@ struct CertificateListQuery {
     tag = "Certificates"
 )]
 async fn get_certificate(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
@@ -93,7 +94,7 @@ async fn get_certificate(
     tag = "Certificates"
 )]
 async fn list_certificates(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(query): Query<CertificateListQuery>,
 ) -> impl IntoResponse {
@@ -155,7 +156,7 @@ struct CertificateChainInfo {
     tag = "Certificates"
 )]
 async fn get_certificate_chain(
-    Extension(trace_id): Extension<String>,
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
