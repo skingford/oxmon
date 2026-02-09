@@ -904,6 +904,32 @@ make release
 cross build --release --target aarch64-unknown-linux-gnu
 ```
 
+### GitHub Release 发布流程
+
+```bash
+# 1）同步 main 分支并确认测试通过
+git checkout main
+git pull --ff-only
+cargo test --workspace
+
+# 2）更新版本号
+# 修改 Cargo.toml: [workspace.package].version = "0.1.2"
+cargo check --workspace
+
+# 3）提交版本文件
+git add Cargo.toml Cargo.lock
+git commit -m "chore(release): bump version to 0.1.2"
+
+# 4）创建并推送 tag
+git tag -a v0.1.2 -m "v0.1.2"
+git push origin main
+git push origin v0.1.2
+```
+
+- 推送 `v*` tag 后会自动触发 `.github/workflows/release.yml`。
+- 工作流成功后，请在 GitHub Releases 检查产物（`oxmon-agent-*` / `oxmon-server-*` 压缩包和 `SHA256SUMS`）。
+- Linux 升级可直接重复执行安装命令（默认拉取 `latest`）。
+
 ### 验证 OpenSSL 已移除
 
 ```bash

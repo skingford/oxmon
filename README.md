@@ -904,6 +904,32 @@ make release
 cross build --release --target aarch64-unknown-linux-gnu
 ```
 
+### GitHub Release Publishing
+
+```bash
+# 1) Sync main branch and verify tests
+git checkout main
+git pull --ff-only
+cargo test --workspace
+
+# 2) Bump version
+# Edit Cargo.toml: [workspace.package].version = "0.1.2"
+cargo check --workspace
+
+# 3) Commit release version files
+git add Cargo.toml Cargo.lock
+git commit -m "chore(release): bump version to 0.1.2"
+
+# 4) Create and push tag
+git tag -a v0.1.2 -m "v0.1.2"
+git push origin main
+git push origin v0.1.2
+```
+
+- Pushing a `v*` tag triggers `.github/workflows/release.yml` automatically.
+- After workflow success, verify assets in GitHub Releases (`oxmon-agent-*` / `oxmon-server-*` tarballs and `SHA256SUMS`).
+- Linux upgrades can be done by rerunning the install command (defaults to `latest`).
+
 ### Verify OpenSSL Removal
 
 ```bash
