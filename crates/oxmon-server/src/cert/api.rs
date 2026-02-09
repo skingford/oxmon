@@ -70,7 +70,7 @@ async fn create_domain(
             return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
-                &format!("Storage error: {e}"),
+                "Internal storage error",
             )
             .into_response();
         }
@@ -82,7 +82,7 @@ async fn create_domain(
         Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
-            &format!("Failed to create domain: {e}"),
+            "Internal storage error",
         )
         .into_response(),
     }
@@ -147,7 +147,7 @@ async fn create_domains_batch(
                 common_error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "storage_error",
-                    &format!("Failed to create domains: {e}"),
+                    "Internal storage error",
                 )
                 .into_response()
             }
@@ -200,7 +200,7 @@ async fn list_domains(
         Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
-            &format!("Query failed: {e}"),
+            "Internal query error",
         )
         .into_response(),
     }
@@ -237,7 +237,7 @@ async fn get_domain(State(state): State<AppState>, Path(id): Path<String>) -> im
         Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
-            &format!("Query failed: {e}"),
+            "Internal query error",
         )
         .into_response(),
     }
@@ -351,7 +351,7 @@ async fn cert_status_all(
         Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
-            &format!("Query failed: {e}"),
+            "Internal query error",
         )
         .into_response(),
     }
@@ -390,7 +390,7 @@ async fn cert_status_by_domain(
             return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
-                &format!("Query failed: {e}"),
+                "Internal query error",
             )
             .into_response();
         }
@@ -408,7 +408,7 @@ async fn cert_status_by_domain(
         Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
-            &format!("Query failed: {e}"),
+            "Internal query error",
         )
         .into_response(),
     }
@@ -444,7 +444,7 @@ async fn check_single_domain(
             return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
-                &format!("Query failed: {e}"),
+                "Internal query error",
             )
             .into_response();
         }
@@ -484,7 +484,7 @@ async fn check_all_domains(State(state): State<AppState>) -> impl IntoResponse {
             return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
-                &format!("Query failed: {e}"),
+                "Internal query error",
             )
             .into_response();
         }
