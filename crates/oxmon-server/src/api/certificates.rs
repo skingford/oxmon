@@ -3,7 +3,7 @@ use crate::api::{error_response, success_response};
 use crate::state::AppState;
 use axum::response::IntoResponse;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
 };
 use oxmon_common::types::{CertificateDetails, CertificateDetailsFilter};
@@ -45,6 +45,7 @@ struct CertificateListQuery {
     tag = "Certificates"
 )]
 async fn get_certificate(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
@@ -55,6 +56,7 @@ async fn get_certificate(
             tracing::error!(error = %e, "Failed to get certificate details");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "INTERNAL_ERROR",
                 "Database error",
             )
@@ -63,6 +65,7 @@ async fn get_certificate(
         Ok(None) => {
             return error_response(
                 StatusCode::NOT_FOUND,
+                &trace_id,
                 "NOT_FOUND",
                 &format!("Certificate with id '{}' not found", id),
             )
@@ -70,7 +73,7 @@ async fn get_certificate(
         Err(resp) => return resp,
     };
 
-    success_response(StatusCode::OK, details)
+    success_response(StatusCode::OK, &trace_id, details)
 }
 
 /// 分页查询证书详情列表（支持过滤）。
@@ -90,6 +93,7 @@ async fn get_certificate(
     tag = "Certificates"
 )]
 async fn list_certificates(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Query(query): Query<CertificateListQuery>,
 ) -> impl IntoResponse {
@@ -106,6 +110,7 @@ async fn list_certificates(
             tracing::error!(error = %e, "Failed to list certificates");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "INTERNAL_ERROR",
                 "Database error",
             )
@@ -114,7 +119,7 @@ async fn list_certificates(
         Err(resp) => return resp,
     };
 
-    success_response(StatusCode::OK, certificates)
+    success_response(StatusCode::OK, &trace_id, certificates)
 }
 
 /// 证书链信息
@@ -150,6 +155,7 @@ struct CertificateChainInfo {
     tag = "Certificates"
 )]
 async fn get_certificate_chain(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
@@ -160,6 +166,7 @@ async fn get_certificate_chain(
             tracing::error!(error = %e, "Failed to get certificate details");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "INTERNAL_ERROR",
                 "Database error",
             )
@@ -168,6 +175,7 @@ async fn get_certificate_chain(
         Ok(None) => {
             return error_response(
                 StatusCode::NOT_FOUND,
+                &trace_id,
                 "NOT_FOUND",
                 &format!("Certificate with id '{}' not found", id),
             )
@@ -177,6 +185,7 @@ async fn get_certificate_chain(
 
     success_response(
         StatusCode::OK,
+        &trace_id,
         CertificateChainInfo {
             id: details.id,
             domain: details.domain,

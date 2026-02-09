@@ -3,7 +3,7 @@ use crate::api::{error_response, success_empty_response, success_response};
 use crate::state::AppState;
 use axum::response::IntoResponse;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -31,6 +31,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
     tag = "Agents"
 )]
 async fn add_agent(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Json(req): Json<AddAgentRequest>,
 ) -> impl IntoResponse {
@@ -42,6 +43,7 @@ async fn add_agent(
             tracing::error!(error = %e, "Failed to check agent existence");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "INTERNAL_ERROR",
                 "Database error",
             )
@@ -56,6 +58,7 @@ async fn add_agent(
     if exists {
         return error_response(
             StatusCode::CONFLICT,
+            &trace_id,
             "CONFLICT",
             &format!("Agent '{}' already exists", req.agent_id),
         );
@@ -67,6 +70,7 @@ async fn add_agent(
         tracing::error!(error = %e, "Failed to hash token");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
             "INTERNAL_ERROR",
             "Token generation error",
         )
@@ -89,6 +93,7 @@ async fn add_agent(
             tracing::error!(error = %e, "Failed to add agent to whitelist");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "INTERNAL_ERROR",
                 "Database error",
             )
@@ -101,6 +106,7 @@ async fn add_agent(
 
     success_response(
         StatusCode::OK,
+        &trace_id,
         AddAgentResponse {
             id,
             agent_id: req.agent_id,
@@ -125,6 +131,7 @@ async fn add_agent(
     tag = "Agents"
 )]
 async fn list_agents(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
@@ -135,6 +142,7 @@ async fn list_agents(
         tracing::error!(error = %e, "Failed to list agents");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
             "INTERNAL_ERROR",
             "Database error",
         )
@@ -168,7 +176,7 @@ async fn list_agents(
         })
         .collect();
 
-    success_response(StatusCode::OK, details)
+    success_response(StatusCode::OK, &trace_id, details)
 }
 
 /// 更新白名单 Agent 信息（按 ID）。
@@ -190,6 +198,7 @@ async fn list_agents(
     tag = "Agents"
 )]
 async fn update_agent(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateAgentRequest>,
@@ -201,6 +210,7 @@ async fn update_agent(
             tracing::error!(error = %e, "Failed to update agent");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "INTERNAL_ERROR",
                 "Database error",
             )
@@ -212,6 +222,7 @@ async fn update_agent(
     if !updated {
         return error_response(
             StatusCode::NOT_FOUND,
+            &trace_id,
             "NOT_FOUND",
             &format!("Agent with id '{}' not found", id),
         );
@@ -222,6 +233,7 @@ async fn update_agent(
         tracing::error!(error = %e, "Failed to query agent");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
             "INTERNAL_ERROR",
             "Database error",
         )
@@ -230,6 +242,7 @@ async fn update_agent(
         Ok(None) => {
             return error_response(
                 StatusCode::NOT_FOUND,
+                &trace_id,
                 "NOT_FOUND",
                 &format!("Agent with id '{}' not found", id),
             )
@@ -247,6 +260,7 @@ async fn update_agent(
 
     success_response(
         StatusCode::OK,
+        &trace_id,
         AgentWhitelistDetail {
             id: entry.id,
             agent_id: entry.agent_id,
@@ -282,6 +296,7 @@ async fn update_agent(
     tag = "Agents"
 )]
 async fn regenerate_token(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
@@ -290,6 +305,7 @@ async fn regenerate_token(
         tracing::error!(error = %e, "Failed to check agent existence");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
             "INTERNAL_ERROR",
             "Database error",
         )
@@ -298,6 +314,7 @@ async fn regenerate_token(
         Ok(None) => {
             return error_response(
                 StatusCode::NOT_FOUND,
+                &trace_id,
                 "NOT_FOUND",
                 &format!("Agent with id '{}' not found", id),
             )
@@ -311,6 +328,7 @@ async fn regenerate_token(
         tracing::error!(error = %e, "Failed to hash token");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
             "INTERNAL_ERROR",
             "Token generation error",
         )
@@ -327,6 +345,7 @@ async fn regenerate_token(
             tracing::error!(error = %e, "Failed to update agent token");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "INTERNAL_ERROR",
                 "Database error",
             )
@@ -339,6 +358,7 @@ async fn regenerate_token(
 
     success_response(
         StatusCode::OK,
+        &trace_id,
         RegenerateTokenResponse {
             agent_id: entry.agent_id,
             token,
@@ -363,12 +383,17 @@ async fn regenerate_token(
     ),
     tag = "Agents"
 )]
-async fn delete_agent(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+async fn delete_agent(
+    Extension(trace_id): Extension<String>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
     // 先查询获取 agent_id 用于从内存注册表中删除
     let entry = match state.cert_store.get_agent_by_id(&id).map_err(|e| {
         tracing::error!(error = %e, "Failed to query agent");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
             "INTERNAL_ERROR",
             "Database error",
         )
@@ -386,6 +411,7 @@ async fn delete_agent(State(state): State<AppState>, Path(id): Path<String>) -> 
                 tracing::error!(error = %e, "Failed to delete agent");
                 error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
+                    &trace_id,
                     "INTERNAL_ERROR",
                     "Database error",
                 )
@@ -408,6 +434,7 @@ async fn delete_agent(State(state): State<AppState>, Path(id): Path<String>) -> 
     if !deleted_from_whitelist && !deleted_from_registry {
         return error_response(
             StatusCode::NOT_FOUND,
+            &trace_id,
             "NOT_FOUND",
             &format!("Agent with id '{}' not found", id),
         );
@@ -420,7 +447,7 @@ async fn delete_agent(State(state): State<AppState>, Path(id): Path<String>) -> 
         registry = deleted_from_registry,
         "Agent removed"
     );
-    success_empty_response(StatusCode::OK, "success")
+    success_empty_response(StatusCode::OK, &trace_id, "success")
 }
 
 pub fn whitelist_routes() -> OpenApiRouter<AppState> {

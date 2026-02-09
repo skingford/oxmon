@@ -77,8 +77,12 @@ fn format_elapsed(elapsed_us: u128) -> String {
 }
 
 /// Request/response logging middleware.
-pub async fn request_logging(req: Request, next: Next) -> Response {
+pub async fn request_logging(mut req: Request, next: Next) -> Response {
     let trace_id = generate_trace_id();
+
+    // Insert trace_id into request extensions for handlers to access
+    req.extensions_mut().insert(trace_id.clone());
+
     let method = req.method().clone();
     let uri = req.uri().clone();
     let path = uri.path().to_string();

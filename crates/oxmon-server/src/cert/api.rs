@@ -1,7 +1,7 @@
 use crate::api::pagination::PaginationParams;
 use crate::api::{error_response as common_error_response, success_response};
 use crate::state::AppState;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
@@ -34,12 +34,14 @@ use super::checker::check_certificate;
     )
 )]
 async fn create_domain(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Json(req): Json<CreateDomainRequest>,
 ) -> impl IntoResponse {
     if req.domain.is_empty() {
         return common_error_response(
             StatusCode::BAD_REQUEST,
+            &trace_id,
             "invalid_domain",
             "Domain cannot be empty",
         )
@@ -49,6 +51,7 @@ async fn create_domain(
         if !(1..=65535).contains(&port) {
             return common_error_response(
                 StatusCode::BAD_REQUEST,
+                &trace_id,
                 "invalid_port",
                 "Port must be between 1 and 65535",
             )
@@ -61,6 +64,7 @@ async fn create_domain(
         Ok(Some(_)) => {
             return common_error_response(
                 StatusCode::CONFLICT,
+                &trace_id,
                 "duplicate_domain",
                 &format!("Domain '{}' already exists", req.domain),
             )
@@ -70,6 +74,7 @@ async fn create_domain(
             tracing::error!(error = %e, "Storage operation failed");
             return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "storage_error",
                 "Internal storage error",
             )
@@ -79,11 +84,12 @@ async fn create_domain(
     }
 
     match state.cert_store.insert_domain(&req) {
-        Ok(domain) => success_response(StatusCode::CREATED, domain),
+        Ok(domain) => success_response(StatusCode::CREATED, &trace_id, domain),
         Err(e) => {
             tracing::error!(error = %e, "Storage operation failed");
             common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "storage_error",
                 "Internal storage error",
             )
@@ -108,12 +114,14 @@ async fn create_domain(
     )
 )]
 async fn create_domains_batch(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Json(req): Json<BatchCreateDomainsRequest>,
 ) -> impl IntoResponse {
     if req.domains.is_empty() {
         return common_error_response(
             StatusCode::BAD_REQUEST,
+            &trace_id,
             "empty_batch",
             "Domains list cannot be empty",
         )
@@ -123,6 +131,7 @@ async fn create_domains_batch(
         if d.domain.is_empty() {
             return common_error_response(
                 StatusCode::BAD_REQUEST,
+                &trace_id,
                 "invalid_domain",
                 "Domain cannot be empty",
             )
@@ -132,6 +141,7 @@ async fn create_domains_batch(
             if !(1..=65535).contains(&port) {
                 return common_error_response(
                     StatusCode::BAD_REQUEST,
+                    &trace_id,
                     "invalid_port",
                     &format!("Port must be between 1 and 65535 for domain '{}'", d.domain),
                 )
@@ -141,12 +151,13 @@ async fn create_domains_batch(
     }
 
     match state.cert_store.insert_domains_batch(&req.domains) {
-        Ok(domains) => success_response(StatusCode::CREATED, domains),
+        Ok(domains) => success_response(StatusCode::CREATED, &trace_id, domains),
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("UNIQUE constraint") {
                 common_error_response(
                     StatusCode::CONFLICT,
+                    &trace_id,
                     "duplicate_domain",
                     "One or more domains already exist",
                 )
@@ -155,6 +166,7 @@ async fn create_domains_batch(
                 tracing::error!(error = %e, "Batch create domains failed");
                 common_error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
+                    &trace_id,
                     "storage_error",
                     "Internal storage error",
                 )
@@ -194,6 +206,7 @@ struct ListDomainsParams {
     )
 )]
 async fn list_domains(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Query(params): Query<ListDomainsParams>,
 ) -> impl IntoResponse {
@@ -205,11 +218,12 @@ async fn list_domains(
         limit,
         offset,
     ) {
-        Ok(domains) => success_response(StatusCode::OK, domains),
+        Ok(domains) => success_response(StatusCode::OK, &trace_id, domains),
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
             common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "storage_error",
                 "Internal query error",
             )
@@ -241,15 +255,20 @@ struct CertStatusListParams {
         (status = 404, description = "域名不存在", body = crate::api::ApiError)
     )
 )]
-async fn get_domain(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+async fn get_domain(
+    Extension(trace_id): Extension<String>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
     match state.cert_store.get_domain_by_id(&id) {
-        Ok(Some(domain)) => success_response(StatusCode::OK, domain),
-        Ok(None) => common_error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
+        Ok(Some(domain)) => success_response(StatusCode::OK, &trace_id, domain),
+        Ok(None) => common_error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Domain not found")
             .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
             common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "storage_error",
                 "Internal query error",
             )
@@ -277,6 +296,7 @@ async fn get_domain(State(state): State<AppState>, Path(id): Path<String>) -> im
     )
 )]
 async fn update_domain(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateDomainRequest>,
@@ -285,6 +305,7 @@ async fn update_domain(
         if !(1..=65535).contains(&port) {
             return common_error_response(
                 StatusCode::BAD_REQUEST,
+                &trace_id,
                 "invalid_port",
                 "Port must be between 1 and 65535",
             )
@@ -299,13 +320,14 @@ async fn update_domain(
         req.check_interval_secs,
         req.note,
     ) {
-        Ok(Some(domain)) => success_response(StatusCode::OK, domain),
-        Ok(None) => common_error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
+        Ok(Some(domain)) => success_response(StatusCode::OK, &trace_id, domain),
+        Ok(None) => common_error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Domain not found")
             .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Update failed");
             common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "storage_error",
                 "Internal update error",
             )
@@ -330,15 +352,20 @@ async fn update_domain(
         (status = 404, description = "域名不存在", body = crate::api::ApiError)
     )
 )]
-async fn delete_domain(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+async fn delete_domain(
+    Extension(trace_id): Extension<String>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
     match state.cert_store.delete_domain(&id) {
-        Ok(true) => success_response(StatusCode::OK, serde_json::json!({ "deleted": true })),
-        Ok(false) => common_error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
+        Ok(true) => success_response(StatusCode::OK, &trace_id, serde_json::json!({ "deleted": true })),
+        Ok(false) => common_error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Domain not found")
             .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Delete failed");
             common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "storage_error",
                 "Internal delete error",
             )
@@ -361,6 +388,7 @@ async fn delete_domain(State(state): State<AppState>, Path(id): Path<String>) ->
     )
 )]
 async fn cert_status_all(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Query(params): Query<CertStatusListParams>,
 ) -> impl IntoResponse {
@@ -368,11 +396,12 @@ async fn cert_status_all(
     let offset = params.pagination.offset();
 
     match state.cert_store.query_latest_results(limit, offset) {
-        Ok(results) => success_response(StatusCode::OK, results),
+        Ok(results) => success_response(StatusCode::OK, &trace_id, results),
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
             common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "storage_error",
                 "Internal query error",
             )
@@ -398,6 +427,7 @@ async fn cert_status_all(
     )
 )]
 async fn cert_status_by_domain(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Path(domain): Path<String>,
 ) -> impl IntoResponse {
@@ -405,6 +435,7 @@ async fn cert_status_by_domain(
         Ok(None) => {
             return common_error_response(
                 StatusCode::NOT_FOUND,
+                &trace_id,
                 "not_found",
                 "Domain is not being monitored",
             )
@@ -414,6 +445,7 @@ async fn cert_status_by_domain(
             tracing::error!(error = %e, "Query failed");
             return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "storage_error",
                 "Internal query error",
             )
@@ -423,9 +455,10 @@ async fn cert_status_by_domain(
     }
 
     match state.cert_store.query_result_by_domain(&domain) {
-        Ok(Some(result)) => success_response(StatusCode::OK, result),
+        Ok(Some(result)) => success_response(StatusCode::OK, &trace_id, result),
         Ok(None) => common_error_response(
             StatusCode::NOT_FOUND,
+            &trace_id,
             "no_results",
             "No check results yet for this domain",
         )
@@ -434,6 +467,7 @@ async fn cert_status_by_domain(
             tracing::error!(error = %e, "Query failed");
             common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "storage_error",
                 "Internal query error",
             )
@@ -459,19 +493,21 @@ async fn cert_status_by_domain(
     )
 )]
 async fn check_single_domain(
+    Extension(trace_id): Extension<String>,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let domain = match state.cert_store.get_domain_by_id(&id) {
         Ok(Some(d)) => d,
         Ok(None) => {
-            return common_error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
+            return common_error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Domain not found")
                 .into_response();
         }
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
             return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "storage_error",
                 "Internal query error",
             )
@@ -491,7 +527,7 @@ async fn check_single_domain(
         tracing::error!(domain = %domain.domain, error = %e, "Failed to store manual check result");
     }
 
-    success_response(StatusCode::OK, result)
+    success_response(StatusCode::OK, &trace_id, result)
 }
 
 /// 手动触发所有已启用域名证书检查。
@@ -506,13 +542,17 @@ async fn check_single_domain(
         (status = 401, description = "未授权", body = crate::api::ApiError)
     )
 )]
-async fn check_all_domains(State(state): State<AppState>) -> impl IntoResponse {
+async fn check_all_domains(
+    Extension(trace_id): Extension<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     let domains = match state.cert_store.query_domains(Some(true), None, 10000, 0) {
         Ok(d) => d,
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
             return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "storage_error",
                 "Internal query error",
             )
@@ -523,6 +563,7 @@ async fn check_all_domains(State(state): State<AppState>) -> impl IntoResponse {
     if domains.is_empty() {
         return success_response(
             StatusCode::OK,
+            &trace_id,
             Vec::<oxmon_common::types::CertCheckResult>::new(),
         );
     }
@@ -544,7 +585,7 @@ async fn check_all_domains(State(state): State<AppState>) -> impl IntoResponse {
         results.push(result);
     }
 
-    success_response(StatusCode::OK, results)
+    success_response(StatusCode::OK, &trace_id, results)
 }
 
 fn store_check_result(
