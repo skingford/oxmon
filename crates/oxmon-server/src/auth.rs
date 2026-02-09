@@ -9,7 +9,7 @@ use oxmon_common::types::{ChangePasswordRequest, LoginRequest, LoginResponse};
 use oxmon_storage::auth::{hash_token, verify_token};
 use serde::{Deserialize, Serialize};
 
-use crate::api::ApiError;
+use crate::api::{error_response, success_empty_response, success_response, ApiError};
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,14 +54,7 @@ pub fn validate_token(secret: &str, token: &str) -> Result<Claims, jsonwebtoken:
 }
 
 fn auth_error(code: &str, msg: &str) -> axum::response::Response {
-    (
-        StatusCode::UNAUTHORIZED,
-        Json(ApiError {
-            error: msg.to_string(),
-            code: code.to_string(),
-        }),
-    )
-        .into_response()
+    error_response(StatusCode::UNAUTHORIZED, code, msg)
 }
 
 /// JWT 鉴权中间件
@@ -112,10 +105,7 @@ pub async fn jwt_auth_middleware(
             next.run(req).await
         }
         Err(e) => {
-            let msg = if matches!(
-                e.kind(),
-                jsonwebtoken::errors::ErrorKind::ExpiredSignature
-            ) {
+            let msg = if matches!(e.kind(), jsonwebtoken::errors::ErrorKind::ExpiredSignature) {
                 return auth_error("TOKEN_EXPIRED", "token expired");
             } else {
                 "invalid token"
@@ -143,52 +133,40 @@ pub async fn login(
     Json(req): Json<LoginRequest>,
 ) -> impl IntoResponse {
     if req.username.is_empty() || req.password.is_empty() {
-        return (
+        return error_response(
             StatusCode::BAD_REQUEST,
-            Json(ApiError {
-                error: "username and password are required".to_string(),
-                code: "BAD_REQUEST".to_string(),
-            }),
-        )
-            .into_response();
+            "BAD_REQUEST",
+            "username and password are required",
+        );
     }
 
     let user = match state.cert_store.get_user_by_username(&req.username) {
         Ok(Some(u)) => u,
         Ok(None) => {
-            return (
+            return error_response(
                 StatusCode::UNAUTHORIZED,
-                Json(ApiError {
-                    error: "invalid credentials".to_string(),
-                    code: "UNAUTHORIZED".to_string(),
-                }),
-            )
-                .into_response();
+                "UNAUTHORIZED",
+                "invalid credentials",
+            );
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to query user");
-            return (
+            return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: "internal error".to_string(),
-                    code: "INTERNAL_ERROR".to_string(),
-                }),
-            )
-                .into_response();
+                "INTERNAL_ERROR",
+                "internal error",
+            );
         }
     };
 
     match verify_token(&req.password, &user.password_hash) {
         Ok(true) => {}
         _ => {
-            return (
+            return error_response(
                 StatusCode::UNAUTHORIZED,
-                Json(ApiError {
-                    error: "invalid credentials".to_string(),
-                    code: "UNAUTHORIZED".to_string(),
-                }),
-            )
-                .into_response();
+                "UNAUTHORIZED",
+                "invalid credentials",
+            );
         }
     }
 
@@ -199,21 +177,20 @@ pub async fn login(
         user.token_version,
         state.token_expire_secs,
     ) {
-        Ok(token) => Json(LoginResponse {
-            token,
-            expires_in: state.token_expire_secs,
-        })
-        .into_response(),
+        Ok(token) => success_response(
+            StatusCode::OK,
+            LoginResponse {
+                token,
+                expires_in: state.token_expire_secs,
+            },
+        ),
         Err(e) => {
             tracing::error!(error = %e, "Failed to create token");
-            (
+            error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: "internal error".to_string(),
-                    code: "INTERNAL_ERROR".to_string(),
-                }),
+                "INTERNAL_ERROR",
+                "internal error",
             )
-                .into_response()
         }
     }
 }
@@ -227,7 +204,7 @@ pub async fn login(
     security(("bearer_auth" = [])),
     request_body = ChangePasswordRequest,
     responses(
-        (status = 200, description = "密码修改成功"),
+        (status = 200, description = "密码修改成功（需重新登录）"),
         (status = 400, description = "请求参数错误", body = ApiError),
         (status = 401, description = "认证失败或当前密码错误", body = ApiError),
         (status = 500, description = "服务器内部错误", body = ApiError)
@@ -239,52 +216,40 @@ pub async fn change_password(
     Json(body): Json<ChangePasswordRequest>,
 ) -> impl IntoResponse {
     if body.current_password.is_empty() || body.new_password.is_empty() {
-        return (
+        return error_response(
             StatusCode::BAD_REQUEST,
-            Json(ApiError {
-                error: "current_password and new_password are required".to_string(),
-                code: "BAD_REQUEST".to_string(),
-            }),
-        )
-            .into_response();
+            "BAD_REQUEST",
+            "current_password and new_password are required",
+        );
     }
 
     let user = match state.cert_store.get_user_by_username(&claims.username) {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return (
+            return error_response(
                 StatusCode::UNAUTHORIZED,
-                Json(ApiError {
-                    error: "invalid credentials".to_string(),
-                    code: "UNAUTHORIZED".to_string(),
-                }),
-            )
-                .into_response();
+                "UNAUTHORIZED",
+                "invalid credentials",
+            );
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to query user");
-            return (
+            return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: "internal error".to_string(),
-                    code: "INTERNAL_ERROR".to_string(),
-                }),
-            )
-                .into_response();
+                "INTERNAL_ERROR",
+                "internal error",
+            );
         }
     };
 
     match verify_token(&body.current_password, &user.password_hash) {
         Ok(true) => {}
         _ => {
-            return (
+            return error_response(
                 StatusCode::UNAUTHORIZED,
-                Json(ApiError {
-                    error: "invalid credentials".to_string(),
-                    code: "UNAUTHORIZED".to_string(),
-                }),
-            )
-                .into_response();
+                "UNAUTHORIZED",
+                "invalid credentials",
+            );
         }
     }
 
@@ -292,14 +257,11 @@ pub async fn change_password(
         Ok(hash) => hash,
         Err(e) => {
             tracing::error!(error = %e, "Failed to hash password");
-            return (
+            return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: "internal error".to_string(),
-                    code: "INTERNAL_ERROR".to_string(),
-                }),
-            )
-                .into_response();
+                "INTERNAL_ERROR",
+                "internal error",
+            );
         }
     };
 
@@ -307,25 +269,19 @@ pub async fn change_password(
         .cert_store
         .update_user_password_hash(&user.id, &new_password_hash)
     {
-        Ok(true) => StatusCode::OK.into_response(),
-        Ok(false) => (
+        Ok(true) => success_empty_response(StatusCode::OK, "password changed, please login again"),
+        Ok(false) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "internal error".to_string(),
-                code: "INTERNAL_ERROR".to_string(),
-            }),
-        )
-            .into_response(),
+            "INTERNAL_ERROR",
+            "internal error",
+        ),
         Err(e) => {
             tracing::error!(error = %e, "Failed to update password");
-            (
+            error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: "internal error".to_string(),
-                    code: "INTERNAL_ERROR".to_string(),
-                }),
+                "INTERNAL_ERROR",
+                "internal error",
             )
-                .into_response()
         }
     }
 }

@@ -1,4 +1,5 @@
 use crate::api::pagination::PaginationParams;
+use crate::api::{error_response as common_error_response, success_response};
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -9,33 +10,13 @@ use oxmon_common::types::{
     BatchCreateDomainsRequest, CertCheckResult, CertDomain, CreateDomainRequest, MetricBatch,
     MetricDataPoint, UpdateDomainRequest,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
-use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use oxmon_storage::StorageEngine;
 
 use super::checker::check_certificate;
-
-/// 证书 API 错误响应
-#[derive(Serialize, ToSchema)]
-struct CertApiError {
-    /// 错误信息
-    error: String,
-    /// 错误码
-    code: String,
-}
-
-fn error_response(status: StatusCode, code: &str, msg: &str) -> impl IntoResponse {
-    (
-        status,
-        Json(CertApiError {
-            error: msg.to_string(),
-            code: code.to_string(),
-        }),
-    )
-}
 
 /// 新增证书监控域名。
 /// 鉴权：需要 Bearer Token。
@@ -47,9 +28,9 @@ fn error_response(status: StatusCode, code: &str, msg: &str) -> impl IntoRespons
     request_body = CreateDomainRequest,
     responses(
         (status = 201, description = "新增监控域名结果", body = CertDomain),
-        (status = 400, description = "请求参数错误", body = CertApiError),
-        (status = 401, description = "未授权", body = CertApiError),
-        (status = 409, description = "域名已存在", body = CertApiError)
+        (status = 400, description = "请求参数错误", body = crate::api::ApiError),
+        (status = 401, description = "未授权", body = crate::api::ApiError),
+        (status = 409, description = "域名已存在", body = crate::api::ApiError)
     )
 )]
 async fn create_domain(
@@ -57,7 +38,7 @@ async fn create_domain(
     Json(req): Json<CreateDomainRequest>,
 ) -> impl IntoResponse {
     if req.domain.is_empty() {
-        return error_response(
+        return common_error_response(
             StatusCode::BAD_REQUEST,
             "invalid_domain",
             "Domain cannot be empty",
@@ -66,7 +47,7 @@ async fn create_domain(
     }
     if let Some(port) = req.port {
         if !(1..=65535).contains(&port) {
-            return error_response(
+            return common_error_response(
                 StatusCode::BAD_REQUEST,
                 "invalid_port",
                 "Port must be between 1 and 65535",
@@ -78,7 +59,7 @@ async fn create_domain(
     // Check for duplicate
     match state.cert_store.get_domain_by_name(&req.domain) {
         Ok(Some(_)) => {
-            return error_response(
+            return common_error_response(
                 StatusCode::CONFLICT,
                 "duplicate_domain",
                 &format!("Domain '{}' already exists", req.domain),
@@ -86,7 +67,7 @@ async fn create_domain(
             .into_response();
         }
         Err(e) => {
-            return error_response(
+            return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
                 &format!("Storage error: {e}"),
@@ -97,8 +78,8 @@ async fn create_domain(
     }
 
     match state.cert_store.insert_domain(&req) {
-        Ok(domain) => (StatusCode::CREATED, Json(domain)).into_response(),
-        Err(e) => error_response(
+        Ok(domain) => success_response(StatusCode::CREATED, domain),
+        Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
             &format!("Failed to create domain: {e}"),
@@ -117,9 +98,9 @@ async fn create_domain(
     request_body = BatchCreateDomainsRequest,
     responses(
         (status = 201, description = "批量新增监控域名结果", body = Vec<CertDomain>),
-        (status = 400, description = "请求参数错误", body = CertApiError),
-        (status = 401, description = "未授权", body = CertApiError),
-        (status = 409, description = "域名重复", body = CertApiError)
+        (status = 400, description = "请求参数错误", body = crate::api::ApiError),
+        (status = 401, description = "未授权", body = crate::api::ApiError),
+        (status = 409, description = "域名重复", body = crate::api::ApiError)
     )
 )]
 async fn create_domains_batch(
@@ -127,7 +108,7 @@ async fn create_domains_batch(
     Json(req): Json<BatchCreateDomainsRequest>,
 ) -> impl IntoResponse {
     if req.domains.is_empty() {
-        return error_response(
+        return common_error_response(
             StatusCode::BAD_REQUEST,
             "empty_batch",
             "Domains list cannot be empty",
@@ -136,7 +117,7 @@ async fn create_domains_batch(
     }
     for d in &req.domains {
         if d.domain.is_empty() {
-            return error_response(
+            return common_error_response(
                 StatusCode::BAD_REQUEST,
                 "invalid_domain",
                 "Domain cannot be empty",
@@ -145,7 +126,7 @@ async fn create_domains_batch(
         }
         if let Some(port) = d.port {
             if !(1..=65535).contains(&port) {
-                return error_response(
+                return common_error_response(
                     StatusCode::BAD_REQUEST,
                     "invalid_port",
                     &format!("Port must be between 1 and 65535 for domain '{}'", d.domain),
@@ -156,13 +137,14 @@ async fn create_domains_batch(
     }
 
     match state.cert_store.insert_domains_batch(&req.domains) {
-        Ok(domains) => (StatusCode::CREATED, Json(domains)).into_response(),
+        Ok(domains) => success_response(StatusCode::CREATED, domains),
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("UNIQUE constraint") {
-                error_response(StatusCode::CONFLICT, "duplicate_domain", &msg).into_response()
+                common_error_response(StatusCode::CONFLICT, "duplicate_domain", &msg)
+                    .into_response()
             } else {
-                error_response(
+                common_error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "storage_error",
                     &format!("Failed to create domains: {e}"),
@@ -199,7 +181,7 @@ struct ListDomainsParams {
     params(ListDomainsParams),
     responses(
         (status = 200, description = "监控域名分页列表", body = Vec<CertDomain>),
-        (status = 401, description = "未授权", body = CertApiError)
+        (status = 401, description = "未授权", body = crate::api::ApiError)
     )
 )]
 async fn list_domains(
@@ -208,17 +190,14 @@ async fn list_domains(
 ) -> impl IntoResponse {
     let limit = params.pagination.limit();
     let offset = params.pagination.offset();
-    match state
-        .cert_store
-        .query_domains(
-            params.enabled_eq,
-            params.domain_contains.as_deref(),
-            limit,
-            offset,
-        )
-    {
-        Ok(domains) => Json(domains).into_response(),
-        Err(e) => error_response(
+    match state.cert_store.query_domains(
+        params.enabled_eq,
+        params.domain_contains.as_deref(),
+        limit,
+        offset,
+    ) {
+        Ok(domains) => success_response(StatusCode::OK, domains),
+        Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
             &format!("Query failed: {e}"),
@@ -246,19 +225,16 @@ struct CertStatusListParams {
     ),
     responses(
         (status = 200, description = "监控域名详情", body = CertDomain),
-        (status = 401, description = "未授权", body = CertApiError),
-        (status = 404, description = "域名不存在", body = CertApiError)
+        (status = 401, description = "未授权", body = crate::api::ApiError),
+        (status = 404, description = "域名不存在", body = crate::api::ApiError)
     )
 )]
-async fn get_domain(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn get_domain(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     match state.cert_store.get_domain_by_id(&id) {
-        Ok(Some(domain)) => Json(domain).into_response(),
-        Ok(None) => error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
+        Ok(Some(domain)) => success_response(StatusCode::OK, domain),
+        Ok(None) => common_error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
             .into_response(),
-        Err(e) => error_response(
+        Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
             &format!("Query failed: {e}"),
@@ -280,9 +256,9 @@ async fn get_domain(
     request_body = UpdateDomainRequest,
     responses(
         (status = 200, description = "更新监控域名结果", body = CertDomain),
-        (status = 400, description = "请求参数错误", body = CertApiError),
-        (status = 401, description = "未授权", body = CertApiError),
-        (status = 404, description = "域名不存在", body = CertApiError)
+        (status = 400, description = "请求参数错误", body = crate::api::ApiError),
+        (status = 401, description = "未授权", body = crate::api::ApiError),
+        (status = 404, description = "域名不存在", body = crate::api::ApiError)
     )
 )]
 async fn update_domain(
@@ -292,7 +268,7 @@ async fn update_domain(
 ) -> impl IntoResponse {
     if let Some(port) = req.port {
         if !(1..=65535).contains(&port) {
-            return error_response(
+            return common_error_response(
                 StatusCode::BAD_REQUEST,
                 "invalid_port",
                 "Port must be between 1 and 65535",
@@ -301,14 +277,17 @@ async fn update_domain(
         }
     }
 
-    match state
-        .cert_store
-        .update_domain(&id, req.port, req.enabled, req.check_interval_secs, req.note)
-    {
-        Ok(Some(domain)) => Json(domain).into_response(),
-        Ok(None) => error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
+    match state.cert_store.update_domain(
+        &id,
+        req.port,
+        req.enabled,
+        req.check_interval_secs,
+        req.note,
+    ) {
+        Ok(Some(domain)) => success_response(StatusCode::OK, domain),
+        Ok(None) => common_error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
             .into_response(),
-        Err(e) => error_response(
+        Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
             &format!("Update failed: {e}"),
@@ -328,20 +307,17 @@ async fn update_domain(
         ("id" = String, Path, description = "监控域名 ID（路径参数）")
     ),
     responses(
-        (status = 204, description = "删除成功"),
-        (status = 401, description = "未授权", body = CertApiError),
-        (status = 404, description = "域名不存在", body = CertApiError)
+        (status = 200, description = "删除成功"),
+        (status = 401, description = "未授权", body = crate::api::ApiError),
+        (status = 404, description = "域名不存在", body = crate::api::ApiError)
     )
 )]
-async fn delete_domain(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn delete_domain(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     match state.cert_store.delete_domain(&id) {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
+        Ok(true) => success_response(StatusCode::OK, serde_json::json!({ "deleted": true })),
+        Ok(false) => common_error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
             .into_response(),
-        Err(e) => error_response(
+        Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
             &format!("Delete failed: {e}"),
@@ -360,7 +336,7 @@ async fn delete_domain(
     params(CertStatusListParams),
     responses(
         (status = 200, description = "域名证书状态分页列表", body = Vec<CertCheckResult>),
-        (status = 401, description = "未授权", body = CertApiError)
+        (status = 401, description = "未授权", body = crate::api::ApiError)
     )
 )]
 async fn cert_status_all(
@@ -371,8 +347,8 @@ async fn cert_status_all(
     let offset = params.pagination.offset();
 
     match state.cert_store.query_latest_results(limit, offset) {
-        Ok(results) => Json(results).into_response(),
-        Err(e) => error_response(
+        Ok(results) => success_response(StatusCode::OK, results),
+        Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
             &format!("Query failed: {e}"),
@@ -393,8 +369,8 @@ async fn cert_status_all(
     ),
     responses(
         (status = 200, description = "域名最新证书检查结果", body = CertCheckResult),
-        (status = 401, description = "未授权", body = CertApiError),
-        (status = 404, description = "域名不存在", body = CertApiError)
+        (status = 401, description = "未授权", body = crate::api::ApiError),
+        (status = 404, description = "域名不存在", body = crate::api::ApiError)
     )
 )]
 async fn cert_status_by_domain(
@@ -403,7 +379,7 @@ async fn cert_status_by_domain(
 ) -> impl IntoResponse {
     match state.cert_store.get_domain_by_name(&domain) {
         Ok(None) => {
-            return error_response(
+            return common_error_response(
                 StatusCode::NOT_FOUND,
                 "not_found",
                 "Domain is not being monitored",
@@ -411,7 +387,7 @@ async fn cert_status_by_domain(
             .into_response();
         }
         Err(e) => {
-            return error_response(
+            return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
                 &format!("Query failed: {e}"),
@@ -422,14 +398,14 @@ async fn cert_status_by_domain(
     }
 
     match state.cert_store.query_result_by_domain(&domain) {
-        Ok(Some(result)) => Json(result).into_response(),
-        Ok(None) => error_response(
+        Ok(Some(result)) => success_response(StatusCode::OK, result),
+        Ok(None) => common_error_response(
             StatusCode::NOT_FOUND,
             "no_results",
             "No check results yet for this domain",
         )
         .into_response(),
-        Err(e) => error_response(
+        Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
             &format!("Query failed: {e}"),
@@ -450,8 +426,8 @@ async fn cert_status_by_domain(
     ),
     responses(
         (status = 200, description = "手动证书检查结果", body = CertCheckResult),
-        (status = 401, description = "未授权", body = CertApiError),
-        (status = 404, description = "域名不存在", body = CertApiError)
+        (status = 401, description = "未授权", body = crate::api::ApiError),
+        (status = 404, description = "域名不存在", body = crate::api::ApiError)
     )
 )]
 async fn check_single_domain(
@@ -461,11 +437,11 @@ async fn check_single_domain(
     let domain = match state.cert_store.get_domain_by_id(&id) {
         Ok(Some(d)) => d,
         Ok(None) => {
-            return error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
+            return common_error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
                 .into_response();
         }
         Err(e) => {
-            return error_response(
+            return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
                 &format!("Query failed: {e}"),
@@ -486,7 +462,7 @@ async fn check_single_domain(
         tracing::error!(domain = %domain.domain, error = %e, "Failed to store manual check result");
     }
 
-    Json(result).into_response()
+    success_response(StatusCode::OK, result)
 }
 
 /// 手动触发所有已启用域名证书检查。
@@ -498,14 +474,14 @@ async fn check_single_domain(
     security(("bearer_auth" = [])),
     responses(
         (status = 200, description = "手动批量证书检查结果", body = Vec<CertCheckResult>),
-        (status = 401, description = "未授权", body = CertApiError)
+        (status = 401, description = "未授权", body = crate::api::ApiError)
     )
 )]
 async fn check_all_domains(State(state): State<AppState>) -> impl IntoResponse {
     let domains = match state.cert_store.query_domains(Some(true), None, 10000, 0) {
         Ok(d) => d,
         Err(e) => {
-            return error_response(
+            return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
                 &format!("Query failed: {e}"),
@@ -515,7 +491,10 @@ async fn check_all_domains(State(state): State<AppState>) -> impl IntoResponse {
     };
 
     if domains.is_empty() {
-        return Json(Vec::<oxmon_common::types::CertCheckResult>::new()).into_response();
+        return success_response(
+            StatusCode::OK,
+            Vec::<oxmon_common::types::CertCheckResult>::new(),
+        );
     }
 
     let mut results = Vec::with_capacity(domains.len());
@@ -535,7 +514,7 @@ async fn check_all_domains(State(state): State<AppState>) -> impl IntoResponse {
         results.push(result);
     }
 
-    Json(results).into_response()
+    success_response(StatusCode::OK, results)
 }
 
 fn store_check_result(
@@ -545,7 +524,9 @@ fn store_check_result(
     result: &oxmon_common::types::CertCheckResult,
 ) -> anyhow::Result<()> {
     state.cert_store.insert_check_result(result)?;
-    state.cert_store.update_last_checked_at(domain_id, Utc::now())?;
+    state
+        .cert_store
+        .update_last_checked_at(domain_id, Utc::now())?;
 
     // Emit metrics
     let now = Utc::now();

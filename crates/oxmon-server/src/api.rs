@@ -1,16 +1,17 @@
-pub mod whitelist;
 pub mod certificates;
 pub mod pagination;
+pub mod whitelist;
 
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::{DateTime, Utc};
 use oxmon_common::types::MetricDataPoint;
 use oxmon_storage::{MetricQuery, StorageEngine};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -20,20 +21,88 @@ use crate::api::pagination::PaginationParams;
 /// API 错误响应
 #[derive(Serialize, ToSchema)]
 pub struct ApiError {
-    /// 错误信息
-    pub error: String,
     /// 错误码
-    pub code: String,
+    pub err_code: i32,
+    /// 错误信息
+    pub err_msg: String,
+    /// 链路追踪 ID（默认空字符串）
+    pub trace_id: String,
 }
 
-fn error_response(status: StatusCode, code: &str, msg: &str) -> impl IntoResponse {
+/// API 统一响应包裹
+#[derive(Serialize)]
+pub struct ApiResponse<T>
+where
+    T: Serialize,
+{
+    /// 错误码（成功时为 0）
+    pub err_code: i32,
+    /// 错误信息（成功时为 success）
+    pub err_msg: String,
+    /// 链路追踪 ID（默认空字符串）
+    pub trace_id: String,
+    /// 业务数据（有数据时返回）
+    pub data: Option<T>,
+}
+
+pub fn success_response<T>(status: StatusCode, data: T) -> Response
+where
+    T: Serialize,
+{
     (
         status,
-        Json(ApiError {
-            error: msg.to_string(),
-            code: code.to_string(),
+        Json(ApiResponse {
+            err_code: 0,
+            err_msg: "success".to_string(),
+            trace_id: String::new(),
+            data: Some(data),
         }),
     )
+        .into_response()
+}
+
+pub fn success_empty_response(status: StatusCode, msg: &str) -> Response {
+    (
+        status,
+        Json(ApiResponse::<Value> {
+            err_code: 0,
+            err_msg: msg.to_string(),
+            trace_id: String::new(),
+            data: None,
+        }),
+    )
+        .into_response()
+}
+
+fn to_custom_error_code(code: &str) -> i32 {
+    match code {
+        "BAD_REQUEST" | "bad_request" => 1001,
+        "UNAUTHORIZED" | "unauthorized" => 1002,
+        "TOKEN_EXPIRED" | "token_expired" => 1003,
+        "NOT_FOUND" | "not_found" => 1004,
+        "CONFLICT" | "conflict" => 1005,
+        "duplicate_domain" => 1101,
+        "invalid_domain" => 1102,
+        "invalid_port" => 1103,
+        "empty_batch" => 1104,
+        "no_results" => 1105,
+        "storage_error" => 1501,
+        "INTERNAL_ERROR" | "internal_error" => 1500,
+        _ => 1999,
+    }
+}
+
+pub fn error_response(status: StatusCode, code: &str, msg: &str) -> Response {
+    (
+        status,
+        Json(ApiResponse::<Value> {
+            err_code: to_custom_error_code(code),
+            err_msg: msg.to_string(),
+            trace_id: String::new(),
+            data: None,
+        }),
+    )
+        .into_response()
 }
 
 /// 健康检查响应
@@ -62,12 +131,15 @@ struct HealthResponse {
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let uptime = (Utc::now() - state.start_time).num_seconds();
     let agent_count = state.agent_registry.lock().unwrap().list_agents().len();
-    Json(HealthResponse {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_secs: uptime,
-        agent_count,
-        storage_status: "ok".to_string(),
-    })
+    success_response(
+        StatusCode::OK,
+        HealthResponse {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            uptime_secs: uptime,
+            agent_count,
+            storage_status: "ok".to_string(),
+        },
+    )
 }
 
 /// Agent 信息
@@ -118,7 +190,7 @@ async fn list_agents(
             },
         })
         .collect();
-    Json(resp)
+    success_response(StatusCode::OK, resp)
 }
 
 /// 最新指标数据
@@ -161,8 +233,8 @@ async fn agent_latest(
     // All metric names collected by agent
     let metric_names = [
         // CPU
-        "cpu.usage",           // CPU 总使用率 (%)
-        "cpu.core_usage",      // 每核 CPU 使用率 (%, label: core)
+        "cpu.usage",      // CPU 总使用率 (%)
+        "cpu.core_usage", // 每核 CPU 使用率 (%, label: core)
         // Memory
         "memory.total",        // 总物理内存 (bytes)
         "memory.used",         // 已用内存 (bytes)
@@ -172,20 +244,20 @@ async fn agent_latest(
         "memory.swap_used",    // 交换区已用 (bytes)
         "memory.swap_percent", // 交换区使用率 (%)
         // Disk (per mount point, label: mount)
-        "disk.total",          // 磁盘总空间 (bytes)
-        "disk.used",           // 磁盘已用 (bytes)
-        "disk.available",      // 磁盘可用 (bytes)
-        "disk.used_percent",   // 磁盘使用率 (%)
+        "disk.total",        // 磁盘总空间 (bytes)
+        "disk.used",         // 磁盘已用 (bytes)
+        "disk.available",    // 磁盘可用 (bytes)
+        "disk.used_percent", // 磁盘使用率 (%)
         // Network (per interface, label: interface)
-        "network.bytes_recv",    // 接收字节增量
-        "network.bytes_sent",    // 发送字节增量
-        "network.packets_recv",  // 接收包增量
-        "network.packets_sent",  // 发送包增量
+        "network.bytes_recv",   // 接收字节增量
+        "network.bytes_sent",   // 发送字节增量
+        "network.packets_recv", // 接收包增量
+        "network.packets_sent", // 发送包增量
         // System load
-        "system.load_1",       // 1 分钟负载
-        "system.load_5",       // 5 分钟负载
-        "system.load_15",      // 15 分钟负载
-        "system.uptime",       // 运行时间 (秒)
+        "system.load_1",  // 1 分钟负载
+        "system.load_5",  // 5 分钟负载
+        "system.load_15", // 15 分钟负载
+        "system.uptime",  // 运行时间 (秒)
     ];
 
     let mut latest: Vec<LatestMetric> = Vec::new();
@@ -223,7 +295,12 @@ async fn agent_latest(
 
     if latest.is_empty() {
         // Check if agent exists in whitelist or registry
-        let in_registry = state.agent_registry.lock().unwrap().get_agent(&agent_id).is_some();
+        let in_registry = state
+            .agent_registry
+            .lock()
+            .unwrap()
+            .get_agent(&agent_id)
+            .is_some();
         let in_whitelist = state
             .cert_store
             .get_agent_token_hash(&agent_id)
@@ -235,7 +312,7 @@ async fn agent_latest(
         }
     }
 
-    Json(latest).into_response()
+    success_response(StatusCode::OK, latest)
 }
 
 // GET /v1/metrics
@@ -333,7 +410,7 @@ async fn query_all_metrics(
                     created_at: dp.created_at,
                 })
                 .collect();
-            Json(resp).into_response()
+            success_response(StatusCode::OK, resp)
         }
         Err(e) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -390,13 +467,9 @@ async fn list_alert_rules(
         .collect();
 
     rules.sort_by(|a, b| a.id.cmp(&b.id));
-    let rules: Vec<AlertRuleResponse> = rules
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .collect();
+    let rules: Vec<AlertRuleResponse> = rules.into_iter().skip(offset).take(limit).collect();
 
-    Json(rules)
+    success_response(StatusCode::OK, rules)
 }
 
 // GET /v1/alerts/history
@@ -503,7 +576,7 @@ async fn alert_history(
                     predicted_breach: e.predicted_breach,
                 })
                 .collect();
-            Json(resp).into_response()
+            success_response(StatusCode::OK, resp)
         }
         Err(e) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -515,13 +588,11 @@ async fn alert_history(
 }
 
 pub fn public_routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new()
-        .routes(routes!(health))
+    OpenApiRouter::new().routes(routes!(health))
 }
 
 pub fn auth_routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new()
-        .routes(routes!(crate::auth::login))
+    OpenApiRouter::new().routes(routes!(crate::auth::login))
 }
 
 pub fn protected_routes() -> OpenApiRouter<AppState> {

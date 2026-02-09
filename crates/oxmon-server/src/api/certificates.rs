@@ -1,13 +1,13 @@
-use crate::state::AppState;
 use crate::api::pagination::PaginationParams;
+use crate::api::{error_response, success_response};
+use crate::state::AppState;
+use axum::response::IntoResponse;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    Json,
 };
 use oxmon_common::types::{CertificateDetails, CertificateDetailsFilter};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
@@ -47,25 +47,30 @@ struct CertificateListQuery {
 async fn get_certificate(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<CertificateDetails>, (StatusCode, Json<serde_json::Value>)> {
-    let details = state
+) -> impl IntoResponse {
+    let details = match state
         .cert_store
         .get_certificate_details_by_id(&id)
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get certificate details");
-            (
+            error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
+                "INTERNAL_ERROR",
+                "Database error",
             )
-        })?
-        .ok_or_else(|| {
-            (
+        }) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return error_response(
                 StatusCode::NOT_FOUND,
-                Json(json!({"error": format!("Certificate with id '{}' not found", id)})),
+                "NOT_FOUND",
+                &format!("Certificate with id '{}' not found", id),
             )
-        })?;
+        }
+        Err(resp) => return resp,
+    };
 
-    Ok(Json(details))
+    success_response(StatusCode::OK, details)
 }
 
 /// 分页查询证书详情列表（支持过滤）。
@@ -87,25 +92,29 @@ async fn get_certificate(
 async fn list_certificates(
     State(state): State<AppState>,
     Query(query): Query<CertificateListQuery>,
-) -> Result<Json<Vec<CertificateDetails>>, (StatusCode, Json<serde_json::Value>)> {
+) -> impl IntoResponse {
     let filter = CertificateDetailsFilter {
         not_after_lte: query.not_after_lte,
         ip_address_contains: query.ip_address_contains,
         issuer_contains: query.issuer_contains,
     };
 
-    let certificates = state
+    let certificates = match state
         .cert_store
         .list_certificate_details(&filter, query.pagination.limit(), query.pagination.offset())
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to list certificates");
-            (
+            error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
+                "INTERNAL_ERROR",
+                "Database error",
             )
-        })?;
+        }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
 
-    Ok(Json(certificates))
+    success_response(StatusCode::OK, certificates)
 }
 
 /// 证书链信息
@@ -143,31 +152,39 @@ struct CertificateChainInfo {
 async fn get_certificate_chain(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<CertificateChainInfo>, (StatusCode, Json<serde_json::Value>)> {
-    let details = state
+) -> impl IntoResponse {
+    let details = match state
         .cert_store
         .get_certificate_details_by_id(&id)
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get certificate details");
-            (
+            error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
+                "INTERNAL_ERROR",
+                "Database error",
             )
-        })?
-        .ok_or_else(|| {
-            (
+        }) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return error_response(
                 StatusCode::NOT_FOUND,
-                Json(json!({"error": format!("Certificate with id '{}' not found", id)})),
+                "NOT_FOUND",
+                &format!("Certificate with id '{}' not found", id),
             )
-        })?;
+        }
+        Err(resp) => return resp,
+    };
 
-    Ok(Json(CertificateChainInfo {
-        id: details.id,
-        domain: details.domain,
-        chain_valid: details.chain_valid,
-        chain_error: details.chain_error,
-        last_checked: details.last_checked,
-    }))
+    success_response(
+        StatusCode::OK,
+        CertificateChainInfo {
+            id: details.id,
+            domain: details.domain,
+            chain_valid: details.chain_valid,
+            chain_error: details.chain_error,
+            last_checked: details.last_checked,
+        },
+    )
 }
 
 pub fn certificates_routes() -> OpenApiRouter<AppState> {

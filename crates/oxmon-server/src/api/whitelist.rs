@@ -1,5 +1,7 @@
-use crate::state::AppState;
 use crate::api::pagination::PaginationParams;
+use crate::api::{error_response, success_empty_response, success_response};
+use crate::state::AppState;
+use axum::response::IntoResponse;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -11,7 +13,6 @@ use oxmon_common::types::{
     UpdateAgentRequest,
 };
 use oxmon_storage::auth::{generate_token, hash_token};
-use serde_json::json;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 /// 新增白名单 Agent。
@@ -32,58 +33,81 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 async fn add_agent(
     State(state): State<AppState>,
     Json(req): Json<AddAgentRequest>,
-) -> Result<Json<AddAgentResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> impl IntoResponse {
     // 检查 agent_id 是否已存在
     let exists = state
         .cert_store
         .get_agent_token_hash(&req.agent_id)
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to check agent existence");
-            (
+            error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
+                "INTERNAL_ERROR",
+                "Database error",
             )
-        })?
-        .is_some();
+        });
+
+    let exists = match exists {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    }
+    .is_some();
 
     if exists {
-        return Err((
+        return error_response(
             StatusCode::CONFLICT,
-            Json(json!({"error": format!("Agent '{}' already exists", req.agent_id)})),
-        ));
+            "CONFLICT",
+            &format!("Agent '{}' already exists", req.agent_id),
+        );
     }
 
     // 生成 token
     let token = generate_token();
-    let token_hash = hash_token(&token).map_err(|e| {
+    let token_hash = match hash_token(&token).map_err(|e| {
         tracing::error!(error = %e, "Failed to hash token");
-        (
+        error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "Token generation error"})),
+            "INTERNAL_ERROR",
+            "Token generation error",
         )
-    })?;
+    }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
 
     // 存储到数据库
     let created_at = Utc::now();
-    let id = state
+    let id = match state
         .cert_store
-        .add_agent_to_whitelist(&req.agent_id, &token, &token_hash, req.description.as_deref())
+        .add_agent_to_whitelist(
+            &req.agent_id,
+            &token,
+            &token_hash,
+            req.description.as_deref(),
+        )
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to add agent to whitelist");
-            (
+            error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
+                "INTERNAL_ERROR",
+                "Database error",
             )
-        })?;
+        }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
 
     tracing::info!(agent_id = %req.agent_id, id = %id, "Agent added to whitelist");
 
-    Ok(Json(AddAgentResponse {
-        id,
-        agent_id: req.agent_id,
-        token,
-        created_at,
-    }))
+    success_response(
+        StatusCode::OK,
+        AddAgentResponse {
+            id,
+            agent_id: req.agent_id,
+            token,
+            created_at,
+        },
+    )
 }
 
 /// 分页查询白名单 Agent 列表（包含在线状态）。
@@ -103,17 +127,21 @@ async fn add_agent(
 async fn list_agents(
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
-) -> Result<Json<Vec<AgentWhitelistDetail>>, (StatusCode, Json<serde_json::Value>)> {
+) -> impl IntoResponse {
     let limit = pagination.limit();
     let offset = pagination.offset();
 
-    let agents = state.cert_store.list_agents(limit, offset).map_err(|e| {
+    let agents = match state.cert_store.list_agents(limit, offset).map_err(|e| {
         tracing::error!(error = %e, "Failed to list agents");
-        (
+        error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "Database error"})),
+            "INTERNAL_ERROR",
+            "Database error",
         )
-    })?;
+    }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
 
     let registry = state.agent_registry.lock().unwrap();
     let details: Vec<AgentWhitelistDetail> = agents
@@ -137,7 +165,7 @@ async fn list_agents(
         })
         .collect();
 
-    Ok(Json(details))
+    success_response(StatusCode::OK, details)
 }
 
 /// 更新白名单 Agent 信息（按 ID）。
@@ -162,62 +190,72 @@ async fn update_agent(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateAgentRequest>,
-) -> Result<Json<AgentWhitelistDetail>, (StatusCode, Json<serde_json::Value>)> {
-    let updated = state
+) -> impl IntoResponse {
+    let updated = match state
         .cert_store
         .update_agent_whitelist(&id, req.description.as_deref())
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to update agent");
-            (
+            error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
+                "INTERNAL_ERROR",
+                "Database error",
             )
-        })?;
+        }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
 
     if !updated {
-        return Err((
+        return error_response(
             StatusCode::NOT_FOUND,
-            Json(json!({"error": format!("Agent with id '{}' not found", id)})),
-        ));
+            "NOT_FOUND",
+            &format!("Agent with id '{}' not found", id),
+        );
     }
 
     // 重新查询获取完整信息
-    let entry = state
-        .cert_store
-        .get_agent_by_id(&id)
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to query agent");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            )
-        })?
-        .ok_or_else(|| {
-            (
+    let entry = match state.cert_store.get_agent_by_id(&id).map_err(|e| {
+        tracing::error!(error = %e, "Failed to query agent");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL_ERROR",
+            "Database error",
+        )
+    }) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return error_response(
                 StatusCode::NOT_FOUND,
-                Json(json!({"error": format!("Agent with id '{}' not found", id)})),
+                "NOT_FOUND",
+                &format!("Agent with id '{}' not found", id),
             )
-        })?;
+        }
+        Err(resp) => return resp,
+    };
 
     let registry = state.agent_registry.lock().unwrap();
     let agent_info = registry.get_agent(&entry.agent_id);
 
     tracing::info!(id = %id, agent_id = %entry.agent_id, "Agent whitelist entry updated");
 
-    Ok(Json(AgentWhitelistDetail {
-        id: entry.id,
-        agent_id: entry.agent_id,
-        created_at: entry.created_at,
-        updated_at: entry.updated_at,
-        description: entry.description,
-        token: entry.token,
-        last_seen: agent_info.as_ref().map(|a| a.last_seen),
-        status: match &agent_info {
-            Some(a) if a.active => "active".to_string(),
-            Some(_) => "inactive".to_string(),
-            None => "unknown".to_string(),
+    success_response(
+        StatusCode::OK,
+        AgentWhitelistDetail {
+            id: entry.id,
+            agent_id: entry.agent_id,
+            created_at: entry.created_at,
+            updated_at: entry.updated_at,
+            description: entry.description,
+            token: entry.token,
+            last_seen: agent_info.as_ref().map(|a| a.last_seen),
+            status: match &agent_info {
+                Some(a) if a.active => "active".to_string(),
+                Some(_) => "inactive".to_string(),
+                None => "unknown".to_string(),
+            },
         },
-    }))
+    )
 }
 
 /// 重新生成白名单 Agent 的认证 Token（按 ID）。
@@ -240,53 +278,66 @@ async fn update_agent(
 async fn regenerate_token(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<RegenerateTokenResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> impl IntoResponse {
     // 检查 agent 是否存在
-    let entry = state
-        .cert_store
-        .get_agent_by_id(&id)
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to check agent existence");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            )
-        })?
-        .ok_or_else(|| {
-            (
+    let entry = match state.cert_store.get_agent_by_id(&id).map_err(|e| {
+        tracing::error!(error = %e, "Failed to check agent existence");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL_ERROR",
+            "Database error",
+        )
+    }) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return error_response(
                 StatusCode::NOT_FOUND,
-                Json(json!({"error": format!("Agent with id '{}' not found", id)})),
+                "NOT_FOUND",
+                &format!("Agent with id '{}' not found", id),
             )
-        })?;
+        }
+        Err(resp) => return resp,
+    };
 
     // 生成新 token
     let token = generate_token();
-    let token_hash = hash_token(&token).map_err(|e| {
+    let token_hash = match hash_token(&token).map_err(|e| {
         tracing::error!(error = %e, "Failed to hash token");
-        (
+        error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "Token generation error"})),
+            "INTERNAL_ERROR",
+            "Token generation error",
         )
-    })?;
+    }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
 
     // 更新数据库
-    state
+    if let Err(resp) = state
         .cert_store
         .update_agent_token_hash(&id, &token, &token_hash)
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to update agent token");
-            (
+            error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
+                "INTERNAL_ERROR",
+                "Database error",
             )
-        })?;
+        })
+    {
+        return resp;
+    }
 
     tracing::info!(id = %id, agent_id = %entry.agent_id, "Agent token regenerated");
 
-    Ok(Json(RegenerateTokenResponse {
-        agent_id: entry.agent_id,
-        token,
-    }))
+    success_response(
+        StatusCode::OK,
+        RegenerateTokenResponse {
+            agent_id: entry.agent_id,
+            token,
+        },
+    )
 }
 
 /// 删除白名单 Agent（按 ID）。
@@ -306,33 +357,36 @@ async fn regenerate_token(
     ),
     tag = "Agents"
 )]
-async fn delete_agent(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+async fn delete_agent(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     // 先查询获取 agent_id 用于从内存注册表中删除
-    let entry = state
-        .cert_store
-        .get_agent_by_id(&id)
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to query agent");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            )
-        })?;
+    let entry = match state.cert_store.get_agent_by_id(&id).map_err(|e| {
+        tracing::error!(error = %e, "Failed to query agent");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL_ERROR",
+            "Database error",
+        )
+    }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
 
     // 从白名单中删除
-    let deleted_from_whitelist = state
-        .cert_store
-        .delete_agent_from_whitelist(&id)
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to delete agent");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            )
-        })?;
+    let deleted_from_whitelist =
+        match state
+            .cert_store
+            .delete_agent_from_whitelist(&id)
+            .map_err(|e| {
+                tracing::error!(error = %e, "Failed to delete agent");
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "Database error",
+                )
+            }) {
+            Ok(v) => v,
+            Err(resp) => return resp,
+        };
 
     // 从内存注册表中删除
     let deleted_from_registry = if let Some(entry) = &entry {
@@ -346,10 +400,11 @@ async fn delete_agent(
     };
 
     if !deleted_from_whitelist && !deleted_from_registry {
-        return Err((
+        return error_response(
             StatusCode::NOT_FOUND,
-            Json(json!({"error": format!("Agent with id '{}' not found", id)})),
-        ));
+            "NOT_FOUND",
+            &format!("Agent with id '{}' not found", id),
+        );
     }
 
     tracing::info!(
@@ -359,7 +414,7 @@ async fn delete_agent(
         registry = deleted_from_registry,
         "Agent removed"
     );
-    Ok(StatusCode::OK)
+    success_empty_response(StatusCode::OK, "success")
 }
 
 pub fn whitelist_routes() -> OpenApiRouter<AppState> {
