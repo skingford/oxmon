@@ -3,6 +3,9 @@ name = "oxmon-collector"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 oxmon-common = { workspace = true }
 sysinfo = { workspace = true }

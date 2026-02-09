@@ -165,12 +165,16 @@ impl MetricService for MetricServiceImpl {
         self.state
             .agent_registry
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .update_agent(&proto.agent_id);
 
         // Feed metrics to alert engine
         {
-            let mut engine = self.state.alert_engine.lock().unwrap();
+            let mut engine = self
+                .state
+                .alert_engine
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             for dp in &batch.data_points {
                 let events = engine.ingest(dp);
                 for event in events {

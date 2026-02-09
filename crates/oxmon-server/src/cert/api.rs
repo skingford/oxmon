@@ -145,8 +145,12 @@ async fn create_domains_batch(
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("UNIQUE constraint") {
-                common_error_response(StatusCode::CONFLICT, "duplicate_domain", "One or more domains already exist")
-                    .into_response()
+                common_error_response(
+                    StatusCode::CONFLICT,
+                    "duplicate_domain",
+                    "One or more domains already exist",
+                )
+                .into_response()
             } else {
                 tracing::error!(error = %e, "Batch create domains failed");
                 common_error_response(

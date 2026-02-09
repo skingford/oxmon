@@ -87,7 +87,7 @@ impl AlertRule for TrendPredictionRule {
 
         let breach_time = now + Duration::seconds(time_to_threshold as i64);
         let hours_remaining = time_to_threshold / 3600.0;
-        let last = window.last().unwrap();
+        let last = window.last()?;
 
         Some(AlertEvent {
             id: oxmon_common::id::next_id(),

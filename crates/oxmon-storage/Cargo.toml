@@ -3,6 +3,9 @@ name = "oxmon-storage"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 oxmon-common = { workspace = true }
 rusqlite = { workspace = true }

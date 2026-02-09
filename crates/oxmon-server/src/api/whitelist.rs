@@ -143,7 +143,10 @@ async fn list_agents(
         Err(resp) => return resp,
     };
 
-    let registry = state.agent_registry.lock().unwrap();
+    let registry = state
+        .agent_registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let details: Vec<AgentWhitelistDetail> = agents
         .into_iter()
         .map(|entry| {
@@ -234,7 +237,10 @@ async fn update_agent(
         Err(resp) => return resp,
     };
 
-    let registry = state.agent_registry.lock().unwrap();
+    let registry = state
+        .agent_registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let agent_info = registry.get_agent(&entry.agent_id);
 
     tracing::info!(id = %id, agent_id = %entry.agent_id, "Agent whitelist entry updated");
@@ -393,7 +399,7 @@ async fn delete_agent(State(state): State<AppState>, Path(id): Path<String>) -> 
         state
             .agent_registry
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove_agent(&entry.agent_id)
     } else {
         false

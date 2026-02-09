@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use oxmon_common::types::{CertCheckResult, CertDomain, CreateDomainRequest};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use crate::auth::TokenEncryptor;
 
@@ -289,10 +289,17 @@ impl CertStore {
         Ok(false)
     }
 
+    /// Lock the database connection, recovering from a poisoned Mutex if necessary.
+    fn lock_conn(&self) -> MutexGuard<'_, Connection> {
+        self.conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     // ---- cert_domains CRUD ----
 
     pub fn insert_domain(&self, req: &CreateDomainRequest) -> Result<CertDomain> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let id = oxmon_common::id::next_id();
         let now = Utc::now().timestamp();
         let port = req.port.unwrap_or(443);
@@ -308,7 +315,7 @@ impl CertStore {
     }
 
     pub fn insert_domains_batch(&self, reqs: &[CreateDomainRequest]) -> Result<Vec<CertDomain>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let tx = conn.unchecked_transaction()?;
         let now = Utc::now().timestamp();
         let mut ids = Vec::with_capacity(reqs.len());
@@ -352,7 +359,7 @@ impl CertStore {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<CertDomain>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut sql = String::from("SELECT id, domain, port, enabled, check_interval_secs, note, last_checked_at, created_at, updated_at FROM cert_domains WHERE 1=1");
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         let mut idx = 1;
@@ -386,7 +393,7 @@ impl CertStore {
     }
 
     pub fn get_domain_by_id(&self, id: &str) -> Result<Option<CertDomain>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, domain, port, enabled, check_interval_secs, note, last_checked_at, created_at, updated_at FROM cert_domains WHERE id = ?1",
         )?;
@@ -400,7 +407,7 @@ impl CertStore {
     }
 
     pub fn get_domain_by_name(&self, domain: &str) -> Result<Option<CertDomain>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, domain, port, enabled, check_interval_secs, note, last_checked_at, created_at, updated_at FROM cert_domains WHERE domain = ?1",
         )?;
@@ -423,7 +430,7 @@ impl CertStore {
         check_interval_secs: Option<Option<u64>>,
         note: Option<String>,
     ) -> Result<Option<CertDomain>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let now = Utc::now().timestamp();
         let mut sets = vec!["updated_at = ?1".to_string()];
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now)];
@@ -471,7 +478,7 @@ impl CertStore {
     }
 
     pub fn delete_domain(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.execute(
             "DELETE FROM cert_check_results WHERE domain_id = ?1",
             rusqlite::params![id],
@@ -489,7 +496,7 @@ impl CertStore {
         &self,
         default_interval_secs: u64,
     ) -> Result<Vec<CertDomain>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let now = Utc::now().timestamp();
         let default_interval = default_interval_secs as i64;
 
@@ -512,7 +519,7 @@ impl CertStore {
     }
 
     pub fn update_last_checked_at(&self, domain_id: &str, ts: DateTime<Utc>) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.execute(
             "UPDATE cert_domains SET last_checked_at = ?1 WHERE id = ?2",
             rusqlite::params![ts.timestamp(), domain_id],
@@ -523,7 +530,7 @@ impl CertStore {
     // ---- cert_check_results ----
 
     pub fn insert_check_result(&self, result: &CertCheckResult) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let san_json = result
             .san_list
             .as_ref()
@@ -563,7 +570,7 @@ impl CertStore {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<CertCheckResult>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT r.id, r.domain_id, r.domain, r.is_valid, r.chain_valid, r.not_before, r.not_after, r.days_until_expiry, r.issuer, r.subject, r.san_list, r.resolved_ips, r.error, r.checked_at, r.created_at, r.updated_at
              FROM cert_check_results r
@@ -587,7 +594,7 @@ impl CertStore {
     }
 
     pub fn query_result_by_domain(&self, domain: &str) -> Result<Option<CertCheckResult>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, domain_id, domain, is_valid, chain_valid, not_before, not_after, days_until_expiry, issuer, subject, san_list, resolved_ips, error, checked_at, created_at, updated_at
              FROM cert_check_results
@@ -672,7 +679,7 @@ impl CertStore {
         token_hash: &str,
         description: Option<&str>,
     ) -> Result<String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let id = oxmon_common::id::next_id();
         let now = Utc::now().timestamp();
         let encrypted_token = self.token_encryptor.encrypt(token)?;
@@ -684,7 +691,7 @@ impl CertStore {
     }
 
     pub fn get_agent_token_hash(&self, agent_id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt =
             conn.prepare("SELECT token_hash FROM agent_whitelist WHERE agent_id = ?1")?;
         let mut rows = stmt.query_map(rusqlite::params![agent_id], |row| row.get(0))?;
@@ -697,7 +704,7 @@ impl CertStore {
 
     /// 获取 agent 的加密 token 和 token_hash，用于认证验证
     pub fn get_agent_auth(&self, agent_id: &str) -> Result<Option<(Option<String>, String)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT encrypted_token, token_hash FROM agent_whitelist WHERE agent_id = ?1",
         )?;
@@ -720,7 +727,7 @@ impl CertStore {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<oxmon_common::types::AgentWhitelistEntry>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, agent_id, created_at, updated_at, description, encrypted_token FROM agent_whitelist ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
         )?;
@@ -754,7 +761,7 @@ impl CertStore {
     }
 
     pub fn delete_agent_from_whitelist(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         // 尝试按 id 删除，如果不匹配则按 agent_id 删除（向后兼容）
         let deleted = conn.execute(
             "DELETE FROM agent_whitelist WHERE id = ?1 OR agent_id = ?1",
@@ -765,7 +772,7 @@ impl CertStore {
 
     /// 根据 agent_id 获取白名单条目的 UUID id
     pub fn get_agent_id_by_agent_id(&self, agent_id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare("SELECT id FROM agent_whitelist WHERE agent_id = ?1")?;
         let mut rows = stmt.query_map(rusqlite::params![agent_id], |row| row.get(0))?;
         match rows.next() {
@@ -776,7 +783,7 @@ impl CertStore {
     }
 
     pub fn update_agent_whitelist(&self, id: &str, description: Option<&str>) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let now = Utc::now().timestamp();
         let updated = conn.execute(
             "UPDATE agent_whitelist SET description = ?2, updated_at = ?3 WHERE id = ?1",
@@ -786,7 +793,7 @@ impl CertStore {
     }
 
     pub fn update_agent_token_hash(&self, id: &str, token: &str, token_hash: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let now = Utc::now().timestamp();
         let encrypted_token = self.token_encryptor.encrypt(token)?;
         let updated = conn.execute(
@@ -801,7 +808,7 @@ impl CertStore {
         &self,
         id: &str,
     ) -> Result<Option<oxmon_common::types::AgentWhitelistEntry>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, agent_id, created_at, updated_at, description, encrypted_token FROM agent_whitelist WHERE id = ?1",
         )?;
@@ -843,7 +850,7 @@ impl CertStore {
         &self,
         username: &str,
     ) -> Result<Option<oxmon_common::types::User>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, username, password_hash, token_version, created_at, updated_at FROM users WHERE username = ?1",
         )?;
@@ -876,7 +883,7 @@ impl CertStore {
     }
 
     pub fn create_user(&self, username: &str, password_hash: &str) -> Result<String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let id = oxmon_common::id::next_id();
         let now = Utc::now().timestamp();
         conn.execute(
@@ -887,7 +894,7 @@ impl CertStore {
     }
 
     pub fn update_user_password_hash(&self, user_id: &str, password_hash: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let now = Utc::now().timestamp();
         let updated = conn.execute(
             "UPDATE users SET password_hash = ?2, token_version = token_version + 1, updated_at = ?3 WHERE id = ?1",
@@ -897,7 +904,7 @@ impl CertStore {
     }
 
     pub fn count_users(&self) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
         Ok(count)
     }
@@ -908,7 +915,7 @@ impl CertStore {
         &self,
         details: &oxmon_common::types::CertificateDetails,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let ip_json = serde_json::to_string(&details.ip_addresses)?;
         let san_json = serde_json::to_string(&details.subject_alt_names)?;
         let now = Utc::now().timestamp();
@@ -972,7 +979,7 @@ impl CertStore {
         &self,
         domain: &str,
     ) -> Result<Option<oxmon_common::types::CertificateDetails>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
                     subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at
@@ -994,7 +1001,7 @@ impl CertStore {
         &self,
         id: &str,
     ) -> Result<Option<oxmon_common::types::CertificateDetails>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
                     subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at
@@ -1017,7 +1024,7 @@ impl CertStore {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<oxmon_common::types::CertificateDetails>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut sql = String::from(
             "SELECT id, domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
                     subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at

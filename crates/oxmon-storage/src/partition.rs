@@ -3,7 +3,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::Connection;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use tracing;
 
 const METRICS_SCHEMA: &str = "
@@ -57,6 +57,13 @@ impl PartitionManager {
         })
     }
 
+    /// Lock the connections map, recovering from a poisoned Mutex if necessary.
+    fn lock_connections(&self) -> MutexGuard<'_, HashMap<String, Connection>> {
+        self.connections
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn partition_key(ts: DateTime<Utc>) -> String {
         ts.format("%Y-%m-%d").to_string()
     }
@@ -67,7 +74,7 @@ impl PartitionManager {
 
     pub fn get_or_create(&self, ts: DateTime<Utc>) -> Result<String> {
         let key = Self::partition_key(ts);
-        let mut conns = self.connections.lock().unwrap();
+        let mut conns = self.lock_connections();
         if !conns.contains_key(&key) {
             let path = self.partition_path(&key);
             let conn = Connection::open(&path)?;
@@ -85,7 +92,7 @@ impl PartitionManager {
     where
         F: FnOnce(&Connection) -> Result<R>,
     {
-        let conns = self.connections.lock().unwrap();
+        let conns = self.lock_connections();
         let conn = conns
             .get(key)
             .ok_or_else(|| anyhow::anyhow!("Partition {key} not found"))?;
@@ -106,7 +113,7 @@ impl PartitionManager {
             let path = self.partition_path(&key);
             if path.exists() {
                 // Ensure it's loaded
-                let mut conns = self.connections.lock().unwrap();
+                let mut conns = self.lock_connections();
                 if !conns.contains_key(&key) {
                     let conn = Connection::open(&path)?;
                     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
@@ -144,7 +151,7 @@ impl PartitionManager {
         for (date_str, db_path) in &expired_dates {
             // Remove from connection cache (drops the Connection, triggering WAL checkpoint)
             {
-                let mut conns = self.connections.lock().unwrap();
+                let mut conns = self.lock_connections();
                 conns.remove(date_str.as_str());
             }
 

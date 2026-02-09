@@ -1,0 +1,4 @@
+reorder_imports = true
+# Nightly-only options (uncomment when using nightly rustfmt):
+# imports_granularity = "Crate"
+# group_imports = "StdExternalCrate"

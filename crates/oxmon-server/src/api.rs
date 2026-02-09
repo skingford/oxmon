@@ -130,7 +130,12 @@ struct HealthResponse {
 )]
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let uptime = (Utc::now() - state.start_time).num_seconds();
-    let agent_count = state.agent_registry.lock().unwrap().list_agents().len();
+    let agent_count = state
+        .agent_registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .list_agents()
+        .len();
     success_response(
         StatusCode::OK,
         HealthResponse {
@@ -173,7 +178,11 @@ async fn list_agents(
     let limit = pagination.limit();
     let offset = pagination.offset();
 
-    let mut agents = state.agent_registry.lock().unwrap().list_agents();
+    let mut agents = state
+        .agent_registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .list_agents();
     agents.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
 
     let resp: Vec<AgentResponse> = agents
@@ -298,7 +307,7 @@ async fn agent_latest(
         let in_registry = state
             .agent_registry
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get_agent(&agent_id)
             .is_some();
         let in_whitelist = state
@@ -457,7 +466,10 @@ async fn list_alert_rules(
     let limit = pagination.limit();
     let offset = pagination.offset();
 
-    let engine = state.alert_engine.lock().unwrap();
+    let engine = state
+        .alert_engine
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut rules: Vec<AlertRuleResponse> = engine
         .rules()
         .iter()

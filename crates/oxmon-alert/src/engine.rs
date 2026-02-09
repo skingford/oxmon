@@ -40,34 +40,41 @@ impl AlertEngine {
                 continue;
             }
 
-            let key = (rule.id().to_string(), data_point.agent_id.clone());
+            let silence_secs = rule.silence_secs();
+            let rule_id = rule.id();
+
+            // entry() consumes the key; avoid cloning by rebuilding only on alert (rare path)
+            let key = (rule_id.to_string(), data_point.agent_id.clone());
 
             let window = self
                 .windows
-                .entry(key.clone())
-                .or_insert_with(|| SlidingWindow::new(rule.silence_secs().max(600)));
+                .entry(key)
+                .or_insert_with(|| SlidingWindow::new(silence_secs.max(600)));
 
             window.push(data_point.clone());
             window.evict(now);
 
-            let window_data: Vec<MetricDataPoint> = window.data().iter().cloned().collect();
+            // Use make_contiguous() to get a &[MetricDataPoint] without allocating a Vec
+            let event = rule.evaluate(window.as_contiguous_slice(), now);
 
-            if let Some(event) = rule.evaluate(&window_data, now) {
-                // Check deduplication
-                if let Some(last) = self.last_fired.get(&key) {
-                    let silence = chrono::Duration::seconds(rule.silence_secs() as i64);
-                    if now - *last < silence {
-                        tracing::debug!(
-                            rule_id = rule.id(),
-                            agent_id = %data_point.agent_id,
-                            "Alert suppressed (silence period)"
-                        );
-                        continue;
-                    }
+            // NLL: window borrow ends here; self.last_fired is now accessible
+            if let Some(event) = event {
+                let key = (rule_id.to_string(), data_point.agent_id.clone());
+
+                let suppressed = self.last_fired.get(&key).is_some_and(|last| {
+                    now - *last < chrono::Duration::seconds(silence_secs as i64)
+                });
+
+                if suppressed {
+                    tracing::debug!(
+                        rule_id,
+                        agent_id = %data_point.agent_id,
+                        "Alert suppressed (silence period)"
+                    );
+                } else {
+                    self.last_fired.insert(key, now);
+                    events.push(event);
                 }
-
-                self.last_fired.insert(key, now);
-                events.push(event);
             }
         }
 

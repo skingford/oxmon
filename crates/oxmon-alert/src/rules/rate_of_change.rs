@@ -38,8 +38,8 @@ impl AlertRule for RateOfChangeRule {
             return None;
         }
 
-        let first = window.first().unwrap();
-        let last = window.last().unwrap();
+        let first = window.first()?;
+        let last = window.last()?;
 
         if first.value.abs() < f64::EPSILON {
             return None;

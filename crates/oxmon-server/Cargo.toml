@@ -7,6 +7,9 @@ edition.workspace = true
 name = "oxmon-server"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 oxmon-common = { workspace = true }
 oxmon-storage = { workspace = true }

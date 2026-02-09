@@ -21,7 +21,7 @@ fn generate_trace_id() -> String {
 }
 
 fn now_str() -> String {
-    let tz = FixedOffset::east_opt(8 * 3600).unwrap();
+    let tz = FixedOffset::east_opt(8 * 3600).expect("valid UTC+8 offset");
     Utc::now()
         .with_timezone(&tz)
         .format("%Y-%m-%d %H:%M:%S%.3f")
@@ -98,8 +98,7 @@ pub async fn request_logging(req: Request, next: Next) -> Response {
     let mc = method_color(&method);
 
     // Sensitive paths: never log request/response bodies for these
-    let is_sensitive = path.starts_with("/v1/auth/")
-        || path.starts_with("/v1/agents/whitelist");
+    let is_sensitive = path.starts_with("/v1/auth/") || path.starts_with("/v1/agents/whitelist");
 
     // Read request body for logging (POST/PUT/PATCH), but skip sensitive endpoints
     let has_body = !is_sensitive && matches!(method.as_str(), "POST" | "PUT" | "PATCH");
