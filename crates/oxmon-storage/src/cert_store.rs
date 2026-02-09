@@ -846,6 +846,16 @@ impl CertStore {
         Ok(id)
     }
 
+    pub fn update_user_password_hash(&self, user_id: &str, password_hash: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().timestamp();
+        let updated = conn.execute(
+            "UPDATE users SET password_hash = ?2, updated_at = ?3 WHERE id = ?1",
+            rusqlite::params![user_id, password_hash, now],
+        )?;
+        Ok(updated > 0)
+    }
+
     pub fn count_users(&self) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;

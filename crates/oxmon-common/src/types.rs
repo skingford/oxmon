@@ -332,3 +332,12 @@ pub struct LoginResponse {
     /// Token 有效期（秒）
     pub expires_in: u64,
 }
+
+/// 修改密码请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ChangePasswordRequest {
+    /// 当前密码
+    pub current_password: String,
+    /// 新密码
+    pub new_password: String,
+}

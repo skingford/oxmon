@@ -440,6 +440,7 @@ pub fn auth_routes() -> OpenApiRouter<AppState> {
 
 pub fn protected_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
+        .routes(routes!(crate::auth::change_password))
         .routes(routes!(list_agents))
         .routes(routes!(agent_latest))
         .routes(routes!(query_metrics))

@@ -302,6 +302,29 @@ aggregation_window_secs = 60   # 相似告警的聚合窗口（秒），窗口�
 curl http://localhost:8080/v1/health
 ```
 
+### 认证接口
+
+#### `POST /v1/auth/login`
+
+登录获取 JWT Token（公开接口，无需鉴权）。
+
+```bash
+curl -X POST http://localhost:8080/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"changeme"}'
+```
+
+#### `POST /v1/auth/password`
+
+修改当前登录用户密码（需携带 Bearer Token）。
+
+```bash
+curl -X POST http://localhost:8080/v1/auth/password \
+  -H "Authorization: Bearer <your-jwt-token>" \
+  -H 'Content-Type: application/json' \
+  -d '{"current_password":"changeme","new_password":"new-strong-password"}'
+```
+
 ### `GET /v1/agents`
 
 列出所有已注册的 Agent。
@@ -614,6 +637,73 @@ curl http://localhost:8080/v1/openapi.yaml
 2. 选择 "OpenAPI/Swagger" → "URL 导入"
 3. 输入 `http://<server-ip>:8080/v1/openapi.json`
 4. 点击导入即可获取所有接口定义
+
+### SQLite 常用命令
+
+oxmon 使用 SQLite 存储数据：
+
+- `data/cert.db`：用户、白名单、证书域名、证书详情
+- `data/YYYY-MM-DD.db`：按天分区的指标与告警数据（`metrics`、`alert_events`）
+
+```bash
+# 查看当前数据目录下的数据库文件
+ls -lh data/*.db
+
+# 打开主库
+sqlite3 data/cert.db
+
+# 打开某一天的分区库
+sqlite3 data/2026-02-09.db
+```
+
+进入 `sqlite3` 后常用命令：
+
+```sql
+.headers on
+.mode column
+.tables
+.schema
+.schema users
+PRAGMA table_info(users);
+.quit
+```
+
+基础查询（SELECT）：
+
+```sql
+SELECT id, username, created_at FROM users LIMIT 20;
+
+SELECT id, domain, port, enabled
+FROM cert_domains
+ORDER BY updated_at DESC
+LIMIT 20;
+
+SELECT id, rule_id, agent_id, severity, metric_name, timestamp
+FROM alert_events
+ORDER BY timestamp DESC
+LIMIT 20;
+```
+
+基础增删改查（CRUD）示例：
+
+```sql
+-- 增（INSERT）
+INSERT INTO cert_domains (id, domain, port, enabled, created_at, updated_at)
+VALUES ('manual-001', 'example.com', 443, 1, strftime('%s','now'), strftime('%s','now'));
+
+-- 查（SELECT）
+SELECT id, domain, enabled FROM cert_domains WHERE id = 'manual-001';
+
+-- 改（UPDATE）
+UPDATE cert_domains
+SET enabled = 0, updated_at = strftime('%s','now')
+WHERE id = 'manual-001';
+
+-- 删（DELETE）
+DELETE FROM cert_domains WHERE id = 'manual-001';
+```
+
+> 建议优先通过 REST API 写入业务数据；对 `users`、`agent_whitelist` 等认证相关表的手工修改可能导致登录或鉴权失败。
 
 ### 证书检测配置
 

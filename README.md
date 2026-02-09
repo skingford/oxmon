@@ -302,6 +302,29 @@ Health check, returns server status.
 curl http://localhost:8080/v1/health
 ```
 
+### Auth Endpoints
+
+#### `POST /v1/auth/login`
+
+Login and get a JWT token (public endpoint, no auth required).
+
+```bash
+curl -X POST http://localhost:8080/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"changeme"}'
+```
+
+#### `POST /v1/auth/password`
+
+Change the current logged-in user's password (requires Bearer token).
+
+```bash
+curl -X POST http://localhost:8080/v1/auth/password \
+  -H "Authorization: Bearer <your-jwt-token>" \
+  -H 'Content-Type: application/json' \
+  -d '{"current_password":"changeme","new_password":"new-strong-password"}'
+```
+
 ### `GET /v1/agents`
 
 List all registered agents.
@@ -614,6 +637,73 @@ curl http://localhost:8080/v1/openapi.yaml
 2. Select "OpenAPI/Swagger" -> "URL Import"
 3. Enter `http://<server-ip>:8080/v1/openapi.json`
 4. Click Import to get all API definitions
+
+### Common SQLite Commands
+
+oxmon stores data in SQLite:
+
+- `data/cert.db`: users, whitelist, certificate domains, certificate details
+- `data/YYYY-MM-DD.db`: daily partitioned metric & alert data (`metrics`, `alert_events`)
+
+```bash
+# List database files in the data directory
+ls -lh data/*.db
+
+# Open main database
+sqlite3 data/cert.db
+
+# Open one daily partition database
+sqlite3 data/2026-02-09.db
+```
+
+Useful commands inside `sqlite3`:
+
+```sql
+.headers on
+.mode column
+.tables
+.schema
+.schema users
+PRAGMA table_info(users);
+.quit
+```
+
+Basic queries (SELECT):
+
+```sql
+SELECT id, username, created_at FROM users LIMIT 20;
+
+SELECT id, domain, port, enabled
+FROM cert_domains
+ORDER BY updated_at DESC
+LIMIT 20;
+
+SELECT id, rule_id, agent_id, severity, metric_name, timestamp
+FROM alert_events
+ORDER BY timestamp DESC
+LIMIT 20;
+```
+
+Basic CRUD examples:
+
+```sql
+-- Create (INSERT)
+INSERT INTO cert_domains (id, domain, port, enabled, created_at, updated_at)
+VALUES ('manual-001', 'example.com', 443, 1, strftime('%s','now'), strftime('%s','now'));
+
+-- Read (SELECT)
+SELECT id, domain, enabled FROM cert_domains WHERE id = 'manual-001';
+
+-- Update (UPDATE)
+UPDATE cert_domains
+SET enabled = 0, updated_at = strftime('%s','now')
+WHERE id = 'manual-001';
+
+-- Delete (DELETE)
+DELETE FROM cert_domains WHERE id = 'manual-001';
+```
+
+> Prefer using REST APIs for production data writes. Manual changes to auth-related tables such as `users` and `agent_whitelist` can break login/authentication.
 
 ### Certificate Check Configuration
 
