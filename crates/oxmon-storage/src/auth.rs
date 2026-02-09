@@ -26,8 +26,19 @@ pub fn verify_token(token: &str, hash: &str) -> Result<bool> {
 }
 
 /// Constant-time token comparison to prevent timing side-channel attacks.
+/// Always compares all bytes regardless of mismatch position.
 pub fn constant_time_eq(a: &str, b: &str) -> bool {
-    ring::constant_time::verify_slices_are_equal(a.as_bytes(), b.as_bytes()).is_ok()
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    // XOR all bytes, OR into accumulator — constant-time for equal-length inputs
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 /// Token 加密器，使用 AES-256-GCM

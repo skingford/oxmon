@@ -412,12 +412,15 @@ async fn query_all_metrics(
                 .collect();
             success_response(StatusCode::OK, resp)
         }
-        Err(e) => error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            "Internal query error",
-        )
-        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Query failed");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
     }
 }
 
@@ -578,12 +581,15 @@ async fn alert_history(
                 .collect();
             success_response(StatusCode::OK, resp)
         }
-        Err(e) => error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            "Internal query error",
-        )
-        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Query failed");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
     }
 }
 

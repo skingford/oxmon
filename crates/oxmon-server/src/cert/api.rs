@@ -67,6 +67,7 @@ async fn create_domain(
             .into_response();
         }
         Err(e) => {
+            tracing::error!(error = %e, "Storage operation failed");
             return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
@@ -79,12 +80,15 @@ async fn create_domain(
 
     match state.cert_store.insert_domain(&req) {
         Ok(domain) => success_response(StatusCode::CREATED, domain),
-        Err(e) => common_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            "Internal storage error",
-        )
-        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Storage operation failed");
+            common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "Internal storage error",
+            )
+            .into_response()
+        }
     }
 }
 
@@ -141,9 +145,10 @@ async fn create_domains_batch(
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("UNIQUE constraint") {
-                common_error_response(StatusCode::CONFLICT, "duplicate_domain", &msg)
+                common_error_response(StatusCode::CONFLICT, "duplicate_domain", "One or more domains already exist")
                     .into_response()
             } else {
+                tracing::error!(error = %e, "Batch create domains failed");
                 common_error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "storage_error",
@@ -197,12 +202,15 @@ async fn list_domains(
         offset,
     ) {
         Ok(domains) => success_response(StatusCode::OK, domains),
-        Err(e) => common_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            "Internal query error",
-        )
-        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Query failed");
+            common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
     }
 }
 
@@ -234,12 +242,15 @@ async fn get_domain(State(state): State<AppState>, Path(id): Path<String>) -> im
         Ok(Some(domain)) => success_response(StatusCode::OK, domain),
         Ok(None) => common_error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
             .into_response(),
-        Err(e) => common_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            "Internal query error",
-        )
-        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Query failed");
+            common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
     }
 }
 
@@ -287,12 +298,15 @@ async fn update_domain(
         Ok(Some(domain)) => success_response(StatusCode::OK, domain),
         Ok(None) => common_error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
             .into_response(),
-        Err(e) => common_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            "Internal update error",
-        )
-        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Update failed");
+            common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "Internal update error",
+            )
+            .into_response()
+        }
     }
 }
 
@@ -317,12 +331,15 @@ async fn delete_domain(State(state): State<AppState>, Path(id): Path<String>) ->
         Ok(true) => success_response(StatusCode::OK, serde_json::json!({ "deleted": true })),
         Ok(false) => common_error_response(StatusCode::NOT_FOUND, "not_found", "Domain not found")
             .into_response(),
-        Err(e) => common_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            "Internal delete error",
-        )
-        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Delete failed");
+            common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "Internal delete error",
+            )
+            .into_response()
+        }
     }
 }
 
@@ -348,12 +365,15 @@ async fn cert_status_all(
 
     match state.cert_store.query_latest_results(limit, offset) {
         Ok(results) => success_response(StatusCode::OK, results),
-        Err(e) => common_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            "Internal query error",
-        )
-        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Query failed");
+            common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
     }
 }
 
@@ -387,6 +407,7 @@ async fn cert_status_by_domain(
             .into_response();
         }
         Err(e) => {
+            tracing::error!(error = %e, "Query failed");
             return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
@@ -405,12 +426,15 @@ async fn cert_status_by_domain(
             "No check results yet for this domain",
         )
         .into_response(),
-        Err(e) => common_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            "Internal query error",
-        )
-        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Query failed");
+            common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
     }
 }
 
@@ -441,6 +465,7 @@ async fn check_single_domain(
                 .into_response();
         }
         Err(e) => {
+            tracing::error!(error = %e, "Query failed");
             return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
@@ -481,6 +506,7 @@ async fn check_all_domains(State(state): State<AppState>) -> impl IntoResponse {
     let domains = match state.cert_store.query_domains(Some(true), None, 10000, 0) {
         Ok(d) => d,
         Err(e) => {
+            tracing::error!(error = %e, "Query failed");
             return common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
