@@ -318,6 +318,8 @@ curl -X POST http://localhost:8080/v1/auth/login \
 
 修改当前登录用户密码（需携带 Bearer Token）。
 
+> 安全行为：密码修改成功后，旧 JWT 会立即失效，需要重新登录获取新 token。
+
 ```bash
 curl -X POST http://localhost:8080/v1/auth/password \
   -H "Authorization: Bearer <your-jwt-token>" \

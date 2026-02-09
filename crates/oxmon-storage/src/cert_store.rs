@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
+    token_version INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -123,6 +124,11 @@ impl CertStore {
         );
 
         conn.execute_batch(USERS_SCHEMA)?;
+
+        // 迁移：为已有的 users 表添加 token_version 列
+        let _ = conn.execute_batch(
+            "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;",
+        );
 
         let token_encryptor = TokenEncryptor::load_or_create(data_dir)?;
         tracing::info!(path = %db_path.display(), "Initialized cert store");
@@ -807,25 +813,27 @@ impl CertStore {
     pub fn get_user_by_username(&self, username: &str) -> Result<Option<oxmon_common::types::User>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, username, password_hash, created_at, updated_at FROM users WHERE username = ?1",
+            "SELECT id, username, password_hash, token_version, created_at, updated_at FROM users WHERE username = ?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![username], |row| {
-            let created: i64 = row.get(3)?;
-            let updated: i64 = row.get(4)?;
+            let created: i64 = row.get(4)?;
+            let updated: i64 = row.get(5)?;
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
                 created,
                 updated,
             ))
         })?;
         match rows.next() {
-            Some(Ok((id, username, password_hash, created, updated))) => {
+            Some(Ok((id, username, password_hash, token_version, created, updated))) => {
                 Ok(Some(oxmon_common::types::User {
                     id,
                     username,
                     password_hash,
+                    token_version,
                     created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
                     updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
                 }))
@@ -840,7 +848,7 @@ impl CertStore {
         let id = oxmon_common::id::next_id();
         let now = Utc::now().timestamp();
         conn.execute(
-            "INSERT INTO users (id, username, password_hash, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO users (id, username, password_hash, token_version, created_at, updated_at) VALUES (?1, ?2, ?3, 0, ?4, ?5)",
             rusqlite::params![id, username, password_hash, now, now],
         )?;
         Ok(id)
@@ -850,7 +858,7 @@ impl CertStore {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().timestamp();
         let updated = conn.execute(
-            "UPDATE users SET password_hash = ?2, updated_at = ?3 WHERE id = ?1",
+            "UPDATE users SET password_hash = ?2, token_version = token_version + 1, updated_at = ?3 WHERE id = ?1",
             rusqlite::params![user_id, password_hash, now],
         )?;
         Ok(updated > 0)

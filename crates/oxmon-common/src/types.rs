@@ -309,6 +309,9 @@ pub struct User {
     /// 密码哈希（bcrypt）
     #[serde(skip_serializing)]
     pub password_hash: String,
+    /// Token 版本（用于密码修改后的 JWT 失效）
+    #[serde(skip_serializing)]
+    pub token_version: i64,
     /// 创建时间
     pub created_at: DateTime<Utc>,
     /// 更新时间

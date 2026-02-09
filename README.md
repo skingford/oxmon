@@ -318,6 +318,8 @@ curl -X POST http://localhost:8080/v1/auth/login \
 
 Change the current logged-in user's password (requires Bearer token).
 
+> Security behavior: once password change succeeds, existing JWTs are revoked immediately. Login again to get a new token.
+
 ```bash
 curl -X POST http://localhost:8080/v1/auth/password \
   -H "Authorization: Bearer <your-jwt-token>" \

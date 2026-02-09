@@ -16,6 +16,7 @@ use crate::state::AppState;
 pub struct Claims {
     pub sub: String,
     pub username: String,
+    pub token_version: i64,
     pub iat: u64,
     pub exp: u64,
 }
@@ -24,12 +25,14 @@ pub fn create_token(
     secret: &str,
     user_id: &str,
     username: &str,
+    token_version: i64,
     expire_secs: u64,
 ) -> anyhow::Result<String> {
     let now = chrono::Utc::now().timestamp() as u64;
     let claims = Claims {
         sub: user_id.to_string(),
         username: username.to_string(),
+        token_version,
         iat: now,
         exp: now + expire_secs,
     };
@@ -90,6 +93,21 @@ pub async fn jwt_auth_middleware(
 
     match validate_token(&state.jwt_secret, token) {
         Ok(claims) => {
+            let user = match state.cert_store.get_user_by_username(&claims.username) {
+                Ok(Some(user)) => user,
+                Ok(None) => {
+                    return auth_error("UNAUTHORIZED", "invalid token");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to query user for token validation");
+                    return auth_error("UNAUTHORIZED", "invalid token");
+                }
+            };
+
+            if user.token_version != claims.token_version {
+                return auth_error("UNAUTHORIZED", "token revoked");
+            }
+
             req.extensions_mut().insert(claims);
             next.run(req).await
         }
@@ -177,6 +195,7 @@ pub async fn login(
         &state.jwt_secret,
         &user.id,
         &user.username,
+        user.token_version,
         state.token_expire_secs,
     ) {
         Ok(token) => Json(LoginResponse {
