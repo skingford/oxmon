@@ -290,7 +290,7 @@ async fn update_domain(
         Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
-            &format!("Update failed: {e}"),
+            "Internal update error",
         )
         .into_response(),
     }
@@ -320,7 +320,7 @@ async fn delete_domain(State(state): State<AppState>, Path(id): Path<String>) ->
         Err(e) => common_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
-            &format!("Delete failed: {e}"),
+            "Internal delete error",
         )
         .into_response(),
     }
