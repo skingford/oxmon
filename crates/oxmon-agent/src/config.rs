@@ -23,10 +23,22 @@ fn default_buffer_max_size() -> usize {
     1000
 }
 
+/// Minimum buffer size to avoid data loss.
+/// Each collection cycle produces ~30+ data points (CPU, memory, disk, network, system).
+const MIN_BUFFER_SIZE: usize = 100;
+
 impl AgentConfig {
     pub fn load(path: &str) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
+        let mut config: Self = toml::from_str(&content)?;
+        if config.buffer_max_size < MIN_BUFFER_SIZE {
+            tracing::warn!(
+                configured = config.buffer_max_size,
+                minimum = MIN_BUFFER_SIZE,
+                "buffer_max_size too small, adjusting to minimum"
+            );
+            config.buffer_max_size = MIN_BUFFER_SIZE;
+        }
         Ok(config)
     }
 

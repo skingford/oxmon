@@ -556,7 +556,11 @@ impl CertStore {
         Ok(())
     }
 
-    pub fn query_latest_results(&self) -> Result<Vec<CertCheckResult>> {
+    pub fn query_latest_results(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<CertCheckResult>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT r.id, r.domain_id, r.domain, r.is_valid, r.chain_valid, r.not_before, r.not_after, r.days_until_expiry, r.issuer, r.subject, r.san_list, r.resolved_ips, r.error, r.checked_at, r.created_at, r.updated_at
@@ -567,9 +571,12 @@ impl CertStore {
                  GROUP BY domain_id
              ) latest ON r.domain_id = latest.domain_id AND r.checked_at = latest.max_checked
              INNER JOIN cert_domains d ON d.id = r.domain_id AND d.enabled = 1
-             ORDER BY r.checked_at DESC",
+             ORDER BY r.checked_at DESC
+             LIMIT ?1 OFFSET ?2",
         )?;
-        let rows = stmt.query_map([], |row| Ok(Self::row_to_check_result(row)))?;
+        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+            Ok(Self::row_to_check_result(row))
+        })?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row??);
@@ -703,12 +710,16 @@ impl CertStore {
         }
     }
 
-    pub fn list_agents(&self) -> Result<Vec<oxmon_common::types::AgentWhitelistEntry>> {
+    pub fn list_agents(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<oxmon_common::types::AgentWhitelistEntry>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, agent_id, created_at, updated_at, description, encrypted_token FROM agent_whitelist ORDER BY created_at DESC",
+            "SELECT id, agent_id, created_at, updated_at, description, encrypted_token FROM agent_whitelist ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
         )?;
-        let rows = stmt.query_map([], |row| {
+        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
             let created: i64 = row.get(2)?;
             let updated: i64 = row.get(3)?;
             let encrypted_token: Option<String> = row.get(5)?;
@@ -1259,7 +1270,7 @@ mod tests {
         };
         store.insert_check_result(&result).unwrap();
 
-        let latest = store.query_latest_results().unwrap();
+        let latest = store.query_latest_results(20, 0).unwrap();
         assert_eq!(latest.len(), 1);
         assert_eq!(latest[0].domain, "cert.com");
         assert!(latest[0].is_valid);

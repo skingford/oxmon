@@ -163,7 +163,7 @@ impl MetricService for MetricServiceImpl {
             }
         }
 
-        tracing::debug!(
+        tracing::info!(
             agent_id = %proto.agent_id,
             count = batch.data_points.len(),
             "Metrics ingested"

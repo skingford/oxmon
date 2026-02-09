@@ -1,5 +1,6 @@
 pub mod whitelist;
 pub mod certificates;
+pub mod pagination;
 
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
@@ -7,10 +8,14 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use chrono::{DateTime, Utc};
+use oxmon_common::types::MetricDataPoint;
 use oxmon_storage::{MetricQuery, StorageEngine};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
+
+use crate::api::pagination::PaginationParams;
 
 /// API 错误响应
 #[derive(Serialize, ToSchema)]
@@ -44,13 +49,14 @@ struct HealthResponse {
     storage_status: String,
 }
 
-/// 获取服务健康状态
+/// 获取服务健康状态。
+/// 鉴权：无需 Bearer Token。
 #[utoipa::path(
     get,
     path = "/v1/health",
     tag = "Health",
     responses(
-        (status = 200, description = "服务健康信息", body = HealthResponse)
+        (status = 200, description = "服务健康状态", body = HealthResponse)
     )
 )]
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
@@ -75,21 +81,33 @@ struct AgentResponse {
     status: String,
 }
 
-/// 获取所有已注册 Agent 列表
+/// 分页查询 Agent 列表。
+/// 默认排序：`last_seen` 倒序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
     path = "/v1/agents",
     tag = "Agents",
     security(("bearer_auth" = [])),
+    params(PaginationParams),
     responses(
-        (status = 200, description = "Agent 列表", body = Vec<AgentResponse>),
+        (status = 200, description = "Agent 分页列表", body = Vec<AgentResponse>),
         (status = 401, description = "未认证", body = ApiError)
     )
 )]
-async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
-    let agents = state.agent_registry.lock().unwrap().list_agents();
+async fn list_agents(
+    State(state): State<AppState>,
+    Query(pagination): Query<PaginationParams>,
+) -> impl IntoResponse {
+    let limit = pagination.limit();
+    let offset = pagination.offset();
+
+    let mut agents = state.agent_registry.lock().unwrap().list_agents();
+    agents.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+
     let resp: Vec<AgentResponse> = agents
         .into_iter()
+        .skip(offset)
+        .take(limit)
         .map(|a| AgentResponse {
             agent_id: a.agent_id,
             last_seen: a.last_seen,
@@ -110,11 +128,14 @@ struct LatestMetric {
     metric_name: String,
     /// 指标值
     value: f64,
+    /// 标签 (如 mount=/、interface=eth0、core=0)
+    labels: HashMap<String, String>,
     /// 采集时间
     timestamp: DateTime<Utc>,
 }
 
-/// 获取指定 Agent 的最新指标
+/// 获取指定 Agent 的最新指标数据。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     get,
     path = "/v1/agents/{id}/latest",
@@ -124,7 +145,7 @@ struct LatestMetric {
         ("id" = String, Path, description = "Agent 唯一标识")
     ),
     responses(
-        (status = 200, description = "最新指标列表", body = Vec<LatestMetric>),
+        (status = 200, description = "Agent 最新指标数据", body = Vec<LatestMetric>),
         (status = 401, description = "未认证", body = ApiError),
         (status = 404, description = "Agent 不存在", body = ApiError)
     )
@@ -137,14 +158,34 @@ async fn agent_latest(
     let to = Utc::now();
     let from = to - chrono::Duration::minutes(5);
 
-    // Get common metric names and query each
+    // All metric names collected by agent
     let metric_names = [
-        "cpu.usage",
-        "memory.used_percent",
-        "disk.used_percent",
-        "system.load_1",
-        "system.load_5",
-        "system.load_15",
+        // CPU
+        "cpu.usage",           // CPU 总使用率 (%)
+        "cpu.core_usage",      // 每核 CPU 使用率 (%, label: core)
+        // Memory
+        "memory.total",        // 总物理内存 (bytes)
+        "memory.used",         // 已用内存 (bytes)
+        "memory.available",    // 可用内存 (bytes)
+        "memory.used_percent", // 内存使用率 (%)
+        "memory.swap_total",   // 交换区总量 (bytes)
+        "memory.swap_used",    // 交换区已用 (bytes)
+        "memory.swap_percent", // 交换区使用率 (%)
+        // Disk (per mount point, label: mount)
+        "disk.total",          // 磁盘总空间 (bytes)
+        "disk.used",           // 磁盘已用 (bytes)
+        "disk.available",      // 磁盘可用 (bytes)
+        "disk.used_percent",   // 磁盘使用率 (%)
+        // Network (per interface, label: interface)
+        "network.bytes_recv",    // 接收字节增量
+        "network.bytes_sent",    // 发送字节增量
+        "network.packets_recv",  // 接收包增量
+        "network.packets_sent",  // 发送包增量
+        // System load
+        "system.load_1",       // 1 分钟负载
+        "system.load_5",       // 5 分钟负载
+        "system.load_15",      // 15 分钟负载
+        "system.uptime",       // 运行时间 (秒)
     ];
 
     let mut latest: Vec<LatestMetric> = Vec::new();
@@ -156,11 +197,25 @@ async fn agent_latest(
             to,
         };
         if let Ok(points) = state.storage.query(&query) {
-            if let Some(last) = points.last() {
+            // Group by labels to return latest value per (metric_name, labels) combination
+            // e.g. disk.used_percent for mount=/ and mount=/data separately
+            let mut seen: HashMap<String, &MetricDataPoint> = HashMap::new();
+            for point in &points {
+                let label_key = format!("{:?}", point.labels);
+                seen.entry(label_key)
+                    .and_modify(|existing| {
+                        if point.timestamp > existing.timestamp {
+                            *existing = point;
+                        }
+                    })
+                    .or_insert(point);
+            }
+            for point in seen.values() {
                 latest.push(LatestMetric {
-                    metric_name: last.metric_name.clone(),
-                    value: last.value,
-                    timestamp: last.timestamp,
+                    metric_name: point.metric_name.clone(),
+                    value: point.value,
+                    labels: point.labels.clone(),
+                    timestamp: point.timestamp,
                 });
             }
         }
@@ -186,11 +241,11 @@ async fn agent_latest(
 // GET /v1/metrics
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
-struct MetricQueryParams {
-    /// Agent 唯一标识
+struct MetricsFilterParams {
+    /// Agent 唯一标识（可选）
     #[param(required = false)]
     agent: Option<String>,
-    /// 指标名称（如 cpu.usage、memory.used_percent）
+    /// 指标名称（可选）
     #[param(required = false)]
     metric: Option<String>,
     /// 起始时间（默认为结束时间前 1 小时）
@@ -201,74 +256,74 @@ struct MetricQueryParams {
     to: Option<DateTime<Utc>>,
 }
 
-/// 指标数据点
-#[derive(Serialize, ToSchema)]
-struct MetricPointResponse {
-    /// 采集时间
-    timestamp: DateTime<Utc>,
-    /// 指标值
-    value: f64,
+#[derive(Deserialize)]
+struct MetricsPageParams {
+    #[serde(flatten)]
+    filter: MetricsFilterParams,
+    #[serde(flatten)]
+    pagination: PaginationParams,
 }
 
-/// 查询指标时序数据
+/// 指标数据点（完整）
+#[derive(Serialize, ToSchema)]
+struct MetricDataPointResponse {
+    /// 指标唯一标识
+    id: String,
+    /// 采集时间
+    timestamp: DateTime<Utc>,
+    /// Agent 唯一标识
+    agent_id: String,
+    /// 指标名称
+    metric_name: String,
+    /// 指标值
+    value: f64,
+    /// 创建时间
+    created_at: DateTime<Utc>,
+}
+
+/// 分页查询指标数据点列表（支持按 agent、metric、时间范围过滤）。
+/// 默认排序：`created_at` 倒序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
     path = "/v1/metrics",
     tag = "Metrics",
     security(("bearer_auth" = [])),
-    params(MetricQueryParams),
+    params(MetricsFilterParams, PaginationParams),
     responses(
-        (status = 200, description = "指标数据点列表", body = Vec<MetricPointResponse>),
-        (status = 400, description = "请求参数错误", body = ApiError),
+        (status = 200, description = "指标数据点分页列表", body = Vec<MetricDataPointResponse>),
         (status = 401, description = "未认证", body = ApiError)
     )
 )]
-async fn query_metrics(
+async fn query_all_metrics(
     State(state): State<AppState>,
-    Query(params): Query<MetricQueryParams>,
+    Query(params): Query<MetricsPageParams>,
 ) -> impl IntoResponse {
-    let agent = match params.agent {
-        Some(a) => a,
-        None => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                "missing_param",
-                "Missing required parameter: agent",
-            )
-            .into_response()
-        }
-    };
-    let metric = match params.metric {
-        Some(m) => m,
-        None => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                "missing_param",
-                "Missing required parameter: metric",
-            )
-            .into_response()
-        }
-    };
-
-    let to = params.to.unwrap_or_else(Utc::now);
+    let to = params.filter.to.unwrap_or_else(Utc::now);
     let from = params
+        .filter
         .from
         .unwrap_or_else(|| to - chrono::Duration::hours(1));
+    let limit = params.pagination.limit();
+    let offset = params.pagination.offset();
 
-    let query = MetricQuery {
-        agent_id: agent,
-        metric_name: metric,
+    match state.storage.query_metrics_paginated(
         from,
         to,
-    };
-
-    match state.storage.query(&query) {
+        params.filter.agent.as_deref(),
+        params.filter.metric.as_deref(),
+        limit,
+        offset,
+    ) {
         Ok(points) => {
-            let resp: Vec<MetricPointResponse> = points
+            let resp: Vec<MetricDataPointResponse> = points
                 .into_iter()
-                .map(|dp| MetricPointResponse {
+                .map(|dp| MetricDataPointResponse {
+                    id: dp.id,
                     timestamp: dp.timestamp,
+                    agent_id: dp.agent_id,
+                    metric_name: dp.metric_name,
                     value: dp.value,
+                    created_at: dp.created_at,
                 })
                 .collect();
             Json(resp).into_response()
@@ -295,20 +350,28 @@ struct AlertRuleResponse {
     severity: String,
 }
 
-/// 获取所有告警规则
+/// 分页查询告警规则列表。
+/// 默认排序：`id` 升序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
     path = "/v1/alerts/rules",
     tag = "Alerts",
     security(("bearer_auth" = [])),
+    params(PaginationParams),
     responses(
-        (status = 200, description = "告警规则列表", body = Vec<AlertRuleResponse>),
+        (status = 200, description = "告警规则分页列表", body = Vec<AlertRuleResponse>),
         (status = 401, description = "未认证", body = ApiError)
     )
 )]
-async fn list_alert_rules(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_alert_rules(
+    State(state): State<AppState>,
+    Query(pagination): Query<PaginationParams>,
+) -> impl IntoResponse {
+    let limit = pagination.limit();
+    let offset = pagination.offset();
+
     let engine = state.alert_engine.lock().unwrap();
-    let rules: Vec<AlertRuleResponse> = engine
+    let mut rules: Vec<AlertRuleResponse> = engine
         .rules()
         .iter()
         .map(|r| AlertRuleResponse {
@@ -318,31 +381,41 @@ async fn list_alert_rules(State(state): State<AppState>) -> impl IntoResponse {
             severity: r.severity().to_string(),
         })
         .collect();
+
+    rules.sort_by(|a, b| a.id.cmp(&b.id));
+    let rules: Vec<AlertRuleResponse> = rules
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect();
+
     Json(rules)
 }
 
 // GET /v1/alerts/history
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
-struct AlertHistoryParams {
+struct AlertHistoryFilterParams {
+    /// 按 Agent ID 过滤
+    #[param(required = false)]
+    agent: Option<String>,
+    /// 按告警级别过滤
+    #[param(required = false)]
+    severity: Option<String>,
     /// 起始时间（默认为 1 天前）
     #[param(required = false)]
     from: Option<DateTime<Utc>>,
     /// 结束时间（默认为当前时间）
     #[param(required = false)]
     to: Option<DateTime<Utc>>,
-    /// 按告警级别过滤
-    #[param(required = false)]
-    severity: Option<String>,
-    /// 按 Agent ID 过滤
-    #[param(required = false)]
-    agent: Option<String>,
-    /// 每页条数（默认 10）
-    #[param(required = false)]
-    limit: Option<u64>,
-    /// 分页偏移量（默认 0）
-    #[param(required = false)]
-    offset: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct AlertHistoryPageParams {
+    #[serde(flatten)]
+    filter: AlertHistoryFilterParams,
+    #[serde(flatten)]
+    pagination: PaginationParams,
 }
 
 /// 告警事件
@@ -370,34 +443,36 @@ struct AlertEventResponse {
     predicted_breach: Option<DateTime<Utc>>,
 }
 
-/// 查询告警事件历史
+/// 分页查询告警事件历史（支持按 agent、severity、时间范围过滤）。
+/// 默认排序：`timestamp` 倒序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
     path = "/v1/alerts/history",
     tag = "Alerts",
     security(("bearer_auth" = [])),
-    params(AlertHistoryParams),
+    params(AlertHistoryFilterParams, PaginationParams),
     responses(
-        (status = 200, description = "告警事件列表", body = Vec<AlertEventResponse>),
+        (status = 200, description = "告警事件分页列表", body = Vec<AlertEventResponse>),
         (status = 401, description = "未认证", body = ApiError)
     )
 )]
 async fn alert_history(
     State(state): State<AppState>,
-    Query(params): Query<AlertHistoryParams>,
+    Query(params): Query<AlertHistoryPageParams>,
 ) -> impl IntoResponse {
-    let to = params.to.unwrap_or_else(Utc::now);
+    let to = params.filter.to.unwrap_or_else(Utc::now);
     let from = params
+        .filter
         .from
         .unwrap_or_else(|| to - chrono::Duration::days(1));
-    let limit = params.limit.unwrap_or(10) as usize;
-    let offset = params.offset.unwrap_or(0) as usize;
+    let limit = params.pagination.limit();
+    let offset = params.pagination.offset();
 
     match state.storage.query_alert_history(
         from,
         to,
-        params.severity.as_deref(),
-        params.agent.as_deref(),
+        params.filter.severity.as_deref(),
+        params.filter.agent.as_deref(),
         limit,
         offset,
     ) {
@@ -443,7 +518,7 @@ pub fn protected_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::auth::change_password))
         .routes(routes!(list_agents))
         .routes(routes!(agent_latest))
-        .routes(routes!(query_metrics))
+        .routes(routes!(query_all_metrics))
         .routes(routes!(list_alert_rules))
         .routes(routes!(alert_history))
         .merge(whitelist::whitelist_routes())

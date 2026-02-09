@@ -16,5 +16,7 @@ server_endpoint = "127.0.0.1:9090"
 # How often to collect metrics (seconds)
 collection_interval_secs = 10
 
-# Maximum number of metric batches to buffer when server is unreachable
+# Maximum number of metric data points to buffer when server is unreachable.
+# Each collection cycle produces ~30+ data points (CPU, memory, disk, network, system).
+# Minimum recommended: 100. Values too small will cause data loss.
 buffer_max_size = 1000

@@ -1,4 +1,5 @@
 use crate::state::AppState;
+use crate::api::pagination::PaginationParams;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -19,19 +20,12 @@ struct CertificateListQuery {
     ip_address: Option<String>,
     /// 按颁发者过滤
     issuer: Option<String>,
-    /// 每页数量
-    #[serde(default = "default_limit")]
-    limit: usize,
-    /// 偏移量
-    #[serde(default)]
-    offset: usize,
+    #[serde(flatten)]
+    pagination: PaginationParams,
 }
 
-fn default_limit() -> usize {
-    100
-}
-
-/// 获取指定证书详情（按 ID）
+/// 获取指定证书详情（按 ID）。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     get,
     path = "/v1/certificates/{id}",
@@ -71,7 +65,8 @@ async fn get_certificate(
     Ok(Json(details))
 }
 
-/// 列出证书（支持过滤）
+/// 分页查询证书详情列表（支持过滤）。
+/// 默认排序：`not_after` 升序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
     path = "/v1/certificates",
@@ -80,7 +75,7 @@ async fn get_certificate(
         CertificateListQuery
     ),
     responses(
-        (status = 200, description = "证书列表", body = Vec<CertificateDetails>),
+        (status = 200, description = "证书详情分页列表", body = Vec<CertificateDetails>),
         (status = 401, description = "未认证"),
         (status = 500, description = "服务器错误")
     ),
@@ -98,7 +93,7 @@ async fn list_certificates(
 
     let certificates = state
         .cert_store
-        .list_certificate_details(&filter, query.limit, query.offset)
+        .list_certificate_details(&filter, query.pagination.limit(), query.pagination.offset())
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to list certificates");
             (
@@ -125,7 +120,8 @@ struct CertificateChainInfo {
     last_checked: chrono::DateTime<chrono::Utc>,
 }
 
-/// 获取证书链验证详情（按 ID）
+/// 获取指定证书的证书链验证详情（按 ID）。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     get,
     path = "/v1/certificates/{id}/chain",
@@ -134,7 +130,7 @@ struct CertificateChainInfo {
         ("id" = String, Path, description = "证书唯一标识")
     ),
     responses(
-        (status = 200, description = "证书链信息", body = CertificateChainInfo),
+        (status = 200, description = "证书链验证详情", body = CertificateChainInfo),
         (status = 401, description = "未认证"),
         (status = 404, description = "证书不存在"),
         (status = 500, description = "服务器错误")

@@ -35,7 +35,23 @@ impl Collector for DiskCollector {
 
         for disk in self.disks.iter() {
             let mount = disk.mount_point().to_string_lossy().to_string();
+
+            // Skip virtual/pseudo filesystems (snap, tmpfs, overlay, etc.)
+            if mount.starts_with("/snap/")
+                || mount.starts_with("/sys/")
+                || mount.starts_with("/proc/")
+                || mount.starts_with("/dev/")
+                || mount.starts_with("/run/")
+            {
+                continue;
+            }
+
             let total = disk.total_space();
+
+            // Skip disks with 0 total space (virtual mounts)
+            if total == 0 {
+                continue;
+            }
             let available = disk.available_space();
             let used = total.saturating_sub(available);
             let usage_pct = if total > 0 {

@@ -125,16 +125,17 @@ pub async fn jwt_auth_middleware(
     }
 }
 
-/// 登录接口
+/// 用户登录并获取 JWT。
+/// 鉴权：无需 Bearer Token。
 #[utoipa::path(
     post,
     path = "/v1/auth/login",
     tag = "Auth",
     request_body = LoginRequest,
     responses(
-        (status = 200, description = "登录成功", body = LoginResponse),
+        (status = 200, description = "登录结果", body = LoginResponse),
         (status = 400, description = "请求参数错误", body = ApiError),
-        (status = 401, description = "用户名或密码错误", body = ApiError)
+        (status = 401, description = "认证失败（用户名或密码错误）", body = ApiError)
     )
 )]
 pub async fn login(
@@ -217,7 +218,8 @@ pub async fn login(
     }
 }
 
-/// 修改当前登录用户密码
+/// 修改当前登录用户密码。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     post,
     path = "/v1/auth/password",
@@ -227,7 +229,7 @@ pub async fn login(
     responses(
         (status = 200, description = "密码修改成功"),
         (status = 400, description = "请求参数错误", body = ApiError),
-        (status = 401, description = "未认证或当前密码错误", body = ApiError),
+        (status = 401, description = "认证失败或当前密码错误", body = ApiError),
         (status = 500, description = "服务器内部错误", body = ApiError)
     )
 )]

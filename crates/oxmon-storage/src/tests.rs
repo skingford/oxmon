@@ -190,3 +190,54 @@ fn pagination() {
     // Pages shouldn't overlap
     assert_ne!(page1[0].id, page2[0].id);
 }
+
+#[test]
+fn query_metrics_paginated() {
+    let (_dir, engine) = setup();
+
+    let now = Utc::now();
+    for i in 0..30 {
+        let ts = now - Duration::seconds(i);
+        let batch = MetricBatch {
+            agent_id: "web-01".to_string(),
+            timestamp: ts,
+            data_points: vec![MetricDataPoint {
+                id: format!("metric-{i}"),
+                timestamp: ts,
+                agent_id: "web-01".to_string(),
+                metric_name: "cpu.usage".to_string(),
+                value: i as f64,
+                labels: HashMap::new(),
+                created_at: ts,
+                updated_at: ts,
+            }],
+        };
+        engine.write_batch(&batch).unwrap();
+    }
+
+    let page1 = engine
+        .query_metrics_paginated(
+            now - Duration::hours(1),
+            now + Duration::seconds(1),
+            None,
+            None,
+            20,
+            0,
+        )
+        .unwrap();
+    assert_eq!(page1.len(), 20);
+
+    let page2 = engine
+        .query_metrics_paginated(
+            now - Duration::hours(1),
+            now + Duration::seconds(1),
+            None,
+            None,
+            20,
+            20,
+        )
+        .unwrap();
+    assert_eq!(page2.len(), 10);
+
+    assert_ne!(page1[0].id, page2[0].id);
+}

@@ -99,6 +99,91 @@ impl StorageEngine for SqliteStorageEngine {
         Ok(results)
     }
 
+    fn query_metrics_paginated(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        agent_id: Option<&str>,
+        metric_name: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<MetricDataPoint>> {
+        let keys = self.partitions.partitions_in_range(from, to)?;
+        let mut results = Vec::new();
+        let from_ms = from.timestamp_millis();
+        let to_ms = to.timestamp_millis();
+
+        for key in keys {
+            self.partitions.with_partition(&key, |conn| {
+                let mut sql = String::from(
+                    "SELECT id, timestamp, agent_id, metric_name, value, labels, created_at, updated_at
+                     FROM metrics WHERE timestamp >= ?1 AND timestamp <= ?2",
+                );
+                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+                    Box::new(from_ms),
+                    Box::new(to_ms),
+                ];
+
+                if let Some(agent) = agent_id {
+                    let idx = params.len() + 1;
+                    sql.push_str(&format!(" AND agent_id = ?{idx}"));
+                    params.push(Box::new(agent.to_string()));
+                }
+
+                if let Some(metric) = metric_name {
+                    let idx = params.len() + 1;
+                    sql.push_str(&format!(" AND metric_name = ?{idx}"));
+                    params.push(Box::new(metric.to_string()));
+                }
+
+                sql.push_str(" ORDER BY created_at DESC, timestamp DESC");
+
+                let mut stmt = conn.prepare(&sql)?;
+                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                    params.iter().map(|p| p.as_ref()).collect();
+                let rows = stmt.query_map(param_refs.as_slice(), |row| {
+                    let id: String = row.get(0)?;
+                    let ts_ms: i64 = row.get(1)?;
+                    let agent_id: String = row.get(2)?;
+                    let metric_name: String = row.get(3)?;
+                    let value: f64 = row.get(4)?;
+                    let labels_str: String = row.get(5)?;
+                    let created_at: i64 = row.get(6)?;
+                    let updated_at: i64 = row.get(7)?;
+                    Ok((id, ts_ms, agent_id, metric_name, value, labels_str, created_at, updated_at))
+                })?;
+
+                for row in rows {
+                    let (id, ts_ms, row_agent_id, row_metric_name, value, labels_str, created_at, updated_at) = row?;
+                    let timestamp = DateTime::from_timestamp_millis(ts_ms)
+                        .unwrap_or_default();
+                    let labels: HashMap<String, String> =
+                        serde_json::from_str(&labels_str).unwrap_or_default();
+                    results.push(MetricDataPoint {
+                        id,
+                        timestamp,
+                        agent_id: row_agent_id,
+                        metric_name: row_metric_name,
+                        value,
+                        labels,
+                        created_at: DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
+                        updated_at: DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
+                    });
+                }
+
+                Ok(())
+            })?;
+        }
+
+        results.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| b.timestamp.cmp(&a.timestamp))
+        });
+        let results = results.into_iter().skip(offset).take(limit).collect();
+        Ok(results)
+    }
+
     fn cleanup(&self, retention_days: u32) -> Result<u32> {
         self.partitions.cleanup_older_than(retention_days)
     }

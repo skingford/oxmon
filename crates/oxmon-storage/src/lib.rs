@@ -20,6 +20,15 @@ pub struct MetricQuery {
 pub trait StorageEngine: Send + Sync {
     fn write_batch(&self, batch: &MetricBatch) -> Result<()>;
     fn query(&self, query: &MetricQuery) -> Result<Vec<MetricDataPoint>>;
+    fn query_metrics_paginated(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        agent_id: Option<&str>,
+        metric_name: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<MetricDataPoint>>;
     fn cleanup(&self, retention_days: u32) -> Result<u32>;
     fn write_alert_event(&self, event: &AlertEvent) -> Result<()>;
     fn query_alert_history(

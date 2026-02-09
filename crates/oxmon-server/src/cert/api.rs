@@ -1,3 +1,4 @@
+use crate::api::pagination::PaginationParams;
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -36,7 +37,8 @@ fn error_response(status: StatusCode, code: &str, msg: &str) -> impl IntoRespons
     )
 }
 
-/// 添加证书监控域名
+/// 新增证书监控域名。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     post,
     path = "/v1/certs/domains",
@@ -44,7 +46,7 @@ fn error_response(status: StatusCode, code: &str, msg: &str) -> impl IntoRespons
     security(("bearer_auth" = [])),
     request_body = CreateDomainRequest,
     responses(
-        (status = 201, description = "域名创建成功", body = CertDomain),
+        (status = 201, description = "新增监控域名结果", body = CertDomain),
         (status = 400, description = "请求参数错误", body = CertApiError),
         (status = 401, description = "未授权", body = CertApiError),
         (status = 409, description = "域名已存在", body = CertApiError)
@@ -105,7 +107,8 @@ async fn create_domain(
     }
 }
 
-/// 批量添加证书监控域名
+/// 批量新增证书监控域名。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     post,
     path = "/v1/certs/domains/batch",
@@ -113,7 +116,7 @@ async fn create_domain(
     security(("bearer_auth" = [])),
     request_body = BatchCreateDomainsRequest,
     responses(
-        (status = 201, description = "域名批量创建成功", body = Vec<CertDomain>),
+        (status = 201, description = "批量新增监控域名结果", body = Vec<CertDomain>),
         (status = 400, description = "请求参数错误", body = CertApiError),
         (status = 401, description = "未授权", body = CertApiError),
         (status = 409, description = "域名重复", body = CertApiError)
@@ -180,15 +183,12 @@ struct ListDomainsParams {
     /// 按域名搜索
     #[param(required = false)]
     search: Option<String>,
-    /// 每页条数（默认 10）
-    #[param(required = false)]
-    limit: Option<u64>,
-    /// 分页偏移量（默认 0）
-    #[param(required = false)]
-    offset: Option<u64>,
+    #[serde(flatten)]
+    pagination: PaginationParams,
 }
 
-/// 获取监控域名列表
+/// 分页查询监控域名列表（支持按 enabled、search 过滤）。
+/// 默认排序：`created_at` 倒序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
     path = "/v1/certs/domains",
@@ -196,7 +196,7 @@ struct ListDomainsParams {
     security(("bearer_auth" = [])),
     params(ListDomainsParams),
     responses(
-        (status = 200, description = "域名列表", body = Vec<CertDomain>),
+        (status = 200, description = "监控域名分页列表", body = Vec<CertDomain>),
         (status = 401, description = "未授权", body = CertApiError)
     )
 )]
@@ -204,8 +204,8 @@ async fn list_domains(
     State(state): State<AppState>,
     Query(params): Query<ListDomainsParams>,
 ) -> impl IntoResponse {
-    let limit = params.limit.unwrap_or(10) as usize;
-    let offset = params.offset.unwrap_or(0) as usize;
+    let limit = params.pagination.limit();
+    let offset = params.pagination.offset();
     match state
         .cert_store
         .query_domains(params.enabled, params.search.as_deref(), limit, offset)
@@ -220,7 +220,15 @@ async fn list_domains(
     }
 }
 
-/// 根据 ID 获取监控域名详情
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct CertStatusListParams {
+    #[serde(flatten)]
+    pagination: PaginationParams,
+}
+
+/// 获取监控域名详情（按 ID）。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     get,
     path = "/v1/certs/domains/{id}",
@@ -230,7 +238,7 @@ async fn list_domains(
         ("id" = String, Path, description = "域名唯一标识")
     ),
     responses(
-        (status = 200, description = "域名详情", body = CertDomain),
+        (status = 200, description = "监控域名详情", body = CertDomain),
         (status = 401, description = "未授权", body = CertApiError),
         (status = 404, description = "域名不存在", body = CertApiError)
     )
@@ -252,7 +260,8 @@ async fn get_domain(
     }
 }
 
-/// 更新监控域名
+/// 更新监控域名配置（按 ID）。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     put,
     path = "/v1/certs/domains/{id}",
@@ -263,7 +272,7 @@ async fn get_domain(
     ),
     request_body = UpdateDomainRequest,
     responses(
-        (status = 200, description = "域名更新成功", body = CertDomain),
+        (status = 200, description = "更新监控域名结果", body = CertDomain),
         (status = 400, description = "请求参数错误", body = CertApiError),
         (status = 401, description = "未授权", body = CertApiError),
         (status = 404, description = "域名不存在", body = CertApiError)
@@ -301,7 +310,8 @@ async fn update_domain(
     }
 }
 
-/// 删除监控域名
+/// 删除监控域名（按 ID）。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     delete,
     path = "/v1/certs/domains/{id}",
@@ -311,7 +321,7 @@ async fn update_domain(
         ("id" = String, Path, description = "域名唯一标识")
     ),
     responses(
-        (status = 204, description = "域名已删除"),
+        (status = 204, description = "删除成功"),
         (status = 401, description = "未授权", body = CertApiError),
         (status = 404, description = "域名不存在", body = CertApiError)
     )
@@ -333,19 +343,27 @@ async fn delete_domain(
     }
 }
 
-/// 获取所有域名的最新证书检查结果
+/// 分页查询所有域名的最新证书检查结果。
+/// 默认排序：`checked_at` 倒序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
     path = "/v1/certs/status",
     tag = "Certificates",
     security(("bearer_auth" = [])),
+    params(CertStatusListParams),
     responses(
-        (status = 200, description = "所有域名的最新检查结果", body = Vec<CertCheckResult>),
+        (status = 200, description = "域名证书状态分页列表", body = Vec<CertCheckResult>),
         (status = 401, description = "未授权", body = CertApiError)
     )
 )]
-async fn cert_status_all(State(state): State<AppState>) -> impl IntoResponse {
-    match state.cert_store.query_latest_results() {
+async fn cert_status_all(
+    State(state): State<AppState>,
+    Query(params): Query<CertStatusListParams>,
+) -> impl IntoResponse {
+    let limit = params.pagination.limit();
+    let offset = params.pagination.offset();
+
+    match state.cert_store.query_latest_results(limit, offset) {
         Ok(results) => Json(results).into_response(),
         Err(e) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -356,7 +374,8 @@ async fn cert_status_all(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-/// 获取指定域名的最新证书检查结果
+/// 获取指定域名的最新证书检查结果。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     get,
     path = "/v1/certs/status/{domain}",
@@ -366,7 +385,7 @@ async fn cert_status_all(State(state): State<AppState>) -> impl IntoResponse {
         ("domain" = String, Path, description = "域名地址")
     ),
     responses(
-        (status = 200, description = "最新检查结果", body = CertCheckResult),
+        (status = 200, description = "域名最新证书检查结果", body = CertCheckResult),
         (status = 401, description = "未授权", body = CertApiError),
         (status = 404, description = "域名不存在", body = CertApiError)
     )
@@ -412,7 +431,8 @@ async fn cert_status_by_domain(
     }
 }
 
-/// 手动触发指定域名的证书检查
+/// 手动触发指定域名证书检查（按 ID）。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     post,
     path = "/v1/certs/domains/{id}/check",
@@ -422,7 +442,7 @@ async fn cert_status_by_domain(
         ("id" = String, Path, description = "域名唯一标识")
     ),
     responses(
-        (status = 200, description = "证书检查结果", body = CertCheckResult),
+        (status = 200, description = "手动证书检查结果", body = CertCheckResult),
         (status = 401, description = "未授权", body = CertApiError),
         (status = 404, description = "域名不存在", body = CertApiError)
     )
@@ -462,14 +482,15 @@ async fn check_single_domain(
     Json(result).into_response()
 }
 
-/// 手动触发所有已启用域名的证书检查
+/// 手动触发所有已启用域名证书检查。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     post,
     path = "/v1/certs/check",
     tag = "Certificates",
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "所有域名的证书检查结果", body = Vec<CertCheckResult>),
+        (status = 200, description = "手动批量证书检查结果", body = Vec<CertCheckResult>),
         (status = 401, description = "未授权", body = CertApiError)
     )
 )]

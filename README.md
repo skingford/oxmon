@@ -333,6 +333,13 @@ curl -X POST http://localhost:8080/v1/auth/password \
 
 List all registered agents.
 
+Default sort: `last_seen` descending. Default pagination: `limit=20&offset=0`.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `limit` | Page size (default: 20) | No |
+| `offset` | Pagination offset (default: 0) | No |
+
 ```bash
 curl http://localhost:8080/v1/agents
 ```
@@ -359,22 +366,37 @@ curl http://localhost:8080/v1/agents/web-server-01/latest
 
 ### `GET /v1/metrics`
 
-Query time-series data.
+Paginated query for metric data points (supports filtering by `agent` and `metric`).
+
+Default sort: `created_at` descending. Default pagination: `limit=20&offset=0`.
 
 | Parameter | Description | Required |
 |-----------|-------------|----------|
-| `agent` | Agent ID | Yes |
-| `metric` | Metric name | Yes |
-| `from` | Start time (ISO 8601) | Yes |
-| `to` | End time (ISO 8601) | Yes |
+| `agent` | Agent ID | No |
+| `metric` | Metric name | No |
+| `from` | Start time (ISO 8601) | No |
+| `to` | End time (ISO 8601) | No |
+| `limit` | Page size (default: 20) | No |
+| `offset` | Pagination offset (default: 0) | No |
 
 ```bash
-curl "http://localhost:8080/v1/metrics?agent=web-server-01&metric=cpu.usage&from=2026-02-06T00:00:00Z&to=2026-02-06T23:59:59Z"
+# Defaults to 20 results when pagination params are omitted
+curl "http://localhost:8080/v1/metrics"
+
+# Explicit pagination
+curl "http://localhost:8080/v1/metrics?limit=50&offset=100"
 ```
 
 ### `GET /v1/alerts/rules`
 
 List all configured alert rules.
+
+Default sort: `id` ascending. Default pagination: `limit=20&offset=0`.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `limit` | Page size (default: 20) | No |
+| `offset` | Pagination offset (default: 0) | No |
 
 ```bash
 curl http://localhost:8080/v1/alerts/rules
@@ -384,14 +406,16 @@ curl http://localhost:8080/v1/alerts/rules
 
 Query alert history.
 
+Default sort: `timestamp` descending. Default pagination: `limit=20&offset=0`.
+
 | Parameter | Description | Required |
 |-----------|-------------|----------|
-| `severity` | Filter by severity (info/warning/critical) | No |
 | `agent` | Filter by agent ID | No |
+| `severity` | Filter by severity (info/warning/critical) | No |
 | `from` | Start time | No |
 | `to` | End time | No |
-| `limit` | Result count limit | No |
-| `offset` | Pagination offset | No |
+| `limit` | Result count limit (default: 20) | No |
+| `offset` | Pagination offset (default: 0) | No |
 
 ```bash
 curl "http://localhost:8080/v1/alerts/history?severity=critical&limit=50"
@@ -424,6 +448,13 @@ Response example:
 #### `GET /v1/agents/whitelist`
 
 List all whitelisted agents with online status (tokens are not included).
+
+Default sort: `created_at` descending. Default pagination: `limit=20&offset=0`.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `limit` | Page size (default: 20) | No |
+| `offset` | Pagination offset (default: 0) | No |
 
 ```bash
 curl http://localhost:8080/v1/agents/whitelist
@@ -488,13 +519,15 @@ The server periodically collects detailed certificate information (issuer, SANs,
 
 List all certificate details with filtering and pagination.
 
+Default sort: `not_after` ascending. Default pagination: `limit=20&offset=0`.
+
 | Parameter | Description | Required |
 |-----------|-------------|----------|
 | `expiring_within_days` | Filter certificates expiring within N days | No |
 | `ip_address` | Filter by IP address | No |
 | `issuer` | Filter by issuer | No |
-| `limit` | Page size (default 100) | No |
-| `offset` | Pagination offset | No |
+| `limit` | Page size (default: 20) | No |
+| `offset` | Pagination offset (default: 0) | No |
 
 ```bash
 # List all certificates
@@ -565,6 +598,15 @@ curl -X POST http://localhost:8080/v1/certs/domains/batch \
 
 List domains (supports `?enabled=true&search=example&limit=20&offset=0`).
 
+Default sort: `created_at` descending. Default pagination: `limit=20&offset=0`.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `enabled` | Filter by enabled status | No |
+| `search` | Search by domain keyword | No |
+| `limit` | Page size (default: 20) | No |
+| `offset` | Pagination offset (default: 0) | No |
+
 ```bash
 curl http://localhost:8080/v1/certs/domains
 ```
@@ -590,6 +632,13 @@ curl -X DELETE http://localhost:8080/v1/certs/domains/<id>
 #### `GET /v1/certs/status`
 
 Get the latest certificate check results for all domains.
+
+Default sort: `checked_at` descending. Default pagination: `limit=20&offset=0`.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `limit` | Page size (default: 20) | No |
+| `offset` | Pagination offset (default: 0) | No |
 
 ```bash
 curl http://localhost:8080/v1/certs/status

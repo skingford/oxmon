@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
     tracing::info!(
         interval_secs = config.collection_interval_secs,
         buffer_max = config.buffer_max_size,
-        server = %config.server_endpoint,
+        server = %config.grpc_endpoint(),
         "Starting collection loop"
     );
 
@@ -123,7 +123,7 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                tracing::debug!(count = all_points.len(), "Collected metrics");
+                tracing::info!(count = all_points.len(), "Collected metrics");
 
                 // Try to connect if not connected
                 if client.is_none() {
@@ -132,9 +132,10 @@ async fn main() -> Result<()> {
 
                 // Try to send (current batch + buffered)
                 if let Some(ref mut c) = client {
+                    // Drain any previously buffered data and combine with current batch
                     let mut buf = buffer.lock().await;
-                    buf.push_batch(all_points);
-                    let to_send = buf.drain_all();
+                    let mut to_send = buf.drain_all();
+                    to_send.extend(all_points);
 
                     if !to_send.is_empty() {
                         let batch = to_proto_batch(&config.agent_id, &to_send);
@@ -156,7 +157,7 @@ async fn main() -> Result<()> {
                             Ok(resp) => {
                                 let resp = resp.into_inner();
                                 if resp.success {
-                                    tracing::debug!(count = to_send.len(), "Metrics reported");
+                                    tracing::info!(count = to_send.len(), "Metrics reported");
                                 } else {
                                     tracing::warn!(message = %resp.message, "Server rejected batch");
                                     buf.push_batch(to_send);

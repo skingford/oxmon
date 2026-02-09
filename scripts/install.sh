@@ -253,6 +253,7 @@ server_endpoint = "${SERVER_ENDPOINT}"
 # tls = true  # Enable TLS for gRPC connection
 # auth_token = "your-token-here"
 collection_interval_secs = 10
+# Offline buffer capacity (data points). Min: 100. Each cycle collects ~30+ points.
 buffer_max_size = 1000
 TOML
 }

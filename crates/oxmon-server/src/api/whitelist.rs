@@ -1,6 +1,7 @@
 use crate::state::AppState;
+use crate::api::pagination::PaginationParams;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -13,14 +14,15 @@ use oxmon_storage::auth::{generate_token, hash_token};
 use serde_json::json;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-/// 添加 Agent 到白名单
+/// 新增白名单 Agent。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     post,
     path = "/v1/agents/whitelist",
     request_body = AddAgentRequest,
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Agent 添加成功", body = AddAgentResponse),
+        (status = 200, description = "新增白名单 Agent 结果", body = AddAgentResponse),
         (status = 401, description = "未认证"),
         (status = 409, description = "Agent ID 已存在"),
         (status = 500, description = "服务器错误")
@@ -84,13 +86,15 @@ async fn add_agent(
     }))
 }
 
-/// 列出所有白名单中的 Agent（包含在线状态）
+/// 分页查询白名单 Agent 列表（包含在线状态）。
+/// 默认排序：`created_at` 倒序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
     path = "/v1/agents/whitelist",
     security(("bearer_auth" = [])),
+    params(PaginationParams),
     responses(
-        (status = 200, description = "Agent 列表", body = Vec<AgentWhitelistDetail>),
+        (status = 200, description = "白名单 Agent 分页列表", body = Vec<AgentWhitelistDetail>),
         (status = 401, description = "未认证"),
         (status = 500, description = "服务器错误")
     ),
@@ -98,8 +102,12 @@ async fn add_agent(
 )]
 async fn list_agents(
     State(state): State<AppState>,
+    Query(pagination): Query<PaginationParams>,
 ) -> Result<Json<Vec<AgentWhitelistDetail>>, (StatusCode, Json<serde_json::Value>)> {
-    let agents = state.cert_store.list_agents().map_err(|e| {
+    let limit = pagination.limit();
+    let offset = pagination.offset();
+
+    let agents = state.cert_store.list_agents(limit, offset).map_err(|e| {
         tracing::error!(error = %e, "Failed to list agents");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -132,7 +140,8 @@ async fn list_agents(
     Ok(Json(details))
 }
 
-/// 更新 Agent 白名单信息
+/// 更新白名单 Agent 信息（按 ID）。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     put,
     path = "/v1/agents/whitelist/{id}",
@@ -142,7 +151,7 @@ async fn list_agents(
         ("id" = String, Path, description = "Agent 白名单唯一标识")
     ),
     responses(
-        (status = 200, description = "Agent 更新成功", body = AgentWhitelistDetail),
+        (status = 200, description = "更新白名单 Agent 结果", body = AgentWhitelistDetail),
         (status = 401, description = "未认证"),
         (status = 404, description = "Agent 不存在"),
         (status = 500, description = "服务器错误")
@@ -211,7 +220,8 @@ async fn update_agent(
     }))
 }
 
-/// 重新生成 Agent 认证 Token
+/// 重新生成白名单 Agent 的认证 Token（按 ID）。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     post,
     path = "/v1/agents/whitelist/{id}/token",
@@ -220,7 +230,7 @@ async fn update_agent(
         ("id" = String, Path, description = "Agent 白名单唯一标识")
     ),
     responses(
-        (status = 200, description = "Token 重新生成成功", body = RegenerateTokenResponse),
+        (status = 200, description = "重新生成 Token 结果", body = RegenerateTokenResponse),
         (status = 401, description = "未认证"),
         (status = 404, description = "Agent 不存在"),
         (status = 500, description = "服务器错误")
@@ -279,7 +289,8 @@ async fn regenerate_token(
     }))
 }
 
-/// 删除 Agent（从白名单和内存注册表中移除）
+/// 删除白名单 Agent（按 ID）。
+/// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     delete,
     path = "/v1/agents/whitelist/{id}",
@@ -288,7 +299,7 @@ async fn regenerate_token(
         ("id" = String, Path, description = "Agent 白名单唯一标识")
     ),
     responses(
-        (status = 200, description = "Agent 删除成功"),
+        (status = 200, description = "删除成功"),
         (status = 401, description = "未认证"),
         (status = 404, description = "Agent 不存在"),
         (status = 500, description = "服务器错误")
