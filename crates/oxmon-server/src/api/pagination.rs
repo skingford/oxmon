@@ -8,7 +8,7 @@ pub struct PaginationParams {
     /// 每页条数（默认 20）
     #[param(required = false)]
     pub limit: Option<u64>,
-    /// 分页偏移量（默认 0）
+    /// 偏移量（默认 0）
     #[param(required = false)]
     pub offset: Option<u64>,
 }

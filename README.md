@@ -338,7 +338,7 @@ Default sort: `last_seen` descending. Default pagination: `limit=20&offset=0`.
 | Parameter | Description | Required |
 |-----------|-------------|----------|
 | `limit` | Page size (default: 20) | No |
-| `offset` | Pagination offset (default: 0) | No |
+| `offset` | Offset (default: 0) | No |
 
 ```bash
 curl http://localhost:8080/v1/agents
@@ -366,18 +366,18 @@ curl http://localhost:8080/v1/agents/web-server-01/latest
 
 ### `GET /v1/metrics`
 
-Paginated query for metric data points (supports filtering by `agent` and `metric`).
+Paginated query for metric data points (supports filtering by `agent_id__eq` and `metric_name__eq`).
 
 Default sort: `created_at` descending. Default pagination: `limit=20&offset=0`.
 
 | Parameter | Description | Required |
 |-----------|-------------|----------|
-| `agent` | Agent ID | No |
-| `metric` | Metric name | No |
-| `from` | Start time (ISO 8601) | No |
-| `to` | End time (ISO 8601) | No |
+| `agent_id__eq` | Agent ID exact match | No |
+| `metric_name__eq` | Metric name exact match | No |
+| `timestamp__gte` | Timestamp lower bound (ISO 8601) | No |
+| `timestamp__lte` | Timestamp upper bound (ISO 8601) | No |
 | `limit` | Page size (default: 20) | No |
-| `offset` | Pagination offset (default: 0) | No |
+| `offset` | Offset (default: 0) | No |
 
 ```bash
 # Defaults to 20 results when pagination params are omitted
@@ -396,7 +396,7 @@ Default sort: `id` ascending. Default pagination: `limit=20&offset=0`.
 | Parameter | Description | Required |
 |-----------|-------------|----------|
 | `limit` | Page size (default: 20) | No |
-| `offset` | Pagination offset (default: 0) | No |
+| `offset` | Offset (default: 0) | No |
 
 ```bash
 curl http://localhost:8080/v1/alerts/rules
@@ -410,15 +410,15 @@ Default sort: `timestamp` descending. Default pagination: `limit=20&offset=0`.
 
 | Parameter | Description | Required |
 |-----------|-------------|----------|
-| `agent` | Filter by agent ID | No |
-| `severity` | Filter by severity (info/warning/critical) | No |
-| `from` | Start time | No |
-| `to` | End time | No |
+| `agent_id__eq` | Agent ID exact match | No |
+| `severity__eq` | Severity exact match (info/warning/critical) | No |
+| `timestamp__gte` | Timestamp lower bound | No |
+| `timestamp__lte` | Timestamp upper bound | No |
 | `limit` | Result count limit (default: 20) | No |
-| `offset` | Pagination offset (default: 0) | No |
+| `offset` | Offset (default: 0) | No |
 
 ```bash
-curl "http://localhost:8080/v1/alerts/history?severity=critical&limit=50"
+curl "http://localhost:8080/v1/alerts/history?severity__eq=critical&limit=50"
 ```
 
 ### Agent Whitelist Management
@@ -454,7 +454,7 @@ Default sort: `created_at` descending. Default pagination: `limit=20&offset=0`.
 | Parameter | Description | Required |
 |-----------|-------------|----------|
 | `limit` | Page size (default: 20) | No |
-| `offset` | Pagination offset (default: 0) | No |
+| `offset` | Offset (default: 0) | No |
 
 ```bash
 curl http://localhost:8080/v1/agents/whitelist
@@ -523,21 +523,21 @@ Default sort: `not_after` ascending. Default pagination: `limit=20&offset=0`.
 
 | Parameter | Description | Required |
 |-----------|-------------|----------|
-| `expiring_within_days` | Filter certificates expiring within N days | No |
-| `ip_address` | Filter by IP address | No |
-| `issuer` | Filter by issuer | No |
+| `not_after__lte` | Certificate expiry upper bound (Unix timestamp) | No |
+| `ip_address__contains` | IP contains match | No |
+| `issuer__contains` | Issuer contains match | No |
 | `limit` | Page size (default: 20) | No |
-| `offset` | Pagination offset (default: 0) | No |
+| `offset` | Offset (default: 0) | No |
 
 ```bash
 # List all certificates
 curl http://localhost:8080/v1/certificates
 
-# Filter certificates expiring within 30 days
-curl "http://localhost:8080/v1/certificates?expiring_within_days=30"
+# Filter by expiry upper bound (example timestamp)
+curl "http://localhost:8080/v1/certificates?not_after__lte=1767225600"
 
 # Filter by issuer
-curl "http://localhost:8080/v1/certificates?issuer=Let%27s%20Encrypt"
+curl "http://localhost:8080/v1/certificates?issuer__contains=Let%27s%20Encrypt"
 ```
 
 #### `GET /v1/certificates/{domain}`
@@ -596,16 +596,16 @@ curl -X POST http://localhost:8080/v1/certs/domains/batch \
 
 #### `GET /v1/certs/domains`
 
-List domains (supports `?enabled=true&search=example&limit=20&offset=0`).
+List domains (supports `?enabled__eq=true&domain__contains=example&limit=20&offset=0`).
 
 Default sort: `created_at` descending. Default pagination: `limit=20&offset=0`.
 
 | Parameter | Description | Required |
 |-----------|-------------|----------|
-| `enabled` | Filter by enabled status | No |
-| `search` | Search by domain keyword | No |
+| `enabled__eq` | Enabled status exact match | No |
+| `domain__contains` | Domain contains match | No |
 | `limit` | Page size (default: 20) | No |
-| `offset` | Pagination offset (default: 0) | No |
+| `offset` | Offset (default: 0) | No |
 
 ```bash
 curl http://localhost:8080/v1/certs/domains
@@ -638,7 +638,7 @@ Default sort: `checked_at` descending. Default pagination: `limit=20&offset=0`.
 | Parameter | Description | Required |
 |-----------|-------------|----------|
 | `limit` | Page size (default: 20) | No |
-| `offset` | Pagination offset (default: 0) | No |
+| `offset` | Offset (default: 0) | No |
 
 ```bash
 curl http://localhost:8080/v1/certs/status
@@ -690,6 +690,20 @@ curl http://localhost:8080/v1/openapi.yaml
 2. Select "OpenAPI/Swagger" -> "URL Import"
 3. Enter `http://<server-ip>:8080/v1/openapi.json`
 4. Click Import to get all API definitions
+
+### Query Parameter Naming Convention
+
+To keep filtering semantics consistent across endpoints, query parameters use the `field__operator` pattern:
+
+- `__eq`: exact match (example: `agent_id__eq=web-server-01`)
+- `__contains`: contains match (example: `issuer__contains=Let%27s%20Encrypt`)
+- `__gte`: lower bound, greater than or equal (example: `timestamp__gte=2026-02-09T00:00:00Z`)
+- `__lte`: upper bound, less than or equal (example: `timestamp__lte=2026-02-09T23:59:59Z`)
+
+Pagination parameters are unified across list endpoints:
+
+- `limit`: page size (default: `20`)
+- `offset`: offset (default: `0`)
 
 ### Common SQLite Commands
 

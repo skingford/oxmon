@@ -83,15 +83,15 @@ pub struct AgentInfo {
 pub struct CertDomain {
     /// 域名唯一标识
     pub id: String,
-    /// 域名地址
+    /// 监控域名（必填，如 example.com）
     pub domain: String,
     /// 端口号
     pub port: i32,
     /// 是否启用监控
     pub enabled: bool,
-    /// 检查间隔（秒）
+    /// 检查间隔秒数（可选）
     pub check_interval_secs: Option<u64>,
-    /// 备注
+    /// 备注（可选）
     pub note: Option<String>,
     /// 最后检查时间
     pub last_checked_at: Option<DateTime<Utc>>,
@@ -141,33 +141,33 @@ pub struct CertCheckResult {
 /// 创建域名请求
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateDomainRequest {
-    /// 域名地址
+    /// 监控域名（必填，如 example.com）
     pub domain: String,
-    /// 端口号（默认 443）
+    /// 监控端口（可选，默认 443）
     pub port: Option<i32>,
-    /// 检查间隔（秒）
+    /// 检查间隔秒数（可选）
     pub check_interval_secs: Option<u64>,
-    /// 备注
+    /// 备注（可选）
     pub note: Option<String>,
 }
 
 /// 更新域名请求
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdateDomainRequest {
-    /// 端口号
+    /// 监控端口（可选）
     pub port: Option<i32>,
-    /// 是否启用监控
+    /// 是否启用监控（可选）
     pub enabled: Option<bool>,
-    /// 检查间隔（秒），传 null 清除自定义间隔
+    /// 检查间隔秒数（可选；传 null 清除自定义值）
     pub check_interval_secs: Option<Option<u64>>,
-    /// 备注
+    /// 备注（可选）
     pub note: Option<String>,
 }
 
 /// 批量创建域名请求
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BatchCreateDomainsRequest {
-    /// 域名列表
+    /// 待新增监控域名列表（必填）
     pub domains: Vec<CreateDomainRequest>,
 }
 
@@ -193,9 +193,9 @@ pub struct AgentWhitelistEntry {
 /// 添加 Agent 到白名单请求
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AddAgentRequest {
-    /// Agent 唯一标识
+    /// Agent ID（必填，需全局唯一）
     pub agent_id: String,
-    /// 描述信息
+    /// 描述信息（可选）
     pub description: Option<String>,
 }
 
@@ -215,7 +215,7 @@ pub struct AddAgentResponse {
 /// 更新 Agent 白名单请求
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdateAgentRequest {
-    /// 描述信息
+    /// 描述信息（可选）
     pub description: Option<String>,
 }
 
@@ -289,12 +289,12 @@ pub struct CertificateDetails {
 /// 证书详情查询过滤器
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CertificateDetailsFilter {
-    /// 过滤即将过期的证书（天数内）
-    pub expiring_within_days: Option<i64>,
-    /// 按 IP 地址过滤
-    pub ip_address: Option<String>,
-    /// 按颁发者过滤
-    pub issuer: Option<String>,
+    /// 证书过期时间上界（Unix 秒级时间戳）
+    pub not_after_lte: Option<i64>,
+    /// IP 包含匹配
+    pub ip_address_contains: Option<String>,
+    /// 颁发者包含匹配
+    pub issuer_contains: Option<String>,
 }
 
 // User & Auth types
@@ -304,7 +304,7 @@ pub struct CertificateDetailsFilter {
 pub struct User {
     /// 唯一标识
     pub id: String,
-    /// 用户名
+    /// 登录用户名（必填）
     pub username: String,
     /// 密码哈希（bcrypt）
     #[serde(skip_serializing)]
@@ -321,9 +321,9 @@ pub struct User {
 /// 登录请求
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
-    /// 用户名
+    /// 登录用户名（必填）
     pub username: String,
-    /// 密码
+    /// 登录密码（必填）
     pub password: String,
 }
 
@@ -339,8 +339,8 @@ pub struct LoginResponse {
 /// 修改密码请求
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ChangePasswordRequest {
-    /// 当前密码
+    /// 当前密码（必填）
     pub current_password: String,
-    /// 新密码
+    /// 新密码（必填）
     pub new_password: String,
 }

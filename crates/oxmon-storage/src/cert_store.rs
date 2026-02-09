@@ -1005,18 +1005,17 @@ impl CertStore {
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         let mut idx = 1;
 
-        if let Some(days) = filter.expiring_within_days {
-            let threshold = (Utc::now() + chrono::Duration::days(days)).timestamp();
+        if let Some(not_after_lte) = filter.not_after_lte {
             sql.push_str(&format!(" AND not_after <= ?{idx}"));
-            params.push(Box::new(threshold));
+            params.push(Box::new(not_after_lte));
             idx += 1;
         }
-        if let Some(ip) = &filter.ip_address {
+        if let Some(ip) = &filter.ip_address_contains {
             sql.push_str(&format!(" AND ip_addresses LIKE ?{idx}"));
             params.push(Box::new(format!("%{ip}%")));
             idx += 1;
         }
-        if let Some(issuer) = &filter.issuer {
+        if let Some(issuer) = &filter.issuer_contains {
             sql.push_str(&format!(" AND (issuer_cn LIKE ?{idx} OR issuer_o LIKE ?{idx})"));
             params.push(Box::new(format!("%{issuer}%")));
             idx += 1;

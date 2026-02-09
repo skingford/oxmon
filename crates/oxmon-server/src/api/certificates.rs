@@ -14,12 +14,15 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 /// 证书列表查询参数
 #[derive(Debug, Deserialize, IntoParams)]
 struct CertificateListQuery {
-    /// 过滤即将过期的证书（天数内）
-    expiring_within_days: Option<i64>,
-    /// 按 IP 地址过滤
-    ip_address: Option<String>,
-    /// 按颁发者过滤
-    issuer: Option<String>,
+    /// 证书过期时间上界（not_after__lte，可选，Unix 秒级时间戳）
+    #[serde(rename = "not_after__lte")]
+    not_after_lte: Option<i64>,
+    /// IP 包含匹配（ip_address__contains，可选）
+    #[serde(rename = "ip_address__contains")]
+    ip_address_contains: Option<String>,
+    /// 颁发者包含匹配（issuer__contains，可选）
+    #[serde(rename = "issuer__contains")]
+    issuer_contains: Option<String>,
     #[serde(flatten)]
     pagination: PaginationParams,
 }
@@ -31,7 +34,7 @@ struct CertificateListQuery {
     path = "/v1/certificates/{id}",
     security(("bearer_auth" = [])),
     params(
-        ("id" = String, Path, description = "证书唯一标识")
+        ("id" = String, Path, description = "证书 ID（路径参数）")
     ),
     responses(
         (status = 200, description = "证书详情", body = CertificateDetails),
@@ -86,9 +89,9 @@ async fn list_certificates(
     Query(query): Query<CertificateListQuery>,
 ) -> Result<Json<Vec<CertificateDetails>>, (StatusCode, Json<serde_json::Value>)> {
     let filter = CertificateDetailsFilter {
-        expiring_within_days: query.expiring_within_days,
-        ip_address: query.ip_address,
-        issuer: query.issuer,
+        not_after_lte: query.not_after_lte,
+        ip_address_contains: query.ip_address_contains,
+        issuer_contains: query.issuer_contains,
     };
 
     let certificates = state
@@ -127,7 +130,7 @@ struct CertificateChainInfo {
     path = "/v1/certificates/{id}/chain",
     security(("bearer_auth" = [])),
     params(
-        ("id" = String, Path, description = "证书唯一标识")
+        ("id" = String, Path, description = "证书 ID（路径参数）")
     ),
     responses(
         (status = 200, description = "证书链验证详情", body = CertificateChainInfo),

@@ -148,7 +148,7 @@ async fn list_agents(
     request_body = UpdateAgentRequest,
     security(("bearer_auth" = [])),
     params(
-        ("id" = String, Path, description = "Agent 白名单唯一标识")
+        ("id" = String, Path, description = "白名单条目 ID（路径参数）")
     ),
     responses(
         (status = 200, description = "更新白名单 Agent 结果", body = AgentWhitelistDetail),
@@ -227,7 +227,7 @@ async fn update_agent(
     path = "/v1/agents/whitelist/{id}/token",
     security(("bearer_auth" = [])),
     params(
-        ("id" = String, Path, description = "Agent 白名单唯一标识")
+        ("id" = String, Path, description = "白名单条目 ID（路径参数）")
     ),
     responses(
         (status = 200, description = "重新生成 Token 结果", body = RegenerateTokenResponse),
@@ -296,7 +296,7 @@ async fn regenerate_token(
     path = "/v1/agents/whitelist/{id}",
     security(("bearer_auth" = [])),
     params(
-        ("id" = String, Path, description = "Agent 白名单唯一标识")
+        ("id" = String, Path, description = "白名单条目 ID（路径参数）")
     ),
     responses(
         (status = 200, description = "删除成功"),

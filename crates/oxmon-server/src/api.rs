@@ -142,7 +142,7 @@ struct LatestMetric {
     tag = "Agents",
     security(("bearer_auth" = [])),
     params(
-        ("id" = String, Path, description = "Agent 唯一标识")
+        ("id" = String, Path, description = "Agent ID（路径参数）")
     ),
     responses(
         (status = 200, description = "Agent 最新指标数据", body = Vec<LatestMetric>),
@@ -242,18 +242,22 @@ async fn agent_latest(
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 struct MetricsFilterParams {
-    /// Agent 唯一标识（可选）
+    /// Agent ID 精确匹配（agent_id__eq，可选）
     #[param(required = false)]
-    agent: Option<String>,
-    /// 指标名称（可选）
+    #[serde(rename = "agent_id__eq")]
+    agent_id_eq: Option<String>,
+    /// 指标名称精确匹配（metric_name__eq，可选）
     #[param(required = false)]
-    metric: Option<String>,
-    /// 起始时间（默认为结束时间前 1 小时）
+    #[serde(rename = "metric_name__eq")]
+    metric_name_eq: Option<String>,
+    /// 时间下界（timestamp >=，默认为当前时间前 1 小时）
     #[param(required = false)]
-    from: Option<DateTime<Utc>>,
-    /// 结束时间（默认为当前时间）
+    #[serde(rename = "timestamp__gte")]
+    timestamp_gte: Option<DateTime<Utc>>,
+    /// 时间上界（timestamp <=，默认为当前时间）
     #[param(required = false)]
-    to: Option<DateTime<Utc>>,
+    #[serde(rename = "timestamp__lte")]
+    timestamp_lte: Option<DateTime<Utc>>,
 }
 
 #[derive(Deserialize)]
@@ -281,7 +285,7 @@ struct MetricDataPointResponse {
     created_at: DateTime<Utc>,
 }
 
-/// 分页查询指标数据点列表（支持按 agent、metric、时间范围过滤）。
+/// 分页查询指标数据点列表（支持按 agent_id__eq、metric_name__eq、时间范围过滤）。
 /// 默认排序：`created_at` 倒序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
@@ -298,10 +302,10 @@ async fn query_all_metrics(
     State(state): State<AppState>,
     Query(params): Query<MetricsPageParams>,
 ) -> impl IntoResponse {
-    let to = params.filter.to.unwrap_or_else(Utc::now);
+    let to = params.filter.timestamp_lte.unwrap_or_else(Utc::now);
     let from = params
         .filter
-        .from
+        .timestamp_gte
         .unwrap_or_else(|| to - chrono::Duration::hours(1));
     let limit = params.pagination.limit();
     let offset = params.pagination.offset();
@@ -309,8 +313,8 @@ async fn query_all_metrics(
     match state.storage.query_metrics_paginated(
         from,
         to,
-        params.filter.agent.as_deref(),
-        params.filter.metric.as_deref(),
+        params.filter.agent_id_eq.as_deref(),
+        params.filter.metric_name_eq.as_deref(),
         limit,
         offset,
     ) {
@@ -396,18 +400,22 @@ async fn list_alert_rules(
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 struct AlertHistoryFilterParams {
-    /// 按 Agent ID 过滤
+    /// Agent ID 精确匹配（agent_id__eq，可选）
     #[param(required = false)]
-    agent: Option<String>,
-    /// 按告警级别过滤
+    #[serde(rename = "agent_id__eq")]
+    agent_id_eq: Option<String>,
+    /// 告警级别精确匹配（severity__eq，可选）
     #[param(required = false)]
-    severity: Option<String>,
-    /// 起始时间（默认为 1 天前）
+    #[serde(rename = "severity__eq")]
+    severity_eq: Option<String>,
+    /// 时间下界（timestamp >=，默认为当前时间前 1 天）
     #[param(required = false)]
-    from: Option<DateTime<Utc>>,
-    /// 结束时间（默认为当前时间）
+    #[serde(rename = "timestamp__gte")]
+    timestamp_gte: Option<DateTime<Utc>>,
+    /// 时间上界（timestamp <=，默认为当前时间）
     #[param(required = false)]
-    to: Option<DateTime<Utc>>,
+    #[serde(rename = "timestamp__lte")]
+    timestamp_lte: Option<DateTime<Utc>>,
 }
 
 #[derive(Deserialize)]
@@ -443,7 +451,7 @@ struct AlertEventResponse {
     predicted_breach: Option<DateTime<Utc>>,
 }
 
-/// 分页查询告警事件历史（支持按 agent、severity、时间范围过滤）。
+/// 分页查询告警事件历史（支持按 agent_id__eq、severity__eq、时间范围过滤）。
 /// 默认排序：`timestamp` 倒序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
@@ -460,10 +468,10 @@ async fn alert_history(
     State(state): State<AppState>,
     Query(params): Query<AlertHistoryPageParams>,
 ) -> impl IntoResponse {
-    let to = params.filter.to.unwrap_or_else(Utc::now);
+    let to = params.filter.timestamp_lte.unwrap_or_else(Utc::now);
     let from = params
         .filter
-        .from
+        .timestamp_gte
         .unwrap_or_else(|| to - chrono::Duration::days(1));
     let limit = params.pagination.limit();
     let offset = params.pagination.offset();
@@ -471,8 +479,8 @@ async fn alert_history(
     match state.storage.query_alert_history(
         from,
         to,
-        params.filter.severity.as_deref(),
-        params.filter.agent.as_deref(),
+        params.filter.severity_eq.as_deref(),
+        params.filter.agent_id_eq.as_deref(),
         limit,
         offset,
     ) {

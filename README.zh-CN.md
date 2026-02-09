@@ -338,7 +338,7 @@ curl -X POST http://localhost:8080/v1/auth/password \
 | 参数 | 说明 | 必填 |
 |------|------|------|
 | `limit` | 每页条数（默认 20） | 否 |
-| `offset` | 分页偏移（默认 0） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
 
 ```bash
 curl http://localhost:8080/v1/agents
@@ -366,18 +366,18 @@ curl http://localhost:8080/v1/agents/web-server-01/latest
 
 ### `GET /v1/metrics`
 
-分页查询指标数据（支持按 `agent`、`metric` 过滤）。
+分页查询指标数据（支持按 `agent_id__eq`、`metric_name__eq` 过滤）。
 
 默认按 `created_at` 倒序，默认分页 `limit=20&offset=0`。
 
 | 参数 | 说明 | 必填 |
 |------|------|------|
-| `agent` | Agent ID | 否 |
-| `metric` | 指标名 | 否 |
-| `from` | 起始时间 (ISO 8601) | 否 |
-| `to` | 结束时间 (ISO 8601) | 否 |
+| `agent_id__eq` | Agent ID 精确匹配 | 否 |
+| `metric_name__eq` | 指标名精确匹配 | 否 |
+| `timestamp__gte` | 时间下界 (ISO 8601) | 否 |
+| `timestamp__lte` | 时间上界 (ISO 8601) | 否 |
 | `limit` | 每页条数（默认 20） | 否 |
-| `offset` | 分页偏移（默认 0） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
 
 ```bash
 # 不传分页参数时默认返回 20 条
@@ -396,7 +396,7 @@ curl "http://localhost:8080/v1/metrics?limit=50&offset=100"
 | 参数 | 说明 | 必填 |
 |------|------|------|
 | `limit` | 每页条数（默认 20） | 否 |
-| `offset` | 分页偏移（默认 0） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
 
 ```bash
 curl http://localhost:8080/v1/alerts/rules
@@ -410,15 +410,15 @@ curl http://localhost:8080/v1/alerts/rules
 
 | 参数 | 说明 | 必填 |
 |------|------|------|
-| `agent` | 按 Agent ID 过滤 | 否 |
-| `severity` | 按严重级别过滤 (info/warning/critical) | 否 |
-| `from` | 起始时间 | 否 |
-| `to` | 结束时间 | 否 |
+| `agent_id__eq` | Agent ID 精确匹配 | 否 |
+| `severity__eq` | 严重级别精确匹配 (info/warning/critical) | 否 |
+| `timestamp__gte` | 时间下界 | 否 |
+| `timestamp__lte` | 时间上界 | 否 |
 | `limit` | 返回条数限制（默认 20） | 否 |
-| `offset` | 分页偏移（默认 0） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
 
 ```bash
-curl "http://localhost:8080/v1/alerts/history?severity=critical&limit=50"
+curl "http://localhost:8080/v1/alerts/history?severity__eq=critical&limit=50"
 ```
 
 ### Agent 白名单管理
@@ -454,7 +454,7 @@ curl -X POST http://localhost:8080/v1/agents/whitelist \
 | 参数 | 说明 | 必填 |
 |------|------|------|
 | `limit` | 每页条数（默认 20） | 否 |
-| `offset` | 分页偏移（默认 0） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
 
 ```bash
 curl http://localhost:8080/v1/agents/whitelist
@@ -523,21 +523,21 @@ Server 定期采集证书详细信息（颁发者、SAN、证书链验证、解�
 
 | 参数 | 说明 | 必填 |
 |------|------|------|
-| `expiring_within_days` | 过滤即将过期的证书（N 天内） | 否 |
-| `ip_address` | 按 IP 地址过滤 | 否 |
-| `issuer` | 按颁发者过滤 | 否 |
+| `not_after__lte` | 证书过期时间上界（Unix 时间戳） | 否 |
+| `ip_address__contains` | IP 包含匹配 | 否 |
+| `issuer__contains` | 颁发者包含匹配 | 否 |
 | `limit` | 每页数量（默认 20） | 否 |
-| `offset` | 分页偏移（默认 0） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
 
 ```bash
 # 查询所有证书
 curl http://localhost:8080/v1/certificates
 
-# 查询 30 天内即将过期的证书
-curl "http://localhost:8080/v1/certificates?expiring_within_days=30"
+# 按证书过期时间上界过滤（示例时间戳）
+curl "http://localhost:8080/v1/certificates?not_after__lte=1767225600"
 
 # 按颁发者过滤
-curl "http://localhost:8080/v1/certificates?issuer=Let%27s%20Encrypt"
+curl "http://localhost:8080/v1/certificates?issuer__contains=Let%27s%20Encrypt"
 ```
 
 #### `GET /v1/certificates/{domain}`
@@ -596,16 +596,16 @@ curl -X POST http://localhost:8080/v1/certs/domains/batch \
 
 #### `GET /v1/certs/domains`
 
-查询域名列表（支持 `?enabled=true&search=example&limit=20&offset=0`）。
+查询域名列表（支持 `?enabled__eq=true&domain__contains=example&limit=20&offset=0`）。
 
 默认按 `created_at` 倒序，默认分页 `limit=20&offset=0`。
 
 | 参数 | 说明 | 必填 |
 |------|------|------|
-| `enabled` | 按启用状态过滤 | 否 |
-| `search` | 按域名关键字搜索 | 否 |
+| `enabled__eq` | 启用状态精确匹配 | 否 |
+| `domain__contains` | 域名包含匹配 | 否 |
 | `limit` | 每页条数（默认 20） | 否 |
-| `offset` | 分页偏移（默认 0） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
 
 ```bash
 curl http://localhost:8080/v1/certs/domains
@@ -638,7 +638,7 @@ curl -X DELETE http://localhost:8080/v1/certs/domains/<id>
 | 参数 | 说明 | 必填 |
 |------|------|------|
 | `limit` | 每页条数（默认 20） | 否 |
-| `offset` | 分页偏移（默认 0） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
 
 ```bash
 curl http://localhost:8080/v1/certs/status
@@ -690,6 +690,20 @@ curl http://localhost:8080/v1/openapi.yaml
 2. 选择 "OpenAPI/Swagger" → "URL 导入"
 3. 输入 `http://<server-ip>:8080/v1/openapi.json`
 4. 点击导入即可获取所有接口定义
+
+### 参数命名约定
+
+为统一各接口过滤语义，查询参数采用 `字段__操作符` 形式：
+
+- `__eq`：精确匹配（示例：`agent_id__eq=web-server-01`）
+- `__contains`：包含匹配（示例：`issuer__contains=Let%27s%20Encrypt`）
+- `__gte`：下界，大于等于（示例：`timestamp__gte=2026-02-09T00:00:00Z`）
+- `__lte`：上界，小于等于（示例：`timestamp__lte=2026-02-09T23:59:59Z`）
+
+列表接口分页参数统一为：
+
+- `limit`：每页条数（默认 `20`）
+- `offset`：偏移量（默认 `0`）
 
 ### SQLite 常用命令
 

@@ -177,17 +177,19 @@ async fn create_domains_batch(
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 struct ListDomainsParams {
-    /// 按启用状态过滤
+    /// 启用状态精确匹配（enabled__eq，可选）
     #[param(required = false)]
-    enabled: Option<bool>,
-    /// 按域名搜索
+    #[serde(rename = "enabled__eq")]
+    enabled_eq: Option<bool>,
+    /// 域名包含匹配（domain__contains，可选）
     #[param(required = false)]
-    search: Option<String>,
+    #[serde(rename = "domain__contains")]
+    domain_contains: Option<String>,
     #[serde(flatten)]
     pagination: PaginationParams,
 }
 
-/// 分页查询监控域名列表（支持按 enabled、search 过滤）。
+/// 分页查询监控域名列表（支持按 enabled__eq、domain__contains 过滤）。
 /// 默认排序：`created_at` 倒序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
@@ -208,7 +210,12 @@ async fn list_domains(
     let offset = params.pagination.offset();
     match state
         .cert_store
-        .query_domains(params.enabled, params.search.as_deref(), limit, offset)
+        .query_domains(
+            params.enabled_eq,
+            params.domain_contains.as_deref(),
+            limit,
+            offset,
+        )
     {
         Ok(domains) => Json(domains).into_response(),
         Err(e) => error_response(
@@ -235,7 +242,7 @@ struct CertStatusListParams {
     tag = "Certificates",
     security(("bearer_auth" = [])),
     params(
-        ("id" = String, Path, description = "域名唯一标识")
+        ("id" = String, Path, description = "监控域名 ID（路径参数）")
     ),
     responses(
         (status = 200, description = "监控域名详情", body = CertDomain),
@@ -268,7 +275,7 @@ async fn get_domain(
     tag = "Certificates",
     security(("bearer_auth" = [])),
     params(
-        ("id" = String, Path, description = "域名唯一标识")
+        ("id" = String, Path, description = "监控域名 ID（路径参数）")
     ),
     request_body = UpdateDomainRequest,
     responses(
@@ -318,7 +325,7 @@ async fn update_domain(
     tag = "Certificates",
     security(("bearer_auth" = [])),
     params(
-        ("id" = String, Path, description = "域名唯一标识")
+        ("id" = String, Path, description = "监控域名 ID（路径参数）")
     ),
     responses(
         (status = 204, description = "删除成功"),
@@ -382,7 +389,7 @@ async fn cert_status_all(
     tag = "Certificates",
     security(("bearer_auth" = [])),
     params(
-        ("domain" = String, Path, description = "域名地址")
+        ("domain" = String, Path, description = "监控域名（路径参数）")
     ),
     responses(
         (status = 200, description = "域名最新证书检查结果", body = CertCheckResult),
@@ -439,7 +446,7 @@ async fn cert_status_by_domain(
     tag = "Certificates",
     security(("bearer_auth" = [])),
     params(
-        ("id" = String, Path, description = "域名唯一标识")
+        ("id" = String, Path, description = "监控域名 ID（路径参数）")
     ),
     responses(
         (status = 200, description = "手动证书检查结果", body = CertCheckResult),
