@@ -158,8 +158,8 @@ struct AgentResponse {
     /// Agent 唯一标识
     agent_id: String,
     /// 最后上报时间
-    last_seen: DateTime<Utc>,
-    /// 状态（active / inactive）
+    last_seen: Option<DateTime<Utc>>,
+    /// 状态（active / inactive / unknown）
     status: String,
 }
 
@@ -184,25 +184,37 @@ async fn list_agents(
     let limit = pagination.limit();
     let offset = pagination.offset();
 
-    let mut agents = state
+    let agents = match state.cert_store.list_agents(limit, offset).map_err(|e| {
+        tracing::error!(error = %e, "Failed to list agents");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
+            "INTERNAL_ERROR",
+            "Database error",
+        )
+    }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    let registry = state
         .agent_registry
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .list_agents();
-    agents.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let resp: Vec<AgentResponse> = agents
         .into_iter()
-        .skip(offset)
-        .take(limit)
-        .map(|a| AgentResponse {
-            agent_id: a.agent_id,
-            last_seen: a.last_seen,
-            status: if a.active {
-                "active".to_string()
-            } else {
-                "inactive".to_string()
-            },
+        .map(|entry| {
+            let agent_info = registry.get_agent(&entry.agent_id);
+            AgentResponse {
+                agent_id: entry.agent_id,
+                last_seen: agent_info.as_ref().map(|a| a.last_seen),
+                status: match &agent_info {
+                    Some(a) if a.active => "active".to_string(),
+                    Some(_) => "inactive".to_string(),
+                    None => "unknown".to_string(),
+                },
+            }
         })
         .collect();
     success_response(StatusCode::OK, &trace_id, resp)
