@@ -23,15 +23,15 @@ The server SHALL validate agent identity before accepting any metric data throug
 The server SHALL provide REST API endpoints to manage the agent whitelist, allowing administrators to add, list, and remove authorized agents.
 
 #### Scenario: Add agent to whitelist
-- **WHEN** an administrator sends POST request to `/api/v1/agents/whitelist` with agent_id and optional description
+- **WHEN** an administrator sends POST request to `/v1/agents/whitelist` with agent_id and optional description
 - **THEN** the system generates a unique authentication token, stores the agent entry, and returns the token
 
 #### Scenario: List all whitelisted agents
-- **WHEN** an administrator sends GET request to `/api/v1/agents/whitelist`
+- **WHEN** an administrator sends GET request to `/v1/agents/whitelist`
 - **THEN** the system returns a list of all whitelisted agents with their agent_id, creation time, and description (tokens SHALL NOT be included in the response)
 
 #### Scenario: Remove agent from whitelist
-- **WHEN** an administrator sends DELETE request to `/api/v1/agents/whitelist/{agent_id}`
+- **WHEN** an administrator sends DELETE request to `/v1/agents/whitelist/{agent_id}`
 - **THEN** the system removes the agent from the whitelist and invalidates its token
 
 #### Scenario: Attempt to add duplicate agent_id

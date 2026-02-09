@@ -31,14 +31,14 @@
 
 ## 5. REST API (oxmon-server/src/cert/api.rs)
 
-- [x] 5.1 Implement POST `/api/v1/certs/domains` handler — create single domain
-- [x] 5.2 Implement POST `/api/v1/certs/domains/batch` handler — batch create domains
-- [x] 5.3 Implement GET `/api/v1/certs/domains` handler — list domains with enabled/search/limit/offset query params
-- [x] 5.4 Implement GET `/api/v1/certs/domains/:id` handler — get single domain
-- [x] 5.5 Implement PUT `/api/v1/certs/domains/:id` handler — update domain (port, enabled, check_interval_secs, note)
-- [x] 5.6 Implement DELETE `/api/v1/certs/domains/:id` handler — delete domain and its check results
-- [x] 5.7 Implement GET `/api/v1/certs/status` handler — latest check result for all enabled domains
-- [x] 5.8 Implement GET `/api/v1/certs/status/:domain` handler — latest check result for specific domain
+- [x] 5.1 Implement POST `/v1/certs/domains` handler — create single domain
+- [x] 5.2 Implement POST `/v1/certs/domains/batch` handler — batch create domains
+- [x] 5.3 Implement GET `/v1/certs/domains` handler — list domains with enabled/search/limit/offset query params
+- [x] 5.4 Implement GET `/v1/certs/domains/:id` handler — get single domain
+- [x] 5.5 Implement PUT `/v1/certs/domains/:id` handler — update domain (port, enabled, check_interval_secs, note)
+- [x] 5.6 Implement DELETE `/v1/certs/domains/:id` handler — delete domain and its check results
+- [x] 5.7 Implement GET `/v1/certs/status` handler — latest check result for all enabled domains
+- [x] 5.8 Implement GET `/v1/certs/status/:domain` handler — latest check result for specific domain
 - [x] 5.9 Add input validation: reject empty/invalid domain, reject duplicate domain (409), validate port range
 - [x] 5.10 Fix route path parameter syntax: `{id}`/`{domain}` → `:id`/`:domain` (axum 0.7 uses colon syntax, not brace syntax)
 
@@ -52,7 +52,7 @@
 ## 7. Configuration and Documentation
 
 - [x] 7.1 Add certificate alert rule examples to `config/server.example.toml` (threshold on certificate.days_until_expiry < 30 warning, < 7 critical; threshold on certificate.is_valid == 0 critical)
-- [x] 7.2 Update README.md: add cert check feature description, API docs for /api/v1/certs/*, cert_check config section, certificate metrics to metrics table
+- [x] 7.2 Update README.md: add cert check feature description, API docs for /v1/certs/*, cert_check config section, certificate metrics to metrics table
 
 ## 8. Testing
 

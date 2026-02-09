@@ -31,9 +31,9 @@
 ## 4. Agent Whitelist - REST API
 
 - [x] 4.1 Create whitelist API module in oxmon-server/src/api/whitelist.rs
-- [x] 4.2 Implement POST /api/v1/agents/whitelist endpoint (add agent, return token)
-- [x] 4.3 Implement GET /api/v1/agents/whitelist endpoint (list agents without tokens)
-- [x] 4.4 Implement DELETE /api/v1/agents/whitelist/{agent_id} endpoint (remove agent)
+- [x] 4.2 Implement POST /v1/agents/whitelist endpoint (add agent, return token)
+- [x] 4.3 Implement GET /v1/agents/whitelist endpoint (list agents without tokens)
+- [x] 4.4 Implement DELETE /v1/agents/whitelist/{agent_id} endpoint (remove agent)
 - [x] 4.5 Add request/response types for whitelist API
 - [x] 4.6 Add validation for duplicate agent_id (return 409 Conflict)
 - [x] 4.7 Wire up whitelist routes to axum router
@@ -62,9 +62,9 @@
 ## 7. Certificate Details - REST API
 
 - [x] 7.1 Create certificate API module in oxmon-server/src/api/certificates.rs
-- [x] 7.2 Implement GET /api/v1/certificates/{domain} endpoint (get cert details)
-- [x] 7.3 Implement GET /api/v1/certificates endpoint with filters (expiring_within, ip_address, issuer)
-- [x] 7.4 Implement GET /api/v1/certificates/{domain}/chain endpoint (chain validation details)
+- [x] 7.2 Implement GET /v1/certificates/{domain} endpoint (get cert details)
+- [x] 7.3 Implement GET /v1/certificates endpoint with filters (expiring_within, ip_address, issuer)
+- [x] 7.4 Implement GET /v1/certificates/{domain}/chain endpoint (chain validation details)
 - [x] 7.5 Add request/response types for certificate API
 - [x] 7.6 Add pagination support for certificate list endpoint
 - [x] 7.7 Wire up certificate routes to axum router

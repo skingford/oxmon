@@ -34,7 +34,7 @@ fn default_limit() -> usize {
 /// 获取指定证书详情（按 ID）
 #[utoipa::path(
     get,
-    path = "/api/v1/certificates/{id}",
+    path = "/v1/certificates/{id}",
     security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "证书唯一标识")
@@ -74,7 +74,7 @@ async fn get_certificate(
 /// 列出证书（支持过滤）
 #[utoipa::path(
     get,
-    path = "/api/v1/certificates",
+    path = "/v1/certificates",
     security(("bearer_auth" = [])),
     params(
         CertificateListQuery
@@ -128,7 +128,7 @@ struct CertificateChainInfo {
 /// 获取证书链验证详情（按 ID）
 #[utoipa::path(
     get,
-    path = "/api/v1/certificates/{id}/chain",
+    path = "/v1/certificates/{id}/chain",
     security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "证书唯一标识")

@@ -1,22 +1,22 @@
 ## ADDED Requirements
 
 ### Requirement: System SHALL provide a login endpoint
-The system SHALL provide `POST /api/v1/auth/login` that accepts username and password, validates credentials against the `users` table, and returns a signed JWT access token upon success.
+The system SHALL provide `POST /v1/auth/login` that accepts username and password, validates credentials against the `users` table, and returns a signed JWT access token upon success.
 
 #### Scenario: Successful login with valid credentials
-- **WHEN** a POST request is made to `/api/v1/auth/login` with body `{"username": "admin", "password": "changeme"}`
+- **WHEN** a POST request is made to `/v1/auth/login` with body `{"username": "admin", "password": "changeme"}`
 - **THEN** the API SHALL return HTTP 200 with a JSON body containing `token` (JWT string) and `expires_in` (seconds until expiration)
 
 #### Scenario: Login with incorrect password
-- **WHEN** a POST request is made to `/api/v1/auth/login` with a valid username but incorrect password
+- **WHEN** a POST request is made to `/v1/auth/login` with a valid username but incorrect password
 - **THEN** the API SHALL return HTTP 401 with a JSON error body `{"error": "invalid credentials", "code": "UNAUTHORIZED"}`
 
 #### Scenario: Login with non-existent username
-- **WHEN** a POST request is made to `/api/v1/auth/login` with a username that does not exist in the `users` table
+- **WHEN** a POST request is made to `/v1/auth/login` with a username that does not exist in the `users` table
 - **THEN** the API SHALL return HTTP 401 with a JSON error body `{"error": "invalid credentials", "code": "UNAUTHORIZED"}`
 
 #### Scenario: Login with missing fields
-- **WHEN** a POST request is made to `/api/v1/auth/login` with missing `username` or `password` field
+- **WHEN** a POST request is made to `/v1/auth/login` with missing `username` or `password` field
 - **THEN** the API SHALL return HTTP 400 with a JSON error body describing the missing field
 
 ### Requirement: JWT token SHALL contain standard claims
@@ -31,7 +31,7 @@ The JWT token issued by the login endpoint SHALL contain `sub` (user id), `usern
 - **THEN** the `exp` claim SHALL equal `iat` plus 86400
 
 ### Requirement: JWT middleware SHALL protect REST API endpoints
-The system SHALL enforce JWT authentication on all REST API endpoints except health check (`GET /api/v1/health`), login (`POST /api/v1/auth/login`), OpenAPI spec (`GET /v1/openapi.yaml`), and Swagger UI (`/docs`).
+The system SHALL enforce JWT authentication on all REST API endpoints except health check (`GET /v1/health`), login (`POST /v1/auth/login`), OpenAPI spec (`GET /v1/openapi.yaml`), and Swagger UI (`/docs`).
 
 #### Scenario: Request with valid token
 - **WHEN** a request is made to a protected endpoint with header `Authorization: Bearer <valid_jwt_token>`
@@ -54,11 +54,11 @@ The system SHALL enforce JWT authentication on all REST API endpoints except hea
 - **THEN** the API SHALL return HTTP 401 with JSON body `{"error": "invalid token", "code": "UNAUTHORIZED"}`
 
 #### Scenario: Health check remains public
-- **WHEN** a GET request is made to `/api/v1/health` without any Authorization header
+- **WHEN** a GET request is made to `/v1/health` without any Authorization header
 - **THEN** the API SHALL return HTTP 200 with the health status response
 
 #### Scenario: Login endpoint remains public
-- **WHEN** a POST request is made to `/api/v1/auth/login` without any Authorization header
+- **WHEN** a POST request is made to `/v1/auth/login` without any Authorization header
 - **THEN** the API SHALL process the login request normally
 
 ### Requirement: System SHALL store user accounts in users table
@@ -111,8 +111,8 @@ The OpenAPI specification SHALL include a Bearer token security scheme and mark 
 
 #### Scenario: Protected endpoints marked in spec
 - **WHEN** the OpenAPI spec is retrieved
-- **THEN** all endpoints except `/api/v1/health` and `/api/v1/auth/login` SHALL have a security requirement referencing the Bearer auth scheme
+- **THEN** all endpoints except `/v1/health` and `/v1/auth/login` SHALL have a security requirement referencing the Bearer auth scheme
 
 #### Scenario: Login endpoint documented
 - **WHEN** the OpenAPI spec is retrieved
-- **THEN** the spec SHALL include documentation for `POST /api/v1/auth/login` with request body schema and response schema
+- **THEN** the spec SHALL include documentation for `POST /v1/auth/login` with request body schema and response schema

@@ -5,7 +5,7 @@
 ## What Changes
 
 - 新增用户帐号表（`users`），支持帐号密码管理，字段统一 `id`/`created_at`/`updated_at` 规范
-- 新增 `POST /api/v1/auth/login` 登录接口，验证帐号密码后返回 JWT access token
+- 新增 `POST /v1/auth/login` 登录接口，验证帐号密码后返回 JWT access token
 - 新增 JWT 中间件层，对除健康检查和登录外的所有 REST API 接口强制鉴权
 - 新增服务启动时自动创建默认管理员帐号（可通过配置文件指定用户名/密码）
 - **BREAKING**: 现有所有 REST API 接口（除 `GET /v1/health`）将要求在请求头中携带 `Authorization: Bearer <jwt_token>`

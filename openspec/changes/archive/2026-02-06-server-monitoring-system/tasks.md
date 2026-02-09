@@ -77,12 +77,12 @@
 ## 8. Dashboard REST API (oxmon-server)
 
 - [x] 8.1 Set up axum router with /api/v1 prefix, sharing tokio runtime with tonic gRPC
-- [x] 8.2 Implement GET /api/v1/health (version, uptime, agent count, storage status)
-- [x] 8.3 Implement GET /api/v1/agents (list agents with id, last_seen, active/inactive status)
-- [x] 8.4 Implement GET /api/v1/agents/:id/latest (latest metric values for a specific agent)
-- [x] 8.5 Implement GET /api/v1/metrics (query time-series with agent, metric, from, to, step params)
-- [x] 8.6 Implement GET /api/v1/alerts/rules (list all configured alert rules)
-- [x] 8.7 Implement GET /api/v1/alerts/history (query alert history with severity, agent, time, pagination filters)
+- [x] 8.2 Implement GET /v1/health (version, uptime, agent count, storage status)
+- [x] 8.3 Implement GET /v1/agents (list agents with id, last_seen, active/inactive status)
+- [x] 8.4 Implement GET /v1/agents/:id/latest (latest metric values for a specific agent)
+- [x] 8.5 Implement GET /v1/metrics (query time-series with agent, metric, from, to, step params)
+- [x] 8.6 Implement GET /v1/alerts/rules (list all configured alert rules)
+- [x] 8.7 Implement GET /v1/alerts/history (query alert history with severity, agent, time, pagination filters)
 - [x] 8.8 Implement unified JSON error response format (error + code fields, proper HTTP status codes)
 - [x] 8.9 Write integration tests for each API endpoint with test fixtures
 

@@ -54,11 +54,11 @@
 **路由分组结构**:
 ```
 App
-├── /api/v1/health              (公开)
-├── /api/v1/auth/login          (公开)
+├── /v1/health              (公开)
+├── /v1/auth/login          (公开)
 ├── /v1/openapi.yaml            (公开)
 ├── /docs                       (公开)
-└── /api/v1/*                   (JWT middleware layer)
+└── /v1/*                   (JWT middleware layer)
     ├── /agents
     ├── /agents/whitelist
     ├── /metrics

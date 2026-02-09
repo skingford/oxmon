@@ -5,7 +5,7 @@ oxmon currently has 16 个 REST API endpoints (metrics, alerts, cert monitoring,
 ## What Changes
 
 - Add a new REST endpoint that serves the complete oxmon API documentation in OpenAPI 3.0 format
-- Support both JSON (`/api/v1/openapi.json`) and YAML (`/api/v1/openapi.yaml`) output formats
+- Support both JSON (`/v1/openapi.json`) and YAML (`/v1/openapi.yaml`) output formats
 - The OpenAPI spec is generated at compile time from a static definition — no runtime overhead
 - Covers all existing API endpoints:
   - Health & agents (GET /health, GET /agents, GET /agents/:id/latest)

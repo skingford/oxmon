@@ -16,7 +16,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 /// 添加 Agent 到白名单
 #[utoipa::path(
     post,
-    path = "/api/v1/agents/whitelist",
+    path = "/v1/agents/whitelist",
     request_body = AddAgentRequest,
     security(("bearer_auth" = [])),
     responses(
@@ -87,7 +87,7 @@ async fn add_agent(
 /// 列出所有白名单中的 Agent（包含在线状态）
 #[utoipa::path(
     get,
-    path = "/api/v1/agents/whitelist",
+    path = "/v1/agents/whitelist",
     security(("bearer_auth" = [])),
     responses(
         (status = 200, description = "Agent 列表", body = Vec<AgentWhitelistDetail>),
@@ -135,7 +135,7 @@ async fn list_agents(
 /// 更新 Agent 白名单信息
 #[utoipa::path(
     put,
-    path = "/api/v1/agents/whitelist/{id}",
+    path = "/v1/agents/whitelist/{id}",
     request_body = UpdateAgentRequest,
     security(("bearer_auth" = [])),
     params(
@@ -214,7 +214,7 @@ async fn update_agent(
 /// 重新生成 Agent 认证 Token
 #[utoipa::path(
     post,
-    path = "/api/v1/agents/whitelist/{id}/token",
+    path = "/v1/agents/whitelist/{id}/token",
     security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "Agent 白名单唯一标识")
@@ -282,7 +282,7 @@ async fn regenerate_token(
 /// 删除 Agent（从白名单和内存注册表中移除）
 #[utoipa::path(
     delete,
-    path = "/api/v1/agents/whitelist/{id}",
+    path = "/v1/agents/whitelist/{id}",
     security(("bearer_auth" = [])),
     params(
         ("id" = String, Path, description = "Agent 白名单唯一标识")

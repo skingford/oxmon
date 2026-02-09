@@ -19,8 +19,8 @@
 ## 3. Route Handlers
 
 - [x] 3.1 Implement `OnceLock`-based caching for the OpenAPI spec JSON value
-- [x] 3.2 Implement GET `/api/v1/openapi.json` handler returning cached JSON with `application/json` Content-Type
-- [x] 3.3 Implement GET `/api/v1/openapi.yaml` handler serializing cached value to YAML with `text/yaml` Content-Type
+- [x] 3.2 Implement GET `/v1/openapi.json` handler returning cached JSON with `application/json` Content-Type
+- [x] 3.3 Implement GET `/v1/openapi.yaml` handler serializing cached value to YAML with `text/yaml` Content-Type
 - [x] 3.4 Export `openapi_routes() -> Router<AppState>` function
 
 ## 4. Server Integration

@@ -14,12 +14,12 @@ retention_days = 7
 
 # Require agent authentication (default: false)
 # When enabled, agents must provide a valid token in the whitelist
-# Manage whitelist via: POST/GET/DELETE /api/v1/agents/whitelist
+# Manage whitelist via: POST/GET/DELETE /v1/agents/whitelist
 require_agent_auth = false
 
 # REST API Authentication (JWT)
 # All REST API endpoints (except health check and login) require a valid JWT token.
-# Obtain a token via: POST /api/v1/auth/login
+# Obtain a token via: POST /v1/auth/login
 [auth]
 # JWT signing secret. If not set, a random secret is generated on each startup
 # (tokens will be invalidated on restart). Set a fixed value for production.
@@ -136,7 +136,7 @@ aggregation_window_secs = 60
 
 # Certificate Check Configuration
 # Server periodically checks TLS certificates for monitored domains.
-# Domains are managed via REST API: POST/GET/PUT/DELETE /api/v1/certs/domains
+# Domains are managed via REST API: POST/GET/PUT/DELETE /v1/certs/domains
 
 [cert_check]
 enabled = true

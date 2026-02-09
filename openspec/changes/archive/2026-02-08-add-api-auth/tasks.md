@@ -24,7 +24,7 @@
 
 ## 5. 登录接口
 
-- [x] 5.1 在 `oxmon-server/src/auth.rs` 或新建 `api/auth.rs` 中实现 `POST /api/v1/auth/login` handler，验证用户名密码后调用 `create_token` 返回 JWT
+- [x] 5.1 在 `oxmon-server/src/auth.rs` 或新建 `api/auth.rs` 中实现 `POST /v1/auth/login` handler，验证用户名密码后调用 `create_token` 返回 JWT
 - [x] 5.2 为 login handler 添加 utoipa `#[utoipa::path]` 注解，生成 OpenAPI 文档
 
 ## 6. JWT 中间件

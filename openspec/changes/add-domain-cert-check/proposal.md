@@ -28,5 +28,5 @@
 - **代码**: 新增 `oxmon-cert` crate（或在 `oxmon-server` 中新增模块）实现证书检测引擎；修改 `oxmon-storage` 增加域名表；修改 `oxmon-server` 增加 API 路由和检测调度
 - **依赖**: 引入 `rustls` + `x509-parser`（或 `webpki`）用于 TLS 连接和证书解析，项目已使用 rustls 生态，兼容性好
 - **数据库**: SQLite 新增 `cert_domains` 表（域名、端口、启用状态、备注、创建/更新时间）和 `cert_check_results` 表（检测结果历史）
-- **API**: 新增 `/api/v1/certs/domains` (CRUD) 和 `/api/v1/certs/status` (查询检测结果) 端点
+- **API**: 新增 `/v1/certs/domains` (CRUD) 和 `/v1/certs/status` (查询检测结果) 端点
 - **告警**: 复用现有阈值告警规则，配置 `certificate.days_until_expiry` 指标的规则即可，无需修改告警引擎

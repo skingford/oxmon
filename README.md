@@ -294,20 +294,20 @@ aggregation_window_secs = 60   # Aggregation window (seconds) for batching simil
 
 ## REST API
 
-### `GET /api/v1/health`
+### `GET /v1/health`
 
 Health check, returns server status.
 
 ```bash
-curl http://localhost:8080/api/v1/health
+curl http://localhost:8080/v1/health
 ```
 
-### `GET /api/v1/agents`
+### `GET /v1/agents`
 
 List all registered agents.
 
 ```bash
-curl http://localhost:8080/api/v1/agents
+curl http://localhost:8080/v1/agents
 ```
 
 Response example:
@@ -322,15 +322,15 @@ Response example:
 ]
 ```
 
-### `GET /api/v1/agents/:id/latest`
+### `GET /v1/agents/:id/latest`
 
 Get latest metric values for a specific agent.
 
 ```bash
-curl http://localhost:8080/api/v1/agents/web-server-01/latest
+curl http://localhost:8080/v1/agents/web-server-01/latest
 ```
 
-### `GET /api/v1/metrics`
+### `GET /v1/metrics`
 
 Query time-series data.
 
@@ -342,18 +342,18 @@ Query time-series data.
 | `to` | End time (ISO 8601) | Yes |
 
 ```bash
-curl "http://localhost:8080/api/v1/metrics?agent=web-server-01&metric=cpu.usage&from=2026-02-06T00:00:00Z&to=2026-02-06T23:59:59Z"
+curl "http://localhost:8080/v1/metrics?agent=web-server-01&metric=cpu.usage&from=2026-02-06T00:00:00Z&to=2026-02-06T23:59:59Z"
 ```
 
-### `GET /api/v1/alerts/rules`
+### `GET /v1/alerts/rules`
 
 List all configured alert rules.
 
 ```bash
-curl http://localhost:8080/api/v1/alerts/rules
+curl http://localhost:8080/v1/alerts/rules
 ```
 
-### `GET /api/v1/alerts/history`
+### `GET /v1/alerts/history`
 
 Query alert history.
 
@@ -367,19 +367,19 @@ Query alert history.
 | `offset` | Pagination offset | No |
 
 ```bash
-curl "http://localhost:8080/api/v1/alerts/history?severity=critical&limit=50"
+curl "http://localhost:8080/v1/alerts/history?severity=critical&limit=50"
 ```
 
 ### Agent Whitelist Management
 
 The agent whitelist controls which agents can report data via gRPC. Agents must be **manually** added via the API — there is no auto-registration. `agent_id` has a uniqueness constraint; duplicate additions return 409.
 
-#### `POST /api/v1/agents/whitelist`
+#### `POST /v1/agents/whitelist`
 
 Add an agent to the whitelist. Returns an authentication token (shown only once at creation — save it).
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/agents/whitelist \
+curl -X POST http://localhost:8080/v1/agents/whitelist \
   -H "Content-Type: application/json" \
   -d '{"agent_id": "web-server-01", "description": "Production web server"}'
 ```
@@ -394,12 +394,12 @@ Response example:
 }
 ```
 
-#### `GET /api/v1/agents/whitelist`
+#### `GET /v1/agents/whitelist`
 
 List all whitelisted agents with online status (tokens are not included).
 
 ```bash
-curl http://localhost:8080/api/v1/agents/whitelist
+curl http://localhost:8080/v1/agents/whitelist
 ```
 
 Response example:
@@ -418,22 +418,22 @@ Response example:
 
 `status` values: `active` (online), `inactive` (offline), `unknown` (never reported).
 
-#### `PUT /api/v1/agents/whitelist/{agent_id}`
+#### `PUT /v1/agents/whitelist/{agent_id}`
 
 Update agent whitelist information (e.g., description).
 
 ```bash
-curl -X PUT http://localhost:8080/api/v1/agents/whitelist/web-server-01 \
+curl -X PUT http://localhost:8080/v1/agents/whitelist/web-server-01 \
   -H "Content-Type: application/json" \
   -d '{"description": "Production web server - migrated"}'
 ```
 
-#### `POST /api/v1/agents/whitelist/{agent_id}/token`
+#### `POST /v1/agents/whitelist/{agent_id}/token`
 
 Regenerate the authentication token for an agent. The old token is immediately invalidated. Update the `auth_token` in the agent config and restart the agent.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/agents/whitelist/web-server-01/token
+curl -X POST http://localhost:8080/v1/agents/whitelist/web-server-01/token
 ```
 
 Response example:
@@ -445,19 +445,19 @@ Response example:
 }
 ```
 
-#### `DELETE /api/v1/agents/whitelist/{agent_id}`
+#### `DELETE /v1/agents/whitelist/{agent_id}`
 
 Remove an agent from the whitelist.
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/agents/whitelist/web-server-01
+curl -X DELETE http://localhost:8080/v1/agents/whitelist/web-server-01
 ```
 
 ### Certificate Details
 
 The server periodically collects detailed certificate information (issuer, SANs, chain validation, resolved IPs, etc.), queryable via the following endpoints.
 
-#### `GET /api/v1/certificates`
+#### `GET /v1/certificates`
 
 List all certificate details with filtering and pagination.
 
@@ -471,21 +471,21 @@ List all certificate details with filtering and pagination.
 
 ```bash
 # List all certificates
-curl http://localhost:8080/api/v1/certificates
+curl http://localhost:8080/v1/certificates
 
 # Filter certificates expiring within 30 days
-curl "http://localhost:8080/api/v1/certificates?expiring_within_days=30"
+curl "http://localhost:8080/v1/certificates?expiring_within_days=30"
 
 # Filter by issuer
-curl "http://localhost:8080/api/v1/certificates?issuer=Let%27s%20Encrypt"
+curl "http://localhost:8080/v1/certificates?issuer=Let%27s%20Encrypt"
 ```
 
-#### `GET /api/v1/certificates/{domain}`
+#### `GET /v1/certificates/{domain}`
 
 Get certificate details for a specific domain.
 
 ```bash
-curl http://localhost:8080/api/v1/certificates/example.com
+curl http://localhost:8080/v1/certificates/example.com
 ```
 
 Response example:
@@ -504,92 +504,92 @@ Response example:
 }
 ```
 
-#### `GET /api/v1/certificates/{domain}/chain`
+#### `GET /v1/certificates/{domain}/chain`
 
 Get certificate chain validation details for a specific domain.
 
 ```bash
-curl http://localhost:8080/api/v1/certificates/example.com/chain
+curl http://localhost:8080/v1/certificates/example.com/chain
 ```
 
 ### Certificate Domain Management
 
-#### `POST /api/v1/certs/domains`
+#### `POST /v1/certs/domains`
 
 Add a domain for monitoring.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/certs/domains \
+curl -X POST http://localhost:8080/v1/certs/domains \
   -H "Content-Type: application/json" \
   -d '{"domain": "example.com", "port": 443, "note": "Main site"}'
 ```
 
-#### `POST /api/v1/certs/domains/batch`
+#### `POST /v1/certs/domains/batch`
 
 Batch add domains.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/certs/domains/batch \
+curl -X POST http://localhost:8080/v1/certs/domains/batch \
   -H "Content-Type: application/json" \
   -d '{"domains": [{"domain": "a.com"}, {"domain": "b.com", "port": 8443}]}'
 ```
 
-#### `GET /api/v1/certs/domains`
+#### `GET /v1/certs/domains`
 
 List domains (supports `?enabled=true&search=example&limit=20&offset=0`).
 
 ```bash
-curl http://localhost:8080/api/v1/certs/domains
+curl http://localhost:8080/v1/certs/domains
 ```
 
-#### `PUT /api/v1/certs/domains/:id`
+#### `PUT /v1/certs/domains/:id`
 
 Update domain configuration (port, enabled status, check interval).
 
 ```bash
-curl -X PUT http://localhost:8080/api/v1/certs/domains/<id> \
+curl -X PUT http://localhost:8080/v1/certs/domains/<id> \
   -H "Content-Type: application/json" \
   -d '{"check_interval_secs": 3600, "enabled": true}'
 ```
 
-#### `DELETE /api/v1/certs/domains/:id`
+#### `DELETE /v1/certs/domains/:id`
 
 Delete a domain and its check results.
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/certs/domains/<id>
+curl -X DELETE http://localhost:8080/v1/certs/domains/<id>
 ```
 
-#### `GET /api/v1/certs/status`
+#### `GET /v1/certs/status`
 
 Get the latest certificate check results for all domains.
 
 ```bash
-curl http://localhost:8080/api/v1/certs/status
+curl http://localhost:8080/v1/certs/status
 ```
 
-#### `GET /api/v1/certs/status/:domain`
+#### `GET /v1/certs/status/:domain`
 
 Get the latest certificate check result for a specific domain.
 
 ```bash
-curl http://localhost:8080/api/v1/certs/status/example.com
+curl http://localhost:8080/v1/certs/status/example.com
 ```
 
-#### `POST /api/v1/certs/domains/:id/check`
+#### `POST /v1/certs/domains/:id/check`
 
 Manually trigger a certificate check for a specific domain.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/certs/domains/<id>/check
+curl -X POST http://localhost:8080/v1/certs/domains/<id>/check
 ```
 
-#### `POST /api/v1/certs/check`
+#### `POST /v1/certs/check`
 
 Manually trigger certificate checks for all enabled domains.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/certs/check
+curl -X POST http://localhost:8080/v1/certs/check
 ```
 
 ### API Documentation (OpenAPI)
@@ -598,21 +598,21 @@ The server provides OpenAPI 3.0.3 API documentation, which can be imported direc
 
 | Endpoint | Format |
 |----------|--------|
-| `GET /api/v1/openapi.json` | JSON format |
-| `GET /api/v1/openapi.yaml` | YAML format |
+| `GET /v1/openapi.json` | JSON format |
+| `GET /v1/openapi.yaml` | YAML format |
 
 ```bash
 # Get JSON format API documentation
-curl http://localhost:8080/api/v1/openapi.json
+curl http://localhost:8080/v1/openapi.json
 
 # Get YAML format API documentation
-curl http://localhost:8080/api/v1/openapi.yaml
+curl http://localhost:8080/v1/openapi.yaml
 ```
 
 **Apifox Import:**
 1. Open Apifox -> Project Settings -> Import Data
 2. Select "OpenAPI/Swagger" -> "URL Import"
-3. Enter `http://<server-ip>:8080/api/v1/openapi.json`
+3. Enter `http://<server-ip>:8080/v1/openapi.json`
 4. Click Import to get all API definitions
 
 ### Certificate Check Configuration

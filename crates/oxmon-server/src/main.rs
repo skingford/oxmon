@@ -3,6 +3,7 @@ mod auth;
 mod cert;
 mod config;
 mod grpc;
+mod logging;
 mod openapi;
 mod state;
 
@@ -322,7 +323,8 @@ async fn main() -> Result<()> {
         .with_state(state.clone())
         .merge(SwaggerUi::new("/docs").url("/v1/openapi.json", merged_spec))
         .merge(openapi::yaml_route(spec))
-        .layer(cors);
+        .layer(cors)
+        .layer(middleware::from_fn(logging::request_logging));
     let http_listener = tokio::net::TcpListener::bind(http_addr).await?;
     let http_server = axum::serve(http_listener, app);
 

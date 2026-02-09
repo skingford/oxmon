@@ -294,20 +294,20 @@ aggregation_window_secs = 60   # 相似告警的聚合窗口（秒），窗口�
 
 ## REST API
 
-### `GET /api/v1/health`
+### `GET /v1/health`
 
 健康检查，返回服务端状态。
 
 ```bash
-curl http://localhost:8080/api/v1/health
+curl http://localhost:8080/v1/health
 ```
 
-### `GET /api/v1/agents`
+### `GET /v1/agents`
 
 列出所有已注册的 Agent。
 
 ```bash
-curl http://localhost:8080/api/v1/agents
+curl http://localhost:8080/v1/agents
 ```
 
 响应示例：
@@ -322,15 +322,15 @@ curl http://localhost:8080/api/v1/agents
 ]
 ```
 
-### `GET /api/v1/agents/:id/latest`
+### `GET /v1/agents/:id/latest`
 
 获取指定 Agent 的最新指标值。
 
 ```bash
-curl http://localhost:8080/api/v1/agents/web-server-01/latest
+curl http://localhost:8080/v1/agents/web-server-01/latest
 ```
 
-### `GET /api/v1/metrics`
+### `GET /v1/metrics`
 
 查询时序数据。
 
@@ -342,18 +342,18 @@ curl http://localhost:8080/api/v1/agents/web-server-01/latest
 | `to` | 结束时间 (ISO 8601) | 是 |
 
 ```bash
-curl "http://localhost:8080/api/v1/metrics?agent=web-server-01&metric=cpu.usage&from=2026-02-06T00:00:00Z&to=2026-02-06T23:59:59Z"
+curl "http://localhost:8080/v1/metrics?agent=web-server-01&metric=cpu.usage&from=2026-02-06T00:00:00Z&to=2026-02-06T23:59:59Z"
 ```
 
-### `GET /api/v1/alerts/rules`
+### `GET /v1/alerts/rules`
 
 列出所有已配置的告警规则。
 
 ```bash
-curl http://localhost:8080/api/v1/alerts/rules
+curl http://localhost:8080/v1/alerts/rules
 ```
 
-### `GET /api/v1/alerts/history`
+### `GET /v1/alerts/history`
 
 查询告警历史。
 
@@ -367,19 +367,19 @@ curl http://localhost:8080/api/v1/alerts/rules
 | `offset` | 分页偏移 | 否 |
 
 ```bash
-curl "http://localhost:8080/api/v1/alerts/history?severity=critical&limit=50"
+curl "http://localhost:8080/v1/alerts/history?severity=critical&limit=50"
 ```
 
 ### Agent 白名单管理
 
 Agent 白名单用于控制哪些 Agent 可以通过 gRPC 上报数据。Agent 需要**手动**通过 API 添加到白名单，不会自动注册。`agent_id` 具有唯一性约束，重复添加返回 409。
 
-#### `POST /api/v1/agents/whitelist`
+#### `POST /v1/agents/whitelist`
 
 添加 Agent 到白名单，返回认证 token（仅在创建时返回一次，请妥善保存）。
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/agents/whitelist \
+curl -X POST http://localhost:8080/v1/agents/whitelist \
   -H "Content-Type: application/json" \
   -d '{"agent_id": "web-server-01", "description": "生产环境 Web 服务器"}'
 ```
@@ -394,12 +394,12 @@ curl -X POST http://localhost:8080/api/v1/agents/whitelist \
 }
 ```
 
-#### `GET /api/v1/agents/whitelist`
+#### `GET /v1/agents/whitelist`
 
 列出所有白名单中的 Agent（包含在线状态，不包含 token）。
 
 ```bash
-curl http://localhost:8080/api/v1/agents/whitelist
+curl http://localhost:8080/v1/agents/whitelist
 ```
 
 响应示例：
@@ -418,22 +418,22 @@ curl http://localhost:8080/api/v1/agents/whitelist
 
 `status` 字段取值：`active`（在线）、`inactive`（离线）、`unknown`（从未上报）。
 
-#### `PUT /api/v1/agents/whitelist/{agent_id}`
+#### `PUT /v1/agents/whitelist/{agent_id}`
 
 更新 Agent 白名单信息（如描述）。
 
 ```bash
-curl -X PUT http://localhost:8080/api/v1/agents/whitelist/web-server-01 \
+curl -X PUT http://localhost:8080/v1/agents/whitelist/web-server-01 \
   -H "Content-Type: application/json" \
   -d '{"description": "生产环境 Web 服务器 - 已迁移"}'
 ```
 
-#### `POST /api/v1/agents/whitelist/{agent_id}/token`
+#### `POST /v1/agents/whitelist/{agent_id}/token`
 
 重新生成 Agent 的认证 Token。生成后旧 Token 立即失效，请更新 Agent 配置中的 `auth_token` 并重启 Agent。
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/agents/whitelist/web-server-01/token
+curl -X POST http://localhost:8080/v1/agents/whitelist/web-server-01/token
 ```
 
 响应示例：
@@ -445,19 +445,19 @@ curl -X POST http://localhost:8080/api/v1/agents/whitelist/web-server-01/token
 }
 ```
 
-#### `DELETE /api/v1/agents/whitelist/{agent_id}`
+#### `DELETE /v1/agents/whitelist/{agent_id}`
 
 从白名单中删除 Agent。
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/agents/whitelist/web-server-01
+curl -X DELETE http://localhost:8080/v1/agents/whitelist/web-server-01
 ```
 
 ### 证书详情查询
 
 Server 定期采集证书详细信息（颁发者、SAN、证书链验证、解析 IP 等），可通过以下接口查询。
 
-#### `GET /api/v1/certificates`
+#### `GET /v1/certificates`
 
 列出所有证书详情，支持过滤和分页。
 
@@ -471,21 +471,21 @@ Server 定期采集证书详细信息（颁发者、SAN、证书链验证、解�
 
 ```bash
 # 查询所有证书
-curl http://localhost:8080/api/v1/certificates
+curl http://localhost:8080/v1/certificates
 
 # 查询 30 天内即将过期的证书
-curl "http://localhost:8080/api/v1/certificates?expiring_within_days=30"
+curl "http://localhost:8080/v1/certificates?expiring_within_days=30"
 
 # 按颁发者过滤
-curl "http://localhost:8080/api/v1/certificates?issuer=Let%27s%20Encrypt"
+curl "http://localhost:8080/v1/certificates?issuer=Let%27s%20Encrypt"
 ```
 
-#### `GET /api/v1/certificates/{domain}`
+#### `GET /v1/certificates/{domain}`
 
 获取指定域名的证书详情。
 
 ```bash
-curl http://localhost:8080/api/v1/certificates/example.com
+curl http://localhost:8080/v1/certificates/example.com
 ```
 
 响应示例：
@@ -504,92 +504,92 @@ curl http://localhost:8080/api/v1/certificates/example.com
 }
 ```
 
-#### `GET /api/v1/certificates/{domain}/chain`
+#### `GET /v1/certificates/{domain}/chain`
 
 获取指定域名的证书链验证信息。
 
 ```bash
-curl http://localhost:8080/api/v1/certificates/example.com/chain
+curl http://localhost:8080/v1/certificates/example.com/chain
 ```
 
 ### 证书域名管理
 
-#### `POST /api/v1/certs/domains`
+#### `POST /v1/certs/domains`
 
 添加监控域名。
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/certs/domains \
+curl -X POST http://localhost:8080/v1/certs/domains \
   -H "Content-Type: application/json" \
   -d '{"domain": "example.com", "port": 443, "note": "主站"}'
 ```
 
-#### `POST /api/v1/certs/domains/batch`
+#### `POST /v1/certs/domains/batch`
 
 批量添加域名。
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/certs/domains/batch \
+curl -X POST http://localhost:8080/v1/certs/domains/batch \
   -H "Content-Type: application/json" \
   -d '{"domains": [{"domain": "a.com"}, {"domain": "b.com", "port": 8443}]}'
 ```
 
-#### `GET /api/v1/certs/domains`
+#### `GET /v1/certs/domains`
 
 查询域名列表（支持 `?enabled=true&search=example&limit=20&offset=0`）。
 
 ```bash
-curl http://localhost:8080/api/v1/certs/domains
+curl http://localhost:8080/v1/certs/domains
 ```
 
-#### `PUT /api/v1/certs/domains/:id`
+#### `PUT /v1/certs/domains/:id`
 
 更新域名配置（端口、启用状态、检测间隔）。
 
 ```bash
-curl -X PUT http://localhost:8080/api/v1/certs/domains/<id> \
+curl -X PUT http://localhost:8080/v1/certs/domains/<id> \
   -H "Content-Type: application/json" \
   -d '{"check_interval_secs": 3600, "enabled": true}'
 ```
 
-#### `DELETE /api/v1/certs/domains/:id`
+#### `DELETE /v1/certs/domains/:id`
 
 删除域名及其检测记录。
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/certs/domains/<id>
+curl -X DELETE http://localhost:8080/v1/certs/domains/<id>
 ```
 
-#### `GET /api/v1/certs/status`
+#### `GET /v1/certs/status`
 
 查询所有域名最新证书检测结果。
 
 ```bash
-curl http://localhost:8080/api/v1/certs/status
+curl http://localhost:8080/v1/certs/status
 ```
 
-#### `GET /api/v1/certs/status/:domain`
+#### `GET /v1/certs/status/:domain`
 
 查询指定域名的最新证书检测结果。
 
 ```bash
-curl http://localhost:8080/api/v1/certs/status/example.com
+curl http://localhost:8080/v1/certs/status/example.com
 ```
 
-#### `POST /api/v1/certs/domains/:id/check`
+#### `POST /v1/certs/domains/:id/check`
 
 手动触发指定域名的证书检测。
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/certs/domains/<id>/check
+curl -X POST http://localhost:8080/v1/certs/domains/<id>/check
 ```
 
-#### `POST /api/v1/certs/check`
+#### `POST /v1/certs/check`
 
 手动触发所有已启用域名的证书检测。
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/certs/check
+curl -X POST http://localhost:8080/v1/certs/check
 ```
 
 ### API 文档（OpenAPI）
@@ -598,21 +598,21 @@ Server 提供 OpenAPI 3.0.3 格式的接口文档，可直接导入 Apifox、Pos
 
 | 端点 | 格式 |
 |------|------|
-| `GET /api/v1/openapi.json` | JSON 格式 |
-| `GET /api/v1/openapi.yaml` | YAML 格式 |
+| `GET /v1/openapi.json` | JSON 格式 |
+| `GET /v1/openapi.yaml` | YAML 格式 |
 
 ```bash
 # 获取 JSON 格式的 API 文档
-curl http://localhost:8080/api/v1/openapi.json
+curl http://localhost:8080/v1/openapi.json
 
 # 获取 YAML 格式的 API 文档
-curl http://localhost:8080/api/v1/openapi.yaml
+curl http://localhost:8080/v1/openapi.yaml
 ```
 
 **Apifox 导入方式：**
 1. 打开 Apifox → 项目设置 → 导入数据
 2. 选择 "OpenAPI/Swagger" → "URL 导入"
-3. 输入 `http://<server-ip>:8080/api/v1/openapi.json`
+3. 输入 `http://<server-ip>:8080/v1/openapi.json`
 4. 点击导入即可获取所有接口定义
 
 ### 证书检测配置

@@ -15,7 +15,7 @@ The project uses axum 0.7 for HTTP routing, serde/serde_json for serialization, 
 **Non-Goals:**
 - Auto-generation from Rust types via proc macros (e.g., utoipa) — adds complexity and heavy compile-time deps for a relatively small API surface
 - Swagger UI hosting — users can paste the spec URL into Apifox/Swagger UI themselves
-- API versioning changes — the existing `/api/v1/` prefix remains unchanged
+- API versioning changes — the existing `/v1/` prefix remains unchanged
 
 ## Decisions
 
@@ -47,9 +47,9 @@ The project uses axum 0.7 for HTTP routing, serde/serde_json for serialization, 
 
 ### 4. Route placement
 
-**Decision**: Mount at `/api/v1/openapi.json` and `/api/v1/openapi.yaml`, integrated into the existing axum router in `main.rs`.
+**Decision**: Mount at `/v1/openapi.json` and `/v1/openapi.yaml`, integrated into the existing axum router in `main.rs`.
 
-**Rationale**: Follows the existing `/api/v1/` convention. The `.json`/`.yaml` suffix is a common pattern for OpenAPI spec endpoints (used by FastAPI, Spring, etc.).
+**Rationale**: Follows the existing `/v1/` convention. The `.json`/`.yaml` suffix is a common pattern for OpenAPI spec endpoints (used by FastAPI, Spring, etc.).
 
 ## Risks / Trade-offs
 

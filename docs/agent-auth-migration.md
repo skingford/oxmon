@@ -30,7 +30,7 @@ require_agent_auth = false  # 先保持为 false，稍后启用
 
 ```bash
 # 为 agent 添加到白名单
-curl -X POST http://localhost:8080/api/v1/agents/whitelist \
+curl -X POST http://localhost:8080/v1/agents/whitelist \
   -H "Content-Type: application/json" \
   -d '{
     "agent_id": "web-server-01",
@@ -117,13 +117,13 @@ tail -f logs/server.log | grep "UNAUTHENTICATED\|not in whitelist\|Invalid token
 ### 列出所有白名单 Agent
 
 ```bash
-curl http://localhost:8080/api/v1/agents/whitelist
+curl http://localhost:8080/v1/agents/whitelist
 ```
 
 ### 删除 Agent
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/agents/whitelist/web-server-01
+curl -X DELETE http://localhost:8080/v1/agents/whitelist/web-server-01
 ```
 
 ### Token 轮换
@@ -179,8 +179,8 @@ curl -X DELETE http://localhost:8080/api/v1/agents/whitelist/web-server-01
 
 ## 相关 API
 
-- `POST /api/v1/agents/whitelist` - 添加 agent
-- `GET /api/v1/agents/whitelist` - 列出所有 agent
-- `DELETE /api/v1/agents/whitelist/{agent_id}` - 删除 agent
+- `POST /v1/agents/whitelist` - 添加 agent
+- `GET /v1/agents/whitelist` - 列出所有 agent
+- `DELETE /v1/agents/whitelist/{agent_id}` - 删除 agent
 
 详细 API 文档请访问: `http://localhost:8080/docs`

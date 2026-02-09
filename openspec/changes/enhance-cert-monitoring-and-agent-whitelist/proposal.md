@@ -32,5 +32,5 @@ The current certificate monitoring system lacks detailed information after domai
 - Extended certificate storage schema with additional fields (ip_addresses, issuer, subject_alt_names, chain_valid, etc.)
 
 **API Changes:**
-- New REST endpoints: `/api/v1/agents/whitelist` (GET, POST, DELETE)
+- New REST endpoints: `/v1/agents/whitelist` (GET, POST, DELETE)
 - gRPC `ReportMetrics` requires authentication header/metadata

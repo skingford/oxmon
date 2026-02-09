@@ -47,15 +47,15 @@ The system SHALL extend the certificate storage schema to persist all collected 
 The system SHALL provide REST API endpoints to retrieve detailed certificate information for monitoring and troubleshooting.
 
 #### Scenario: Get certificate details by domain
-- **WHEN** a user sends GET request to `/api/v1/certificates/{domain}`
+- **WHEN** a user sends GET request to `/v1/certificates/{domain}`
 - **THEN** the system returns the complete certificate details including expiration, IPs, issuer, SANs, and chain validation status
 
 #### Scenario: List certificates with filters
-- **WHEN** a user sends GET request to `/api/v1/certificates` with optional filters (expiring_within, ip_address, issuer)
+- **WHEN** a user sends GET request to `/v1/certificates` with optional filters (expiring_within, ip_address, issuer)
 - **THEN** the system returns a paginated list of certificates matching the filters
 
 #### Scenario: Get certificate chain validation details
-- **WHEN** a user sends GET request to `/api/v1/certificates/{domain}/chain`
+- **WHEN** a user sends GET request to `/v1/certificates/{domain}/chain`
 - **THEN** the system returns the complete certificate chain with validation status for each certificate in the chain
 
 ### Requirement: Scheduled certificate detail updates

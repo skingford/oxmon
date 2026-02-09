@@ -5,7 +5,7 @@ The REST API router SHALL register routes for certificate domain CRUD and status
 
 #### Scenario: Register cert domain routes
 - **WHEN** the Server starts and initializes the axum router
-- **THEN** the router SHALL include routes for POST/GET /api/v1/certs/domains, GET/PUT/DELETE /api/v1/certs/domains/:id, POST /api/v1/certs/domains/batch, GET /api/v1/certs/status, and GET /api/v1/certs/status/:domain
+- **THEN** the router SHALL include routes for POST/GET /v1/certs/domains, GET/PUT/DELETE /v1/certs/domains/:id, POST /v1/certs/domains/batch, GET /v1/certs/status, and GET /v1/certs/status/:domain
 
 #### Scenario: Cert routes share AppState
 - **WHEN** cert domain API handlers execute

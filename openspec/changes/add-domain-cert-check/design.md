@@ -96,13 +96,13 @@ oxmon-server/src/
 ### 6. API 设计
 
 ```
-POST   /api/v1/certs/domains          添加域名（支持单个或批量）
-GET    /api/v1/certs/domains          查询域名列表（支持分页、状态过滤）
-GET    /api/v1/certs/domains/:id      查询单个域名详情
-PUT    /api/v1/certs/domains/:id      更新域名配置（端口、启用状态、检测间隔）
-DELETE /api/v1/certs/domains/:id      删除域名
-GET    /api/v1/certs/status           查询所有域名最新检测结果
-GET    /api/v1/certs/status/:domain   查询单个域名检测结果
+POST   /v1/certs/domains          添加域名（支持单个或批量）
+GET    /v1/certs/domains          查询域名列表（支持分页、状态过滤）
+GET    /v1/certs/domains/:id      查询单个域名详情
+PUT    /v1/certs/domains/:id      更新域名配置（端口、启用状态、检测间隔）
+DELETE /v1/certs/domains/:id      删除域名
+GET    /v1/certs/status           查询所有域名最新检测结果
+GET    /v1/certs/status/:domain   查询单个域名检测结果
 ```
 
 ### 7. 数据库 Schema

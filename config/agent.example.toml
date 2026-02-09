@@ -7,7 +7,7 @@ agent_id = "web-server-01"
 server_endpoint = "http://127.0.0.1:9090"
 
 # Authentication token (optional, required if server has require_agent_auth enabled)
-# Generate a token by calling: POST /api/v1/agents/whitelist on the server
+# Generate a token by calling: POST /v1/agents/whitelist on the server
 # auth_token = "your-token-here"
 
 # How often to collect metrics (seconds)

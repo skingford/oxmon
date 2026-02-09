@@ -4,7 +4,7 @@
 The REST API SHALL provide an endpoint to list all known agents and their status.
 
 #### Scenario: List all agents
-- **WHEN** a GET request is made to `/api/v1/agents`
+- **WHEN** a GET request is made to `/v1/agents`
 - **THEN** the API SHALL return a JSON array of agents with id, last_seen timestamp, and status (active/inactive)
 
 #### Scenario: Agent marked inactive
@@ -15,7 +15,7 @@ The REST API SHALL provide an endpoint to list all known agents and their status
 The REST API SHALL provide an endpoint to query metric time-series data.
 
 #### Scenario: Query metrics with time range
-- **WHEN** a GET request is made to `/api/v1/metrics?agent=web-01&metric=cpu.usage&from=2024-01-01T00:00:00Z&to=2024-01-01T01:00:00Z`
+- **WHEN** a GET request is made to `/v1/metrics?agent=web-01&metric=cpu.usage&from=2024-01-01T00:00:00Z&to=2024-01-01T01:00:00Z`
 - **THEN** the API SHALL return a JSON array of data points with timestamp and value, ordered by timestamp ascending
 
 #### Scenario: Query with step aggregation
@@ -23,32 +23,32 @@ The REST API SHALL provide an endpoint to query metric time-series data.
 - **THEN** the API SHALL return data points aggregated at 5-minute intervals using average as the default aggregation function
 
 #### Scenario: Query missing required parameters
-- **WHEN** a GET request to `/api/v1/metrics` is missing the "agent" or "metric" parameter
+- **WHEN** a GET request to `/v1/metrics` is missing the "agent" or "metric" parameter
 - **THEN** the API SHALL return HTTP 400 with a JSON error describing the missing parameters
 
 ### Requirement: API SHALL query latest metric values
 The REST API SHALL provide an endpoint to get the most recent value for each metric of an agent.
 
 #### Scenario: Get latest metrics for agent
-- **WHEN** a GET request is made to `/api/v1/agents/web-01/latest`
+- **WHEN** a GET request is made to `/v1/agents/web-01/latest`
 - **THEN** the API SHALL return a JSON object with the most recent value and timestamp for each metric reported by agent "web-01"
 
 #### Scenario: Agent not found
-- **WHEN** a GET request is made to `/api/v1/agents/unknown-agent/latest`
+- **WHEN** a GET request is made to `/v1/agents/unknown-agent/latest`
 - **THEN** the API SHALL return HTTP 404 with a JSON error message
 
 ### Requirement: API SHALL list alert rules
 The REST API SHALL provide an endpoint to list all configured alert rules.
 
 #### Scenario: List all rules
-- **WHEN** a GET request is made to `/api/v1/alerts/rules`
+- **WHEN** a GET request is made to `/v1/alerts/rules`
 - **THEN** the API SHALL return a JSON array of all alert rules with their id, type, metric, agent_pattern, parameters, severity, and enabled status
 
 ### Requirement: API SHALL query alert history
 The REST API SHALL provide an endpoint to query historical alert events.
 
 #### Scenario: Query alert history with time range
-- **WHEN** a GET request is made to `/api/v1/alerts/history?from=2024-01-01T00:00:00Z&to=2024-01-02T00:00:00Z`
+- **WHEN** a GET request is made to `/v1/alerts/history?from=2024-01-01T00:00:00Z&to=2024-01-02T00:00:00Z`
 - **THEN** the API SHALL return a JSON array of AlertEvents within the time range, ordered by timestamp descending
 
 #### Scenario: Filter alert history by severity
@@ -67,7 +67,7 @@ The REST API SHALL provide an endpoint to query historical alert events.
 The REST API SHALL provide a health check endpoint.
 
 #### Scenario: Health check when healthy
-- **WHEN** a GET request is made to `/api/v1/health`
+- **WHEN** a GET request is made to `/v1/health`
 - **THEN** the API SHALL return HTTP 200 with a JSON body containing server version, uptime, number of connected agents, and storage status
 
 #### Scenario: Health check with storage error

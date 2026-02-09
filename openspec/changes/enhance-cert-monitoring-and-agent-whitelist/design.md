@@ -147,12 +147,12 @@ impl Interceptor for AuthInterceptor {
 
 ### Decision 5: REST API for whitelist management
 
-**Choice**: Add endpoints under `/api/v1/agents/whitelist` using existing axum router
+**Choice**: Add endpoints under `/v1/agents/whitelist` using existing axum router
 
 **Endpoints**:
-- `POST /api/v1/agents/whitelist` - Add agent (returns token)
-- `GET /api/v1/agents/whitelist` - List agents (no tokens)
-- `DELETE /api/v1/agents/whitelist/{agent_id}` - Remove agent
+- `POST /v1/agents/whitelist` - Add agent (returns token)
+- `GET /v1/agents/whitelist` - List agents (no tokens)
+- `DELETE /v1/agents/whitelist/{agent_id}` - Remove agent
 
 **Rationale**:
 - Consistent with existing API structure

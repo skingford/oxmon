@@ -82,6 +82,9 @@ base64 = "0.22"
 bcrypt = "0.16"
 ring = "0.17"
 
+# Random
+rand = "0.8"
+
 # URL encoding
 urlencoding = "2"
 
@@ -89,7 +92,7 @@ urlencoding = "2"
 tower-http = { version = "0.6", features = ["cors"] }
 
 # OpenAPI documentation
-utoipa = { version = "5", features = ["chrono"] }
+utoipa = { version = "5", features = ["chrono", "preserve_order"] }
 utoipa-axum = "0.2"
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
