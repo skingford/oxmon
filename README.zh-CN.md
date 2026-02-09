@@ -926,6 +926,16 @@ git push origin main
 git push origin v0.1.2
 ```
 
+也可以使用辅助脚本（不传版本时自动 patch +1）：
+
+```bash
+# 自动递增 patch（如 0.1.1 -> 0.1.2），并完成 commit + tag
+./scripts/release.sh
+
+# 指定版本并自动推送
+./scripts/release.sh --version 0.1.2 --push
+```
+
 - 推送 `v*` tag 后会自动触发 `.github/workflows/release.yml`。
 - 工作流成功后，请在 GitHub Releases 检查产物（`oxmon-agent-*` / `oxmon-server-*` 压缩包和 `SHA256SUMS`）。
 - Linux 升级可直接重复执行安装命令（默认拉取 `latest`）。
