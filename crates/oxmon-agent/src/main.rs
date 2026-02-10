@@ -143,14 +143,12 @@ async fn main() -> Result<()> {
                         // Create request with authentication metadata if token is configured
                         let mut request = tonic::Request::new(batch);
                         if let Some(ref token) = config.auth_token {
-                            request.metadata_mut().insert(
-                                "authorization",
-                                format!("Bearer {}", token).parse().unwrap(),
-                            );
-                            request.metadata_mut().insert(
-                                "agent-id",
-                                config.agent_id.parse().unwrap(),
-                            );
+                            if let Ok(auth_val) = format!("Bearer {}", token).parse() {
+                                request.metadata_mut().insert("authorization", auth_val);
+                            }
+                            if let Ok(agent_val) = config.agent_id.parse() {
+                                request.metadata_mut().insert("agent-id", agent_val);
+                            }
                         }
 
                         match c.report_metrics(request).await {

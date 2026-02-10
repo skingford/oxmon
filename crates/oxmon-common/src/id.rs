@@ -8,13 +8,17 @@ static ID_GENERATOR: Mutex<Option<SnowflakeIdBucket>> = Mutex::new(None);
 /// `machine_id`: 机器标识 (0-31)
 /// `node_id`: 节点标识 (0-31)
 pub fn init(machine_id: i32, node_id: i32) {
-    let mut gen = ID_GENERATOR.lock().unwrap();
+    let mut gen = ID_GENERATOR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     *gen = Some(SnowflakeIdBucket::new(machine_id, node_id));
 }
 
 /// 生成一个 Snowflake ID（字符串形式）
 pub fn next_id() -> String {
-    let mut gen = ID_GENERATOR.lock().unwrap();
+    let mut gen = ID_GENERATOR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let bucket = gen.get_or_insert_with(|| SnowflakeIdBucket::new(1, 1));
     bucket.get_id().to_string()
 }

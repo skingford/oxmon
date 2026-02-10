@@ -102,3 +102,14 @@ oxmon-collector = { path = "crates/oxmon-collector" }
 oxmon-storage = { path = "crates/oxmon-storage" }
 oxmon-alert = { path = "crates/oxmon-alert" }
 oxmon-notify = { path = "crates/oxmon-notify" }
+
+[workspace.lints.rust]
+future-incompatible = "warn"
+nonstandard-style = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+redundant_clone = "deny"
+large_enum_variant = "deny"
+needless_collect = "warn"
+clone_on_copy = "deny"

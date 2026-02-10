@@ -3,12 +3,37 @@ use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// Factory for creating [`NotificationChannel`] instances from JSON
+/// configuration.
+///
+/// Each plugin is registered in the [`ChannelRegistry`] by its `name()`.
+/// When the server initializes notification routing, the registry validates
+/// and instantiates channels through the matching plugin.
 pub trait ChannelPlugin: Send + Sync {
+    /// Returns the plugin type name (e.g., `"email"`, `"dingtalk"`).
     fn name(&self) -> &str;
+
+    /// Validates a JSON config blob against this plugin's expected schema.
     fn validate_config(&self, config: &Value) -> Result<()>;
+
+    /// Creates a configured channel instance from a validated JSON config.
     fn create_channel(&self, config: &Value) -> Result<Box<dyn NotificationChannel>>;
 }
 
+/// Registry of available [`ChannelPlugin`]s, used to instantiate
+/// notification channels from configuration.
+///
+/// # Examples
+///
+/// ```
+/// use oxmon_notify::plugin::ChannelRegistry;
+///
+/// let registry = ChannelRegistry::default();
+/// assert!(registry.has_plugin("email"));
+/// assert!(registry.has_plugin("webhook"));
+/// assert!(registry.has_plugin("dingtalk"));
+/// assert!(!registry.has_plugin("nonexistent"));
+/// ```
 pub struct ChannelRegistry {
     plugins: HashMap<String, Box<dyn ChannelPlugin>>,
 }

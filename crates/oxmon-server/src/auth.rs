@@ -1,5 +1,5 @@
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::{Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::IntoResponse;
@@ -10,6 +10,7 @@ use oxmon_storage::auth::{hash_token, verify_token};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{error_response, success_empty_response, success_response, ApiError};
+use crate::logging::TraceId;
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,8 +54,8 @@ pub fn validate_token(secret: &str, token: &str) -> Result<Claims, jsonwebtoken:
     Ok(token_data.claims)
 }
 
-fn auth_error(code: &str, msg: &str) -> axum::response::Response {
-    error_response(StatusCode::UNAUTHORIZED, code, msg)
+fn auth_error(trace_id: &str, code: &str, msg: &str) -> axum::response::Response {
+    error_response(StatusCode::UNAUTHORIZED, trace_id, code, msg)
 }
 
 /// JWT 鉴权中间件
@@ -63,6 +64,13 @@ pub async fn jwt_auth_middleware(
     mut req: Request<Body>,
     next: Next,
 ) -> axum::response::Response {
+    // Extract trace_id from request extensions (set by logging middleware)
+    let trace_id = req
+        .extensions()
+        .get::<TraceId>()
+        .map(|t| t.0.clone())
+        .unwrap_or_default();
+
     let auth_header = req
         .headers()
         .get(axum::http::header::AUTHORIZATION)
@@ -70,16 +78,16 @@ pub async fn jwt_auth_middleware(
 
     let token = match auth_header {
         None => {
-            return auth_error("UNAUTHORIZED", "missing authorization header");
+            return auth_error(&trace_id, "UNAUTHORIZED", "missing authorization header");
         }
         Some(header) => {
             if let Some(token) = header.strip_prefix("Bearer ") {
                 if token.is_empty() {
-                    return auth_error("UNAUTHORIZED", "invalid authorization header");
+                    return auth_error(&trace_id, "UNAUTHORIZED", "invalid authorization header");
                 }
                 token
             } else {
-                return auth_error("UNAUTHORIZED", "invalid authorization header");
+                return auth_error(&trace_id, "UNAUTHORIZED", "invalid authorization header");
             }
         }
     };
@@ -89,16 +97,16 @@ pub async fn jwt_auth_middleware(
             let user = match state.cert_store.get_user_by_username(&claims.username) {
                 Ok(Some(user)) => user,
                 Ok(None) => {
-                    return auth_error("UNAUTHORIZED", "invalid token");
+                    return auth_error(&trace_id, "UNAUTHORIZED", "invalid token");
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "Failed to query user for token validation");
-                    return auth_error("UNAUTHORIZED", "invalid token");
+                    return auth_error(&trace_id, "UNAUTHORIZED", "invalid token");
                 }
             };
 
             if user.token_version != claims.token_version {
-                return auth_error("UNAUTHORIZED", "token revoked");
+                return auth_error(&trace_id, "UNAUTHORIZED", "token revoked");
             }
 
             req.extensions_mut().insert(claims);
@@ -106,11 +114,11 @@ pub async fn jwt_auth_middleware(
         }
         Err(e) => {
             let msg = if matches!(e.kind(), jsonwebtoken::errors::ErrorKind::ExpiredSignature) {
-                return auth_error("TOKEN_EXPIRED", "token expired");
+                return auth_error(&trace_id, "TOKEN_EXPIRED", "token expired");
             } else {
                 "invalid token"
             };
-            auth_error("UNAUTHORIZED", msg)
+            auth_error(&trace_id, "UNAUTHORIZED", msg)
         }
     }
 }
@@ -129,12 +137,14 @@ pub async fn jwt_auth_middleware(
     )
 )]
 pub async fn login(
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
 ) -> impl IntoResponse {
     if req.username.is_empty() || req.password.is_empty() {
         return error_response(
             StatusCode::BAD_REQUEST,
+            &trace_id,
             "BAD_REQUEST",
             "username and password are required",
         );
@@ -145,6 +155,7 @@ pub async fn login(
         Ok(None) => {
             return error_response(
                 StatusCode::UNAUTHORIZED,
+                &trace_id,
                 "UNAUTHORIZED",
                 "invalid credentials",
             );
@@ -153,6 +164,7 @@ pub async fn login(
             tracing::error!(error = %e, "Failed to query user");
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "INTERNAL_ERROR",
                 "internal error",
             );
@@ -164,6 +176,7 @@ pub async fn login(
         _ => {
             return error_response(
                 StatusCode::UNAUTHORIZED,
+                &trace_id,
                 "UNAUTHORIZED",
                 "invalid credentials",
             );
@@ -179,6 +192,7 @@ pub async fn login(
     ) {
         Ok(token) => success_response(
             StatusCode::OK,
+            &trace_id,
             LoginResponse {
                 token,
                 expires_in: state.token_expire_secs,
@@ -188,6 +202,7 @@ pub async fn login(
             tracing::error!(error = %e, "Failed to create token");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "INTERNAL_ERROR",
                 "internal error",
             )
@@ -211,6 +226,7 @@ pub async fn login(
     )
 )]
 pub async fn change_password(
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<ChangePasswordRequest>,
@@ -218,6 +234,7 @@ pub async fn change_password(
     if body.current_password.is_empty() || body.new_password.is_empty() {
         return error_response(
             StatusCode::BAD_REQUEST,
+            &trace_id,
             "BAD_REQUEST",
             "current_password and new_password are required",
         );
@@ -228,6 +245,7 @@ pub async fn change_password(
         Ok(None) => {
             return error_response(
                 StatusCode::UNAUTHORIZED,
+                &trace_id,
                 "UNAUTHORIZED",
                 "invalid credentials",
             );
@@ -236,6 +254,7 @@ pub async fn change_password(
             tracing::error!(error = %e, "Failed to query user");
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "INTERNAL_ERROR",
                 "internal error",
             );
@@ -247,6 +266,7 @@ pub async fn change_password(
         _ => {
             return error_response(
                 StatusCode::UNAUTHORIZED,
+                &trace_id,
                 "UNAUTHORIZED",
                 "invalid credentials",
             );
@@ -259,6 +279,7 @@ pub async fn change_password(
             tracing::error!(error = %e, "Failed to hash password");
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "INTERNAL_ERROR",
                 "internal error",
             );
@@ -269,9 +290,14 @@ pub async fn change_password(
         .cert_store
         .update_user_password_hash(&user.id, &new_password_hash)
     {
-        Ok(true) => success_empty_response(StatusCode::OK, "password changed, please login again"),
+        Ok(true) => success_empty_response(
+            StatusCode::OK,
+            &trace_id,
+            "password changed, please login again",
+        ),
         Ok(false) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
             "INTERNAL_ERROR",
             "internal error",
         ),
@@ -279,6 +305,7 @@ pub async fn change_password(
             tracing::error!(error = %e, "Failed to update password");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "INTERNAL_ERROR",
                 "internal error",
             )

@@ -26,7 +26,7 @@ impl FromStr for CompareOp {
 }
 
 impl CompareOp {
-    fn eval(&self, value: f64, threshold: f64) -> bool {
+    fn check(&self, value: f64, threshold: f64) -> bool {
         match self {
             Self::GreaterThan => value > threshold,
             Self::LessThan => value < threshold,
@@ -77,22 +77,21 @@ impl AlertRule for ThresholdRule {
         let cutoff = now - duration;
 
         // Check if ALL data points within the duration window exceed the threshold
-        let recent: Vec<&MetricDataPoint> =
-            window.iter().filter(|dp| dp.timestamp >= cutoff).collect();
+        let mut recent = window.iter().filter(|dp| dp.timestamp >= cutoff).peekable();
 
-        if recent.is_empty() {
-            return None;
-        }
+        recent.peek()?;
 
-        let all_exceeded = recent
-            .iter()
-            .all(|dp| self.operator.eval(dp.value, self.value));
+        let mut latest = None;
+        let all_exceeded = recent.all(|dp| {
+            latest = Some(dp);
+            self.operator.check(dp.value, self.value)
+        });
 
         if !all_exceeded {
             return None;
         }
 
-        let latest = recent.last().unwrap();
+        let latest = latest?;
         Some(AlertEvent {
             id: oxmon_common::id::next_id(),
             rule_id: self.id.clone(),

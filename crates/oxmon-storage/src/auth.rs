@@ -3,9 +3,9 @@ use base64::{engine::general_purpose, Engine as _};
 use rand::Rng;
 use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
-use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 
 /// 生成一个 32 字节的加密安全随机 token
 pub fn generate_token() -> String {

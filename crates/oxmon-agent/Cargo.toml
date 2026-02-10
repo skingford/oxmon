@@ -7,6 +7,9 @@ edition.workspace = true
 name = "oxmon-agent"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 oxmon-common = { workspace = true }
 oxmon-collector = { workspace = true }

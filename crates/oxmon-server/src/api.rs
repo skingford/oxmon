@@ -2,8 +2,9 @@ pub mod certificates;
 pub mod pagination;
 pub mod whitelist;
 
+use crate::logging::TraceId;
 use crate::state::AppState;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -45,7 +46,7 @@ where
     pub data: Option<T>,
 }
 
-pub fn success_response<T>(status: StatusCode, data: T) -> Response
+pub fn success_response<T>(status: StatusCode, trace_id: &str, data: T) -> Response
 where
     T: Serialize,
 {
@@ -54,20 +55,20 @@ where
         Json(ApiResponse {
             err_code: 0,
             err_msg: "success".to_string(),
-            trace_id: String::new(),
+            trace_id: trace_id.to_string(),
             data: Some(data),
         }),
     )
         .into_response()
 }
 
-pub fn success_empty_response(status: StatusCode, msg: &str) -> Response {
+pub fn success_empty_response(status: StatusCode, trace_id: &str, msg: &str) -> Response {
     (
         status,
         Json(ApiResponse::<Value> {
             err_code: 0,
             err_msg: msg.to_string(),
-            trace_id: String::new(),
+            trace_id: trace_id.to_string(),
             data: None,
         }),
     )
@@ -92,13 +93,13 @@ fn to_custom_error_code(code: &str) -> i32 {
     }
 }
 
-pub fn error_response(status: StatusCode, code: &str, msg: &str) -> Response {
+pub fn error_response(status: StatusCode, trace_id: &str, code: &str, msg: &str) -> Response {
     (
         status,
         Json(ApiResponse::<Value> {
             err_code: to_custom_error_code(code),
             err_msg: msg.to_string(),
-            trace_id: String::new(),
+            trace_id: trace_id.to_string(),
             data: None,
         }),
     )
@@ -128,11 +129,20 @@ struct HealthResponse {
         (status = 200, description = "服务健康状态", body = HealthResponse)
     )
 )]
-async fn health(State(state): State<AppState>) -> impl IntoResponse {
+async fn health(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     let uptime = (Utc::now() - state.start_time).num_seconds();
-    let agent_count = state.agent_registry.lock().unwrap().list_agents().len();
+    let agent_count = state
+        .agent_registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .list_agents()
+        .len();
     success_response(
         StatusCode::OK,
+        &trace_id,
         HealthResponse {
             version: env!("CARGO_PKG_VERSION").to_string(),
             uptime_secs: uptime,
@@ -148,8 +158,8 @@ struct AgentResponse {
     /// Agent 唯一标识
     agent_id: String,
     /// 最后上报时间
-    last_seen: DateTime<Utc>,
-    /// 状态（active / inactive）
+    last_seen: Option<DateTime<Utc>>,
+    /// 状态（active / inactive / unknown）
     status: String,
 }
 
@@ -167,30 +177,47 @@ struct AgentResponse {
     )
 )]
 async fn list_agents(
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
     let limit = pagination.limit();
     let offset = pagination.offset();
 
-    let mut agents = state.agent_registry.lock().unwrap().list_agents();
-    agents.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+    let agents = match state.cert_store.list_agents(limit, offset).map_err(|e| {
+        tracing::error!(error = %e, "Failed to list agents");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
+            "INTERNAL_ERROR",
+            "Database error",
+        )
+    }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    let registry = state
+        .agent_registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let resp: Vec<AgentResponse> = agents
         .into_iter()
-        .skip(offset)
-        .take(limit)
-        .map(|a| AgentResponse {
-            agent_id: a.agent_id,
-            last_seen: a.last_seen,
-            status: if a.active {
-                "active".to_string()
-            } else {
-                "inactive".to_string()
-            },
+        .map(|entry| {
+            let agent_info = registry.get_agent(&entry.agent_id);
+            AgentResponse {
+                agent_id: entry.agent_id,
+                last_seen: agent_info.as_ref().map(|a| a.last_seen),
+                status: match &agent_info {
+                    Some(a) if a.active => "active".to_string(),
+                    Some(_) => "inactive".to_string(),
+                    None => "unknown".to_string(),
+                },
+            }
         })
         .collect();
-    success_response(StatusCode::OK, resp)
+    success_response(StatusCode::OK, &trace_id, resp)
 }
 
 /// 最新指标数据
@@ -223,6 +250,7 @@ struct LatestMetric {
     )
 )]
 async fn agent_latest(
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
 ) -> impl IntoResponse {
@@ -298,7 +326,7 @@ async fn agent_latest(
         let in_registry = state
             .agent_registry
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get_agent(&agent_id)
             .is_some();
         let in_whitelist = state
@@ -307,12 +335,17 @@ async fn agent_latest(
             .unwrap_or(None)
             .is_some();
         if !in_registry && !in_whitelist {
-            return error_response(StatusCode::NOT_FOUND, "not_found", "Agent not found")
-                .into_response();
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                "Agent not found",
+            )
+            .into_response();
         }
     }
 
-    success_response(StatusCode::OK, latest)
+    success_response(StatusCode::OK, &trace_id, latest)
 }
 
 // GET /v1/metrics
@@ -378,6 +411,7 @@ struct MetricDataPointResponse {
     )
 )]
 async fn query_all_metrics(
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(params): Query<MetricsPageParams>,
 ) -> impl IntoResponse {
@@ -410,12 +444,13 @@ async fn query_all_metrics(
                     created_at: dp.created_at,
                 })
                 .collect();
-            success_response(StatusCode::OK, resp)
+            success_response(StatusCode::OK, &trace_id, resp)
         }
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "storage_error",
                 "Internal query error",
             )
@@ -451,13 +486,17 @@ struct AlertRuleResponse {
     )
 )]
 async fn list_alert_rules(
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
     let limit = pagination.limit();
     let offset = pagination.offset();
 
-    let engine = state.alert_engine.lock().unwrap();
+    let engine = state
+        .alert_engine
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut rules: Vec<AlertRuleResponse> = engine
         .rules()
         .iter()
@@ -472,7 +511,7 @@ async fn list_alert_rules(
     rules.sort_by(|a, b| a.id.cmp(&b.id));
     let rules: Vec<AlertRuleResponse> = rules.into_iter().skip(offset).take(limit).collect();
 
-    success_response(StatusCode::OK, rules)
+    success_response(StatusCode::OK, &trace_id, rules)
 }
 
 // GET /v1/alerts/history
@@ -544,6 +583,7 @@ struct AlertEventResponse {
     )
 )]
 async fn alert_history(
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(params): Query<AlertHistoryPageParams>,
 ) -> impl IntoResponse {
@@ -579,12 +619,13 @@ async fn alert_history(
                     predicted_breach: e.predicted_breach,
                 })
                 .collect();
-            success_response(StatusCode::OK, resp)
+            success_response(StatusCode::OK, &trace_id, resp)
         }
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
                 "storage_error",
                 "Internal query error",
             )

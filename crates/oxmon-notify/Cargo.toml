@@ -3,6 +3,9 @@ name = "oxmon-notify"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 oxmon-common = { workspace = true }
 async-trait = { workspace = true }

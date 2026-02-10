@@ -7,6 +7,9 @@ edition.workspace = true
 name = "oxmon-server"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 oxmon-common = { workspace = true }
 oxmon-storage = { workspace = true }
@@ -35,3 +38,7 @@ utoipa-swagger-ui = { workspace = true }
 tower-http = { workspace = true }
 jsonwebtoken = { workspace = true }
 rand = { workspace = true }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+tempfile = "3"

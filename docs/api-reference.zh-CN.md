@@ -470,3 +470,11 @@ curl http://localhost:8080/v1/openapi.yaml
 | 1500 | INTERNAL_ERROR | 服务内部错误 |
 | 1501 | storage_error | 存储层错误 |
 | 1999 | unknown | 未知自定义错误 |
+
+## 测试覆盖策略
+
+- 接口矩阵测试：每个 API 覆盖成功、鉴权失败、参数/业务分支失败场景。
+- 真实 Agent 模拟：通过 gRPC `ReportMetrics` 的真实 metadata + payload 路径验证链路。
+- OpenAPI 契约守卫：若 OpenAPI 暴露了新接口但测试矩阵未覆盖，CI 直接失败。
+
+另见：[`docs/api-improvement-plan.md`](api-improvement-plan.md)

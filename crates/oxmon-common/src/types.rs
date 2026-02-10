@@ -21,6 +21,18 @@ pub struct MetricBatch {
     pub data_points: Vec<MetricDataPoint>,
 }
 
+/// Alert severity level, ordered from lowest to highest.
+///
+/// # Examples
+///
+/// ```
+/// use oxmon_common::types::Severity;
+///
+/// let sev: Severity = "warning".parse().unwrap();
+/// assert_eq!(sev, Severity::Warning);
+/// assert_eq!(sev.to_string(), "warning");
+/// assert!(Severity::Critical > Severity::Info);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
