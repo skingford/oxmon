@@ -71,3 +71,86 @@ async fn openapi_paths_should_be_covered_by_test_matrix() {
         "missing endpoint coverage for: {missing:?}"
     );
 }
+
+#[tokio::test]
+async fn openapi_list_query_params_should_be_optional() {
+    let ctx = build_test_context().expect("test context should build");
+    let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.json", None).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+
+    let paths = body["paths"]
+        .as_object()
+        .expect("openapi paths should be object");
+
+    let cases: &[(&str, &[&str])] = &[
+        ("/v1/agents", &["limit", "offset"]),
+        (
+            "/v1/metrics",
+            &[
+                "agent_id__eq",
+                "metric_name__eq",
+                "timestamp__gte",
+                "timestamp__lte",
+                "limit",
+                "offset",
+            ],
+        ),
+        ("/v1/alerts/rules", &["limit", "offset"]),
+        (
+            "/v1/alerts/history",
+            &[
+                "agent_id__eq",
+                "severity__eq",
+                "timestamp__gte",
+                "timestamp__lte",
+                "limit",
+                "offset",
+            ],
+        ),
+        ("/v1/agents/whitelist", &["limit", "offset"]),
+        (
+            "/v1/certificates",
+            &[
+                "not_after__lte",
+                "ip_address__contains",
+                "issuer__contains",
+                "limit",
+                "offset",
+            ],
+        ),
+        (
+            "/v1/certs/domains",
+            &["enabled__eq", "domain__contains", "limit", "offset"],
+        ),
+        ("/v1/certs/status", &["limit", "offset"]),
+    ];
+
+    for (path, names) in cases {
+        let operation = paths
+            .get(*path)
+            .and_then(|item| item.get("get"))
+            .unwrap_or_else(|| panic!("missing GET operation for path {path}"));
+        let parameters = operation["parameters"]
+            .as_array()
+            .unwrap_or_else(|| panic!("missing parameters for GET {path}"));
+
+        for name in *names {
+            let parameter = parameters
+                .iter()
+                .find(|param| {
+                    param["in"].as_str() == Some("query") && param["name"].as_str() == Some(*name)
+                })
+                .unwrap_or_else(|| panic!("missing query parameter {name} on GET {path}"));
+
+            let required = parameter
+                .get("required")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+
+            assert!(
+                !required,
+                "query parameter {name} on GET {path} should be optional"
+            );
+        }
+    }
+}

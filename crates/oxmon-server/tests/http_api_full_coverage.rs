@@ -415,6 +415,23 @@ async fn certificate_endpoints_should_cover_query_and_crud_paths() {
 }
 
 #[tokio::test]
+async fn certificate_list_should_default_to_20_when_pagination_missing() {
+    let ctx = build_test_context().expect("test context should build");
+    let token = login_and_get_token(&ctx.app).await;
+
+    for index in 0..25 {
+        ensure_cert_domain_with_result(&ctx, &format!("default-limit-{index}.example.com")).await;
+    }
+
+    let (status, body, _) =
+        request_no_body(&ctx.app, "GET", "/v1/certificates", Some(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    let rows: Vec<serde_json::Value> = decode_data(&body);
+    assert_eq!(rows.len(), 20);
+}
+
+#[tokio::test]
 async fn openapi_endpoints_should_be_accessible() {
     let ctx = build_test_context().expect("test context should build");
 
