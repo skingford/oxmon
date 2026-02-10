@@ -351,7 +351,7 @@ async fn agent_latest(
 // GET /v1/metrics
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
-struct MetricsFilterParams {
+struct MetricsQueryParams {
     /// Agent ID 精确匹配（agent_id__eq，可选）
     #[param(required = false)]
     #[serde(rename = "agent_id__eq")]
@@ -368,14 +368,14 @@ struct MetricsFilterParams {
     #[param(required = false)]
     #[serde(rename = "timestamp__lte")]
     timestamp_lte: Option<DateTime<Utc>>,
-}
-
-#[derive(Deserialize)]
-struct MetricsPageParams {
-    #[serde(flatten)]
-    filter: MetricsFilterParams,
-    #[serde(flatten)]
-    pagination: PaginationParams,
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "pagination::deserialize_optional_u64")]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "pagination::deserialize_optional_u64")]
+    offset: Option<u64>,
 }
 
 /// 指标数据点（完整）
@@ -404,7 +404,7 @@ struct MetricDataPointResponse {
     path = "/v1/metrics",
     tag = "Metrics",
     security(("bearer_auth" = [])),
-    params(MetricsFilterParams, PaginationParams),
+    params(MetricsQueryParams),
     responses(
         (status = 200, description = "指标数据点分页列表", body = Vec<MetricDataPointResponse>),
         (status = 401, description = "未认证", body = ApiError)
@@ -413,21 +413,20 @@ struct MetricDataPointResponse {
 async fn query_all_metrics(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
-    Query(params): Query<MetricsPageParams>,
+    Query(params): Query<MetricsQueryParams>,
 ) -> impl IntoResponse {
-    let to = params.filter.timestamp_lte.unwrap_or_else(Utc::now);
+    let to = params.timestamp_lte.unwrap_or_else(Utc::now);
     let from = params
-        .filter
         .timestamp_gte
         .unwrap_or_else(|| to - chrono::Duration::hours(1));
-    let limit = params.pagination.limit();
-    let offset = params.pagination.offset();
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
 
     match state.storage.query_metrics_paginated(
         from,
         to,
-        params.filter.agent_id_eq.as_deref(),
-        params.filter.metric_name_eq.as_deref(),
+        params.agent_id_eq.as_deref(),
+        params.metric_name_eq.as_deref(),
         limit,
         offset,
     ) {
@@ -517,7 +516,7 @@ async fn list_alert_rules(
 // GET /v1/alerts/history
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
-struct AlertHistoryFilterParams {
+struct AlertHistoryQueryParams {
     /// Agent ID 精确匹配（agent_id__eq，可选）
     #[param(required = false)]
     #[serde(rename = "agent_id__eq")]
@@ -534,14 +533,14 @@ struct AlertHistoryFilterParams {
     #[param(required = false)]
     #[serde(rename = "timestamp__lte")]
     timestamp_lte: Option<DateTime<Utc>>,
-}
-
-#[derive(Deserialize)]
-struct AlertHistoryPageParams {
-    #[serde(flatten)]
-    filter: AlertHistoryFilterParams,
-    #[serde(flatten)]
-    pagination: PaginationParams,
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "pagination::deserialize_optional_u64")]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "pagination::deserialize_optional_u64")]
+    offset: Option<u64>,
 }
 
 /// 告警事件
@@ -576,7 +575,7 @@ struct AlertEventResponse {
     path = "/v1/alerts/history",
     tag = "Alerts",
     security(("bearer_auth" = [])),
-    params(AlertHistoryFilterParams, PaginationParams),
+    params(AlertHistoryQueryParams),
     responses(
         (status = 200, description = "告警事件分页列表", body = Vec<AlertEventResponse>),
         (status = 401, description = "未认证", body = ApiError)
@@ -585,21 +584,20 @@ struct AlertEventResponse {
 async fn alert_history(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
-    Query(params): Query<AlertHistoryPageParams>,
+    Query(params): Query<AlertHistoryQueryParams>,
 ) -> impl IntoResponse {
-    let to = params.filter.timestamp_lte.unwrap_or_else(Utc::now);
+    let to = params.timestamp_lte.unwrap_or_else(Utc::now);
     let from = params
-        .filter
         .timestamp_gte
         .unwrap_or_else(|| to - chrono::Duration::days(1));
-    let limit = params.pagination.limit();
-    let offset = params.pagination.offset();
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
 
     match state.storage.query_alert_history(
         from,
         to,
-        params.filter.severity_eq.as_deref(),
-        params.filter.agent_id_eq.as_deref(),
+        params.severity_eq.as_deref(),
+        params.agent_id_eq.as_deref(),
         limit,
         offset,
     ) {

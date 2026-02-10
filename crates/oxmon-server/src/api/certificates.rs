@@ -24,8 +24,18 @@ struct CertificateListQuery {
     /// 颁发者包含匹配（issuer__contains，可选）
     #[serde(rename = "issuer__contains")]
     issuer_contains: Option<String>,
-    #[serde(flatten)]
-    pagination: PaginationParams,
+    /// 每页条数（默认 20）
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    offset: Option<u64>,
 }
 
 /// 获取指定证书详情（按 ID）。
@@ -106,7 +116,7 @@ async fn list_certificates(
 
     let certificates = match state
         .cert_store
-        .list_certificate_details(&filter, query.pagination.limit(), query.pagination.offset())
+        .list_certificate_details(&filter, PaginationParams::resolve_limit(query.limit), PaginationParams::resolve_offset(query.offset))
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to list certificates");
             error_response(
