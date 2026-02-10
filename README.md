@@ -548,13 +548,17 @@ git push origin v0.1.2
 Or use the helper script (auto patch bump if version is omitted):
 
 ```bash
-# Auto bump patch (e.g. 0.1.1 -> 0.1.2), then commit + tag
+# Auto bump patch (e.g. 0.1.1 -> 0.1.2), then commit + tag + push main/tag
 ./scripts/release.sh
 
-# Specify a version and push automatically
-./scripts/release.sh --version 0.1.2 --push
+# Specify a version explicitly (also auto push by default)
+./scripts/release.sh --version 0.1.2
+
+# Only create local commit/tag, do not push
+./scripts/release.sh --version 0.1.2 --no-push
 ```
 
+- `scripts/release.sh` now pushes `main` and `v*` tag by default (use `--no-push` to only create local commit/tag).
 - Pushing a `v*` tag triggers `.github/workflows/release.yml` automatically.
 - After workflow success, verify assets in GitHub Releases (`oxmon-agent-*` / `oxmon-server-*` tarballs and `SHA256SUMS`).
 - Linux upgrades can be done by rerunning the install command (defaults to `latest`).

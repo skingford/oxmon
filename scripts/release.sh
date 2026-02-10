@@ -8,8 +8,8 @@ cd "${REPO_ROOT}"
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/release.sh [--version <x.y.z>] [--push] [--skip-check]
-  scripts/release.sh [<x.y.z>] [--push] [--skip-check]
+  scripts/release.sh [--version <x.y.z>] [--no-push] [--skip-check]
+  scripts/release.sh [<x.y.z>] [--no-push] [--skip-check]
 
 Behavior:
   - If version is omitted, patch version is auto-incremented (e.g. 0.1.1 -> 0.1.2)
@@ -17,12 +17,12 @@ Behavior:
   - Runs cargo check --workspace (unless --skip-check)
   - Commits Cargo.toml + Cargo.lock
   - Creates annotated tag v<version>
-  - Optionally pushes main + tag when --push is set
+  - Pushes main + tag by default (use --no-push to skip)
 
 Examples:
   scripts/release.sh
   scripts/release.sh 0.1.2
-  scripts/release.sh --version 0.1.2 --push
+  scripts/release.sh --version 0.1.2 --no-push
 USAGE
 }
 
@@ -73,7 +73,7 @@ validate_semver() {
 }
 
 target_version=""
-push_tag=false
+push_tag=true
 run_check=true
 
 while [[ $# -gt 0 ]]; do
@@ -89,6 +89,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --push)
       push_tag=true
+      shift
+      ;;
+    --no-push)
+      push_tag=false
       shift
       ;;
     --skip-check)
