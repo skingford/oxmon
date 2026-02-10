@@ -14,23 +14,29 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 /// 证书列表查询参数
 #[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct CertificateListQuery {
     /// 证书过期时间上界（not_after__lte，可选，Unix 秒级时间戳）
+    #[param(required = false)]
     #[serde(rename = "not_after__lte")]
     not_after_lte: Option<i64>,
     /// IP 包含匹配（ip_address__contains，可选）
+    #[param(required = false)]
     #[serde(rename = "ip_address__contains")]
     ip_address_contains: Option<String>,
     /// 颁发者包含匹配（issuer__contains，可选）
+    #[param(required = false)]
     #[serde(rename = "issuer__contains")]
     issuer_contains: Option<String>,
     /// 每页条数（默认 20）
+    #[param(required = false)]
     #[serde(
         default,
         deserialize_with = "crate::api::pagination::deserialize_optional_u64"
     )]
     limit: Option<u64>,
     /// 偏移量（默认 0）
+    #[param(required = false)]
     #[serde(
         default,
         deserialize_with = "crate::api::pagination::deserialize_optional_u64"
