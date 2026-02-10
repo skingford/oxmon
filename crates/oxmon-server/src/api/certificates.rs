@@ -122,7 +122,11 @@ async fn list_certificates(
 
     let certificates = match state
         .cert_store
-        .list_certificate_details(&filter, PaginationParams::resolve_limit(query.limit), PaginationParams::resolve_offset(query.offset))
+        .list_certificate_details(
+            &filter,
+            PaginationParams::resolve_limit(query.limit),
+            PaginationParams::resolve_offset(query.offset),
+        )
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to list certificates");
             error_response(
