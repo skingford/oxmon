@@ -470,3 +470,11 @@ Failure responses use custom business error codes (not HTTP status code values).
 | 1500 | INTERNAL_ERROR | Internal server error |
 | 1501 | storage_error | Storage layer error |
 | 1999 | unknown | Unknown custom error |
+
+## Test Coverage Strategy
+
+- Endpoint matrix tests: each API is covered for success + auth failure + validation/business error branches.
+- Real agent simulation: gRPC `ReportMetrics` is tested with real metadata and payload paths.
+- OpenAPI contract guard: if a new endpoint appears in OpenAPI but not in test matrix, CI fails.
+
+See also: [`docs/api-improvement-plan.md`](api-improvement-plan.md)
