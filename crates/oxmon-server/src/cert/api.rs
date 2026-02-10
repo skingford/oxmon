@@ -189,8 +189,20 @@ struct ListDomainsParams {
     #[param(required = false)]
     #[serde(rename = "domain__contains")]
     domain_contains: Option<String>,
-    #[serde(flatten)]
-    pagination: PaginationParams,
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    offset: Option<u64>,
 }
 
 /// 分页查询监控域名列表（支持按 enabled__eq、domain__contains 过滤）。
@@ -211,8 +223,8 @@ async fn list_domains(
     State(state): State<AppState>,
     Query(params): Query<ListDomainsParams>,
 ) -> impl IntoResponse {
-    let limit = params.pagination.limit();
-    let offset = params.pagination.offset();
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
     match state.cert_store.query_domains(
         params.enabled_eq,
         params.domain_contains.as_deref(),
@@ -236,8 +248,20 @@ async fn list_domains(
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 struct CertStatusListParams {
-    #[serde(flatten)]
-    pagination: PaginationParams,
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    offset: Option<u64>,
 }
 
 /// 获取监控域名详情（按 ID）。
@@ -412,8 +436,8 @@ async fn cert_status_all(
     State(state): State<AppState>,
     Query(params): Query<CertStatusListParams>,
 ) -> impl IntoResponse {
-    let limit = params.pagination.limit();
-    let offset = params.pagination.offset();
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
 
     match state.cert_store.query_latest_results(limit, offset) {
         Ok(results) => success_response(StatusCode::OK, &trace_id, results),

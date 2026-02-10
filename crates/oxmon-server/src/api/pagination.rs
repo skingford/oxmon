@@ -23,7 +23,7 @@ enum U64Input {
     Text(String),
 }
 
-fn deserialize_optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+pub fn deserialize_optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -43,10 +43,18 @@ const MAX_PAGE_LIMIT: u64 = 1000;
 
 impl PaginationParams {
     pub fn limit(&self) -> usize {
-        self.limit.unwrap_or(20).min(MAX_PAGE_LIMIT) as usize
+        Self::resolve_limit(self.limit)
     }
 
     pub fn offset(&self) -> usize {
-        self.offset.unwrap_or(0) as usize
+        Self::resolve_offset(self.offset)
+    }
+
+    pub fn resolve_limit(limit: Option<u64>) -> usize {
+        limit.unwrap_or(20).min(MAX_PAGE_LIMIT) as usize
+    }
+
+    pub fn resolve_offset(offset: Option<u64>) -> usize {
+        offset.unwrap_or(0) as usize
     }
 }

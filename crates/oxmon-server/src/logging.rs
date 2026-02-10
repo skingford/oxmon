@@ -37,10 +37,18 @@ fn generate_trace_id() -> String {
 /// Maximum number of characters to log from request/response body.
 const MAX_BODY_LOG_CHARS: usize = 200;
 
-/// Truncate a UTF-8 string to at most `max` characters, appending "..." if truncated.
+/// Truncate a UTF-8 string to at most `max` bytes, snapping to the nearest
+/// char boundary so we never split a multi-byte character.
 fn truncate_body(bytes: &[u8], max: usize) -> String {
     match std::str::from_utf8(bytes) {
-        Ok(s) if s.len() > max => format!("{}...", &s[..max]),
+        Ok(s) if s.len() > max => {
+            // Walk backward from `max` to find a valid char boundary
+            let mut end = max;
+            while end > 0 && !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}...", &s[..end])
+        }
         Ok(s) => s.to_string(),
         Err(_) => "<non-utf8 body>".to_string(),
     }
