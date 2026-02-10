@@ -263,8 +263,13 @@ async fn get_domain(
 ) -> impl IntoResponse {
     match state.cert_store.get_domain_by_id(&id) {
         Ok(Some(domain)) => success_response(StatusCode::OK, &trace_id, domain),
-        Ok(None) => common_error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Domain not found")
-            .into_response(),
+        Ok(None) => common_error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Domain not found",
+        )
+        .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
             common_error_response(
@@ -322,8 +327,13 @@ async fn update_domain(
         req.note,
     ) {
         Ok(Some(domain)) => success_response(StatusCode::OK, &trace_id, domain),
-        Ok(None) => common_error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Domain not found")
-            .into_response(),
+        Ok(None) => common_error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Domain not found",
+        )
+        .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Update failed");
             common_error_response(
@@ -359,9 +369,18 @@ async fn delete_domain(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.cert_store.delete_domain(&id) {
-        Ok(true) => success_response(StatusCode::OK, &trace_id, serde_json::json!({ "deleted": true })),
-        Ok(false) => common_error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Domain not found")
-            .into_response(),
+        Ok(true) => success_response(
+            StatusCode::OK,
+            &trace_id,
+            serde_json::json!({ "deleted": true }),
+        ),
+        Ok(false) => common_error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Domain not found",
+        )
+        .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Delete failed");
             common_error_response(
@@ -501,8 +520,13 @@ async fn check_single_domain(
     let domain = match state.cert_store.get_domain_by_id(&id) {
         Ok(Some(d)) => d,
         Ok(None) => {
-            return common_error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Domain not found")
-                .into_response();
+            return common_error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                "Domain not found",
+            )
+            .into_response();
         }
         Err(e) => {
             tracing::error!(error = %e, "Query failed");

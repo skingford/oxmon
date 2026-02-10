@@ -290,7 +290,11 @@ pub async fn change_password(
         .cert_store
         .update_user_password_hash(&user.id, &new_password_hash)
     {
-        Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "password changed, please login again"),
+        Ok(true) => success_empty_response(
+            StatusCode::OK,
+            &trace_id,
+            "password changed, please login again",
+        ),
         Ok(false) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             &trace_id,

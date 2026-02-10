@@ -1,14 +1,4 @@
-mod api;
-mod auth;
-mod cert;
-mod config;
-mod grpc;
-mod logging;
-mod openapi;
-mod state;
-
 use anyhow::Result;
-use axum::middleware;
 use chrono::Utc;
 use oxmon_alert::engine::AlertEngine;
 use oxmon_alert::rules::cert_expiration::CertExpirationRule;
@@ -31,12 +21,13 @@ use std::sync::{Arc, Mutex};
 use tokio::signal;
 use tokio::time::{interval, Duration};
 use tonic::transport::Server as TonicServer;
-use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
-use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
 
-use crate::state::{AgentRegistry, AppState};
+use oxmon_server::app;
+use oxmon_server::cert::scheduler::CertCheckScheduler;
+use oxmon_server::config;
+use oxmon_server::grpc;
+use oxmon_server::state::{AgentRegistry, AppState};
 
 fn build_alert_rules(cfg: &[config::AlertRuleConfig]) -> Vec<Box<dyn AlertRule>> {
     let mut rules: Vec<Box<dyn AlertRule>> = Vec::new();
@@ -252,79 +243,7 @@ async fn main() -> Result<()> {
 
     // HTTP/REST server
     let http_addr: SocketAddr = format!("0.0.0.0:{}", config.http_port).parse()?;
-
-    #[derive(OpenApi)]
-    #[openapi(
-        info(
-            title = "oxmon API",
-            description = "oxmon 服务器监控 REST API",
-        ),
-        tags(
-            (name = "Health", description = "服务健康检查"),
-            (name = "Auth", description = "认证鉴权"),
-            (name = "Agents", description = "Agent 管理"),
-            (name = "Metrics", description = "指标查询"),
-            (name = "Alerts", description = "告警规则与历史"),
-            (name = "Certificates", description = "证书监控")
-        ),
-        modifiers(&SecurityAddon)
-    )]
-    struct ApiDoc;
-
-    struct SecurityAddon;
-
-    impl utoipa::Modify for SecurityAddon {
-        fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
-            let components = openapi.components.get_or_insert_with(Default::default);
-            components.add_security_scheme(
-                "bearer_auth",
-                utoipa::openapi::security::SecurityScheme::Http(
-                    utoipa::openapi::security::Http::new(
-                        utoipa::openapi::security::HttpAuthScheme::Bearer,
-                    ),
-                ),
-            );
-        }
-    }
-
-    // Public routes (no auth required): health + login
-    let (public_router, public_spec) = api::public_routes().split_for_parts();
-
-    // Login route
-    let (login_router, login_spec) = api::auth_routes().split_for_parts();
-
-    // Protected routes (JWT auth required)
-    let (protected_router, protected_spec) = api::protected_routes().split_for_parts();
-
-    let (cert_router, cert_spec) = cert::api::cert_routes().split_for_parts();
-
-    let mut merged_spec = ApiDoc::openapi();
-    merged_spec.merge(public_spec);
-    merged_spec.merge(login_spec);
-    merged_spec.merge(protected_spec);
-    merged_spec.merge(cert_spec);
-    let spec = Arc::new(merged_spec.clone());
-
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-
-    let app = public_router
-        .merge(login_router)
-        .merge(
-            protected_router
-                .merge(cert_router)
-                .layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    auth::jwt_auth_middleware,
-                )),
-        )
-        .with_state(state.clone())
-        .merge(SwaggerUi::new("/docs").url("/v1/openapi.json", merged_spec))
-        .merge(openapi::yaml_route(spec))
-        .layer(cors)
-        .layer(middleware::from_fn(logging::request_logging));
+    let app = app::build_http_app(state.clone());
     let http_listener = tokio::net::TcpListener::bind(http_addr).await?;
     let http_server = axum::serve(http_listener, app);
 
@@ -347,7 +266,7 @@ async fn main() -> Result<()> {
 
     // Cert check scheduler
     let cert_check_handle = if config.cert_check.enabled {
-        let scheduler = cert::scheduler::CertCheckScheduler::new(
+        let scheduler = CertCheckScheduler::new(
             cert_store,
             storage.clone(),
             config.cert_check.default_interval_secs,
