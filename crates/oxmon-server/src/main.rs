@@ -23,7 +23,7 @@ use tracing_subscriber::EnvFilter;
 
 use oxmon_server::app;
 use oxmon_server::cert::scheduler::CertCheckScheduler;
-use oxmon_server::config;
+use oxmon_server::config::{self, SeedFile};
 use oxmon_server::grpc;
 use oxmon_server::state::{AgentRegistry, AppState};
 
@@ -95,51 +95,10 @@ fn build_alert_rules(cfg: &[config::AlertRuleConfig]) -> Vec<Box<dyn AlertRule>>
     rules
 }
 
-/// 将 TOML 配置中的通知渠道 / 静默窗口迁移到 DB（仅首次）。
-fn migrate_toml_channels_to_db(
-    config: &config::ServerConfig,
-    cert_store: &CertStore,
-) {
-    use oxmon_storage::cert_store::{NotificationChannelRow, SilenceWindowRow};
-
-    // 只有当 DB 中没有任何渠道配置时才从 TOML 迁移
-    let existing = cert_store.count_notification_channels().unwrap_or(0);
-    if existing > 0 {
-        return;
-    }
-
-    for ch in &config.notification.channels {
-        let row = NotificationChannelRow {
-            id: oxmon_common::id::next_id(),
-            name: ch.channel_type.clone(),
-            channel_type: ch.channel_type.clone(),
-            description: None,
-            min_severity: ch.min_severity.clone(),
-            enabled: true,
-            config_json: ch.plugin_config.to_string(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        if let Err(e) = cert_store.insert_notification_channel(&row) {
-            tracing::warn!(channel = %ch.channel_type, error = %e, "Failed to migrate TOML channel to DB");
-        } else {
-            tracing::info!(channel = %ch.channel_type, id = %row.id, "Migrated TOML channel config to DB");
-        }
-    }
-
-    for sw in &config.notification.silence_windows {
-        let row = SilenceWindowRow {
-            id: oxmon_common::id::next_id(),
-            start_time: sw.start_time.clone(),
-            end_time: sw.end_time.clone(),
-            recurrence: sw.recurrence.clone(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        if let Err(e) = cert_store.insert_silence_window(&row) {
-            tracing::warn!(error = %e, "Failed to migrate TOML silence window to DB");
-        }
-    }
+fn print_usage() {
+    eprintln!("Usage:");
+    eprintln!("  oxmon-server [config.toml]                           Start the server");
+    eprintln!("  oxmon-server init-channels <config.toml> <seed.json> Initialize channels from seed file");
 }
 
 #[tokio::main]
@@ -148,18 +107,149 @@ async fn main() -> Result<()> {
         .install_default()
         .expect("Failed to install default CryptoProvider");
 
-    // 初始化 Snowflake ID 生成器 (machine_id=1, node_id=1)
     oxmon_common::id::init(1, 1);
 
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("oxmon=info".parse()?))
         .init();
 
-    let config_path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "config/server.toml".to_string());
+    let args: Vec<String> = std::env::args().collect();
 
-    let config = config::ServerConfig::load(&config_path)?;
+    match args.get(1).map(|s| s.as_str()) {
+        Some("init-channels") => {
+            let config_path = args.get(2).ok_or_else(|| {
+                print_usage();
+                anyhow::anyhow!("init-channels requires <config.toml> and <seed.json> arguments")
+            })?;
+            let seed_path = args.get(3).ok_or_else(|| {
+                print_usage();
+                anyhow::anyhow!("init-channels requires <seed.json> argument")
+            })?;
+            run_init_channels(config_path, seed_path)
+        }
+        Some("--help" | "-h") => {
+            print_usage();
+            Ok(())
+        }
+        _ => {
+            let config_path = args
+                .get(1)
+                .map(|s| s.as_str())
+                .unwrap_or("config/server.toml");
+            run_server(config_path).await
+        }
+    }
+}
+
+/// Initialize notification channels and silence windows from a JSON seed file.
+fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
+    use oxmon_storage::cert_store::{NotificationChannelRow, SilenceWindowRow};
+
+    let config = config::ServerConfig::load(config_path)?;
+    let cert_store = CertStore::new(Path::new(&config.data_dir))?;
+
+    let seed_content = std::fs::read_to_string(seed_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read seed file '{}': {}", seed_path, e))?;
+    let seed: SeedFile = serde_json::from_str(&seed_content)
+        .map_err(|e| anyhow::anyhow!("Failed to parse seed file '{}': {}", seed_path, e))?;
+
+    let mut channels_created = 0u32;
+    let mut channels_skipped = 0u32;
+    let mut recipients_set = 0u32;
+
+    // List existing channel names for dedup
+    let existing = cert_store.list_notification_channels(10000, 0)?;
+    let existing_names: std::collections::HashSet<String> =
+        existing.iter().map(|ch| ch.name.clone()).collect();
+
+    for ch in &seed.channels {
+        if existing_names.contains(&ch.name) {
+            tracing::warn!(name = %ch.name, "Channel already exists, skipping");
+            channels_skipped += 1;
+            continue;
+        }
+
+        let row = NotificationChannelRow {
+            id: oxmon_common::id::next_id(),
+            name: ch.name.clone(),
+            channel_type: ch.channel_type.clone(),
+            description: ch.description.clone(),
+            min_severity: ch.min_severity.clone(),
+            enabled: ch.enabled,
+            config_json: ch.config.to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        match cert_store.insert_notification_channel(&row) {
+            Ok(inserted) => {
+                tracing::info!(name = %ch.name, id = %inserted.id, "Channel created");
+                channels_created += 1;
+
+                if !ch.recipients.is_empty() {
+                    match cert_store.set_channel_recipients(&inserted.id, &ch.recipients) {
+                        Ok(recs) => {
+                            recipients_set += recs.len() as u32;
+                            tracing::info!(
+                                channel = %ch.name,
+                                count = recs.len(),
+                                "Recipients set"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                channel = %ch.name,
+                                error = %e,
+                                "Failed to set recipients"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!(name = %ch.name, error = %e, "Failed to create channel");
+            }
+        }
+    }
+
+    let mut windows_created = 0u32;
+    for sw in &seed.silence_windows {
+        let row = SilenceWindowRow {
+            id: oxmon_common::id::next_id(),
+            start_time: sw.start_time.clone(),
+            end_time: sw.end_time.clone(),
+            recurrence: sw.recurrence.clone(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        match cert_store.insert_silence_window(&row) {
+            Ok(_) => {
+                windows_created += 1;
+                tracing::info!(
+                    start = %sw.start_time,
+                    end = %sw.end_time,
+                    "Silence window created"
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to create silence window");
+            }
+        }
+    }
+
+    tracing::info!(
+        channels_created,
+        channels_skipped,
+        recipients_set,
+        windows_created,
+        "init-channels completed"
+    );
+    Ok(())
+}
+
+async fn run_server(config_path: &str) -> Result<()> {
+    let config = config::ServerConfig::load(config_path)?;
+
     tracing::info!(
         grpc_port = config.grpc_port,
         http_port = config.http_port,
@@ -173,9 +263,6 @@ async fn main() -> Result<()> {
     let alert_engine = Arc::new(Mutex::new(AlertEngine::new(rules)));
     let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(30)));
     let cert_store = Arc::new(CertStore::new(Path::new(&config.data_dir))?);
-
-    // Migrate TOML channel configs to DB (first-time only)
-    migrate_toml_channels_to_db(&config, &cert_store);
 
     // Build notification manager backed by DB
     let registry = ChannelRegistry::default();

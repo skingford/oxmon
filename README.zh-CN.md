@@ -203,7 +203,13 @@ silence_secs = 86400
 
 通知渠道存储在数据库中，通过 REST API 动态管理。每种渠道类型支持**创建多个实例**（例如：为运维团队和开发团队分别配置不同的邮件渠道）。收件人（邮箱、手机号、Webhook URL）按渠道独立管理。
 
-**TOML 种子配置**仅用于首次迁移 — 如果数据库中没有渠道配置，启动时会导入一次 TOML 中的条目。之后请完全使用 REST API 管理。
+**初始化**使用 `init-channels` CLI 子命令和 JSON 种子文件：
+
+```bash
+oxmon-server init-channels config/server.toml config/channels.seed.json
+```
+
+模板文件见 `config/channels.seed.example.json`。重复运行时，同名渠道会被跳过。初始化完成后，使用 REST API 管理渠道。
 
 内置渠道类型：`email`、`webhook`、`sms`、`dingtalk`、`weixin`。
 
@@ -250,17 +256,6 @@ curl -X POST http://localhost:8080/v1/notifications/channels/<id>/test \
 钉钉支持可选的 `secret` 用于 HMAC-SHA256 签名。Webhook 支持可选的 `body_template`，可使用 `{{agent_id}}`、`{{metric}}`、`{{value}}`、`{{severity}}`、`{{message}}` 变量。
 
 > **插件系统**：每种渠道是一个独立的 `ChannelPlugin`，通过 `ChannelRegistry` 动态查找和实例化。配置变更触发热重载，无需重启服务。
-
-**TOML 种子示例**（仅首次启动时导入到 DB）：
-
-```toml
-[[notification.channels]]
-type = "email"
-min_severity = "warning"
-smtp_host = "smtp.example.com"
-smtp_port = 587
-from = "alerts@example.com"
-```
 
 #### 静默窗口（数据库存储，API 管理）
 

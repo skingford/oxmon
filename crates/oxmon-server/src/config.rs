@@ -63,28 +63,37 @@ pub struct AlertRuleConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NotificationConfig {
-    #[serde(default)]
-    pub channels: Vec<ChannelConfig>,
-    #[serde(default)]
-    pub silence_windows: Vec<SilenceWindowConfig>,
     #[serde(default = "default_aggregation_window_secs")]
     pub aggregation_window_secs: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelConfig {
-    #[serde(rename = "type")]
-    pub channel_type: String,
-    #[serde(default = "default_min_severity")]
-    pub min_severity: String,
+// ---- Seed file types (used by `init-channels` CLI subcommand) ----
 
-    /// All remaining fields are passed to the channel plugin as-is.
-    #[serde(flatten)]
-    pub plugin_config: serde_json::Value,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeedFile {
+    #[serde(default)]
+    pub channels: Vec<SeedChannel>,
+    #[serde(default)]
+    pub silence_windows: Vec<SeedSilenceWindow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SilenceWindowConfig {
+pub struct SeedChannel {
+    pub name: String,
+    pub channel_type: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default = "default_seed_min_severity")]
+    pub min_severity: String,
+    #[serde(default = "default_seed_enabled")]
+    pub enabled: bool,
+    pub config: serde_json::Value,
+    #[serde(default)]
+    pub recipients: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeedSilenceWindow {
     pub start_time: String,
     pub end_time: String,
     pub recurrence: Option<String>,
@@ -160,8 +169,12 @@ fn default_silence_secs() -> u64 {
     600
 }
 
-fn default_min_severity() -> String {
+fn default_seed_min_severity() -> String {
     "info".to_string()
+}
+
+fn default_seed_enabled() -> bool {
+    true
 }
 
 fn default_aggregation_window_secs() -> u64 {

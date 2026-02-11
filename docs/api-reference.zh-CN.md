@@ -596,7 +596,7 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/certs/summary
 
 ### 通知渠道管理
 
-通知渠道存储在数据库中，通过 REST API 动态管理。每种渠道类型（email、webhook、sms、dingtalk、weixin）支持创建多个实例。收件人按渠道独立管理。
+通知渠道存储在数据库中，通过 REST API 动态管理。每种渠道类型（email、webhook、sms、dingtalk、weixin）支持创建多个实例。收件人按渠道独立管理。初始化可使用 `init-channels` CLI 子命令和 JSON 种子文件（见 `config/channels.seed.example.json`）。
 
 #### `GET /v1/notifications/channels`
 

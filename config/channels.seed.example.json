@@ -1,0 +1,54 @@
+{
+  "channels": [
+    {
+      "name": "ops-email",
+      "channel_type": "email",
+      "description": "Email alerts for ops team",
+      "min_severity": "warning",
+      "enabled": true,
+      "config": {
+        "smtp_host": "smtp.example.com",
+        "smtp_port": 587,
+        "smtp_username": "alerts@example.com",
+        "smtp_password": "your-password",
+        "from": "alerts@example.com"
+      },
+      "recipients": [
+        "oncall@example.com",
+        "devops@example.com"
+      ]
+    },
+    {
+      "name": "critical-webhook",
+      "channel_type": "webhook",
+      "description": "Webhook for critical alerts",
+      "min_severity": "critical",
+      "enabled": true,
+      "config": {
+        "body_template": "{\"text\": \"[{{severity}}] {{agent_id}}: {{message}}\"}"
+      },
+      "recipients": [
+        "https://hooks.example.com/alert"
+      ]
+    },
+    {
+      "name": "dingtalk-ops",
+      "channel_type": "dingtalk",
+      "description": "DingTalk robot for ops group",
+      "min_severity": "warning",
+      "enabled": true,
+      "config": {
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
+        "secret": "SEC_YOUR_SECRET"
+      },
+      "recipients": []
+    }
+  ],
+  "silence_windows": [
+    {
+      "start_time": "02:00",
+      "end_time": "04:00",
+      "recurrence": "daily"
+    }
+  ]
+}

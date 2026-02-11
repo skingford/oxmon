@@ -596,7 +596,7 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/certs/summary
 
 ### Notification Channel Management
 
-Notification channels are stored in the database and managed dynamically via REST API. Each channel type (email, webhook, sms, dingtalk, weixin) supports multiple instances. Recipients are managed separately per channel.
+Notification channels are stored in the database and managed dynamically via REST API. Each channel type (email, webhook, sms, dingtalk, weixin) supports multiple instances. Recipients are managed separately per channel. Initial setup can use the `init-channels` CLI subcommand with a JSON seed file (see `config/channels.seed.example.json`).
 
 #### `GET /v1/notifications/channels`
 

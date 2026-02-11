@@ -58,7 +58,7 @@ async fn get_system_config(
             cert_check_max_concurrent: config.cert_check.max_concurrent,
             notification_aggregation_window_secs: config.notification.aggregation_window_secs,
             alert_rules_count: config.alert.rules.len(),
-            notification_channels_count: config.notification.channels.len(),
+            notification_channels_count: state.cert_store.count_notification_channels().unwrap_or(0) as usize,
         },
     )
 }

@@ -203,7 +203,13 @@ silence_secs = 86400
 
 Notification channels are stored in the database and managed dynamically via REST API. Each channel type supports **multiple instances** (e.g., separate email configs for ops and dev teams). Recipients (email addresses, phone numbers, webhook URLs) are managed independently per channel.
 
-**TOML seed configuration** is only used for first-time migration — if the database has no channels configured, TOML entries are imported once at startup. After that, use the REST API exclusively.
+**Initial setup** uses the `init-channels` CLI subcommand with a JSON seed file:
+
+```bash
+oxmon-server init-channels config/server.toml config/channels.seed.json
+```
+
+See `config/channels.seed.example.json` for a template. Duplicate channel names are skipped on re-run. After initial setup, use the REST API to manage channels.
 
 Built-in channel types: `email`, `webhook`, `sms`, `dingtalk`, `weixin`.
 
@@ -250,17 +256,6 @@ curl -X POST http://localhost:8080/v1/notifications/channels/<id>/test \
 DingTalk supports optional `secret` for HMAC-SHA256 signing. Webhook supports optional `body_template` with `{{agent_id}}`, `{{metric}}`, `{{value}}`, `{{severity}}`, `{{message}}` variables.
 
 > **Plugin System**: Each channel is an independent `ChannelPlugin` with `ChannelRegistry` for dynamic lookup and instantiation. Configuration changes trigger hot-reload — no server restart required.
-
-**TOML seed example** (imported to DB on first startup only):
-
-```toml
-[[notification.channels]]
-type = "email"
-min_severity = "warning"
-smtp_host = "smtp.example.com"
-smtp_port = 587
-from = "alerts@example.com"
-```
 
 #### Silence Windows (DB-backed, API-managed)
 

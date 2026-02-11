@@ -58,7 +58,7 @@ Agent (per monitored host)          Server (central)
 - **No OpenSSL**: All TLS uses `rustls`/`tokio-rustls`. The `reqwest` dependency uses `rustls-tls` feature. SQLite is bundled.
 - **Agent authentication**: Optional bearer-token auth for gRPC ingestion. Tokens are bcrypt-hashed and stored in the `agent_whitelist` table. Managed via REST API (`/v1/agents/whitelist`). Controlled by `require_agent_auth` config flag.
 - **Certificate details collection**: The cert scheduler uses `CertificateCollector` (DNS resolution + TLS + x509 parsing) to gather detailed cert info (issuer, SANs, chain validation, IPs) stored in `certificate_details` table.
-- **DB-backed notification channels**: Channels are stored in `notification_channels` table with a separate `notification_recipients` table. Each channel type supports multiple instances. `NotificationManager` uses `RwLock<HashMap<String, ChannelInstance>>` with build-then-swap hot-reload via `reload()`. TOML config is only used for first-time migration to DB.
+- **DB-backed notification channels**: Channels are stored in `notification_channels` table with a separate `notification_recipients` table. Each channel type supports multiple instances. `NotificationManager` uses `RwLock<HashMap<String, ChannelInstance>>` with build-then-swap hot-reload via `reload()`. Initial setup via `init-channels` CLI subcommand or REST API (no TOML migration).
 - **Recipient separation**: Recipients (email addresses, phone numbers, webhook URLs) are stored in `notification_recipients` and managed independently per channel via REST API (`/v1/notifications/channels/{id}/recipients`).
 - **Silence windows from DB**: Silence windows are read from DB at notification time rather than loaded into memory at startup.
 
@@ -66,6 +66,15 @@ Agent (per monitored host)          Server (central)
 
 Core metrics API is in `oxmon-server/src/api.rs`. Certificate management API is in `oxmon-server/src/cert/api.rs`. Certificate details API is in `oxmon-server/src/api/certificates.rs`. Agent whitelist API is in `oxmon-server/src/api/whitelist.rs`. Alert rules & lifecycle API is in `oxmon-server/src/api/alerts.rs`. Notification channels & silence windows API is in `oxmon-server/src/api/notifications.rs`. Dashboard API is in `oxmon-server/src/api/dashboard.rs`. System management API is in `oxmon-server/src/api/system.rs`. OpenAPI spec is served from `oxmon-server/src/openapi.rs`. All routes are prefixed with `/v1/`.
 
+## CLI Subcommands
+
+```
+oxmon-server [config.toml]                                    # Start server (default)
+oxmon-server init-channels <config.toml> <seed.json>          # Initialize channels from seed file
+```
+
+The `init-channels` subcommand reads a JSON seed file (see `config/channels.seed.example.json`) and inserts notification channels and silence windows into the database. Duplicate channel names are skipped.
+
 ## Configuration
 
-Example configs are in `config/agent.example.toml` and `config/server.example.toml`. Parsed via `toml` crate in each binary's `config.rs`.
+Example configs are in `config/agent.example.toml` and `config/server.example.toml`. Parsed via `toml` crate in each binary's `config.rs`. Notification channels are **not** configured in TOML — use `init-channels` CLI or REST API.
