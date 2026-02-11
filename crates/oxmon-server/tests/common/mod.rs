@@ -10,6 +10,7 @@ use oxmon_common::proto::metric_service_server::MetricService;
 use oxmon_common::proto::{MetricBatchProto, MetricDataPointProto, ReportResponse};
 use oxmon_common::types::{AddAgentRequest, LoginRequest};
 use oxmon_notify::manager::NotificationManager;
+use oxmon_notify::plugin::ChannelRegistry;
 use oxmon_server::app;
 use oxmon_server::config::ServerConfig;
 use oxmon_server::grpc;
@@ -59,7 +60,11 @@ pub fn build_test_context() -> Result<TestContext> {
         silence_secs: 0,
     })];
     let alert_engine = Arc::new(Mutex::new(AlertEngine::new(rules)));
-    let notifier = Arc::new(NotificationManager::new(vec![], vec![], vec![], 0));
+    let notifier = Arc::new(NotificationManager::new(
+        ChannelRegistry::default(),
+        cert_store.clone(),
+        0,
+    ));
     let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(10)));
 
     let config = ServerConfig {

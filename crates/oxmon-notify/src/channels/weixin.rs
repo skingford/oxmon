@@ -8,13 +8,15 @@ use serde_json::Value;
 use tracing;
 
 pub struct WeixinChannel {
+    instance_id: String,
     client: reqwest::Client,
     webhook_url: String,
 }
 
 impl WeixinChannel {
-    pub fn new(webhook_url: &str) -> Self {
+    pub fn new(instance_id: &str, webhook_url: &str) -> Self {
         Self {
+            instance_id: instance_id.to_string(),
             client: reqwest::Client::new(),
             webhook_url: webhook_url.to_string(),
         }
@@ -39,37 +41,23 @@ impl WeixinChannel {
             message = alert.message,
         )
     }
-}
 
-#[async_trait]
-impl NotificationChannel for WeixinChannel {
-    async fn send(&self, alert: &AlertEvent) -> Result<()> {
-        let content = Self::format_markdown(alert);
-
-        let payload = serde_json::json!({
-            "msgtype": "markdown",
-            "markdown": {
-                "content": content,
-            }
-        });
-
+    async fn send_to_url(&self, url: &str, payload: &Value) -> Result<()> {
         let mut last_err = None;
         for attempt in 0..3u32 {
             match self
                 .client
-                .post(&self.webhook_url)
+                .post(url)
                 .header("Content-Type", "application/json")
-                .json(&payload)
+                .json(payload)
                 .send()
                 .await
             {
                 Ok(resp) if resp.status().is_success() => {
-                    // WeChat Work returns 200 with errcode
                     match resp.json::<Value>().await {
                         Ok(body) => {
                             if body.get("errcode").and_then(|v| v.as_i64()) == Some(0) {
-                                last_err = None;
-                                break;
+                                return Ok(());
                             }
                             let errmsg = body
                                 .get("errmsg")
@@ -116,12 +104,38 @@ impl NotificationChannel for WeixinChannel {
         if let Some(e) = last_err {
             tracing::error!(error = %e, "WeChat Work notification failed after 3 retries");
         }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl NotificationChannel for WeixinChannel {
+    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<()> {
+        let content = Self::format_markdown(alert);
+        let payload = serde_json::json!({
+            "msgtype": "markdown",
+            "markdown": {
+                "content": content,
+            }
+        });
+
+        if recipients.is_empty() {
+            self.send_to_url(&self.webhook_url, &payload).await?;
+        } else {
+            for webhook in recipients {
+                self.send_to_url(webhook, &payload).await?;
+            }
+        }
 
         Ok(())
     }
 
-    fn channel_name(&self) -> &str {
+    fn channel_type(&self) -> &str {
         "weixin"
+    }
+
+    fn instance_id(&self) -> &str {
+        &self.instance_id
     }
 }
 
@@ -139,15 +153,19 @@ impl ChannelPlugin for WeixinPlugin {
         "weixin"
     }
 
+    fn recipient_type(&self) -> &str {
+        "webhook_url"
+    }
+
     fn validate_config(&self, config: &Value) -> Result<()> {
         serde_json::from_value::<WeixinConfig>(config.clone())
             .map_err(|e| anyhow::anyhow!("Invalid weixin config: {e}"))?;
         Ok(())
     }
 
-    fn create_channel(&self, config: &Value) -> Result<Box<dyn NotificationChannel>> {
+    fn create_channel(&self, instance_id: &str, config: &Value) -> Result<Box<dyn NotificationChannel>> {
         let cfg: WeixinConfig = serde_json::from_value(config.clone())
             .map_err(|e| anyhow::anyhow!("Invalid weixin config: {e}"))?;
-        Ok(Box::new(WeixinChannel::new(&cfg.webhook_url)))
+        Ok(Box::new(WeixinChannel::new(instance_id, &cfg.webhook_url)))
     }
 }

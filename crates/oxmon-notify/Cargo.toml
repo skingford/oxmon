@@ -8,6 +8,7 @@ workspace = true
 
 [dependencies]
 oxmon-common = { workspace = true }
+oxmon-storage = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }

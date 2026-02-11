@@ -199,78 +199,86 @@ critical_days = 7                 # Trigger critical at 7 days before expiry
 silence_secs = 86400
 ```
 
-#### Notification Channels (`[[notification.channels]]`)
+#### Notification Channels (DB-backed, API-managed)
 
-**Email:**
+Notification channels are stored in the database and managed dynamically via REST API. Each channel type supports **multiple instances** (e.g., separate email configs for ops and dev teams). Recipients (email addresses, phone numbers, webhook URLs) are managed independently per channel.
+
+**TOML seed configuration** is only used for first-time migration — if the database has no channels configured, TOML entries are imported once at startup. After that, use the REST API exclusively.
+
+Built-in channel types: `email`, `webhook`, `sms`, `dingtalk`, `weixin`.
+
+**Manage channels via API:**
+
+```bash
+# Create a channel
+curl -X POST http://localhost:8080/v1/notifications/channels/config \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ops-email",
+    "channel_type": "email",
+    "description": "Ops team email alerts",
+    "min_severity": "warning",
+    "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":587,\"from\":\"alerts@example.com\"}",
+    "recipients": ["ops@example.com", "admin@example.com"]
+  }'
+
+# List channels with recipients
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/channels
+
+# Update recipients
+curl -X PUT http://localhost:8080/v1/notifications/channels/<id>/recipients \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"recipients": ["ops@example.com", "admin@example.com", "oncall@example.com"]}'
+
+# Send test notification
+curl -X POST http://localhost:8080/v1/notifications/channels/<id>/test \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Channel config reference:**
+
+| Type | Required Config | Recipient Type |
+|------|----------------|----------------|
+| `email` | `smtp_host`, `smtp_port`, `from` | Email address |
+| `webhook` | (none) | URL |
+| `sms` | `gateway_url`, `api_key` | Phone number |
+| `dingtalk` | `webhook_url` | Webhook URL |
+| `weixin` | `webhook_url` | Webhook URL |
+
+DingTalk supports optional `secret` for HMAC-SHA256 signing. Webhook supports optional `body_template` with `{{agent_id}}`, `{{metric}}`, `{{value}}`, `{{severity}}`, `{{message}}` variables.
+
+> **Plugin System**: Each channel is an independent `ChannelPlugin` with `ChannelRegistry` for dynamic lookup and instantiation. Configuration changes trigger hot-reload — no server restart required.
+
+**TOML seed example** (imported to DB on first startup only):
 
 ```toml
 [[notification.channels]]
 type = "email"
-min_severity = "warning"          # Minimum severity to trigger
+min_severity = "warning"
 smtp_host = "smtp.example.com"
 smtp_port = 587
-smtp_username = "alerts@example.com"
-smtp_password = "your-password"
 from = "alerts@example.com"
-recipients = ["admin@example.com", "ops@example.com"]
 ```
 
-**Webhook (for Slack / DingTalk / Feishu, etc.):**
+#### Silence Windows (DB-backed, API-managed)
 
-```toml
-[[notification.channels]]
-type = "webhook"
-min_severity = "info"
-url = "https://hooks.slack.com/services/xxx/yyy/zzz"
-# Optional: custom body template with {{agent_id}} {{metric}} {{value}} {{severity}} {{message}} variables
-# body_template = '{"text": "[{{severity}}] {{agent_id}}: {{message}}"}'
-```
+Suppress notifications during maintenance windows. Managed via REST API:
 
-**SMS:**
+```bash
+# Create a silence window
+curl -X POST http://localhost:8080/v1/notifications/silence-windows \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"start_time": "02:00", "end_time": "04:00", "recurrence": "daily"}'
 
-```toml
-[[notification.channels]]
-type = "sms"
-min_severity = "critical"
-gateway_url = "https://sms-api.example.com/send"
-api_key = "your-api-key"
-phone_numbers = ["+8613800138000"]
-```
+# List silence windows
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/silence-windows
 
-**DingTalk Robot:**
-
-```toml
-[[notification.channels]]
-type = "dingtalk"
-min_severity = "warning"
-webhook_url = "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
-secret = "SEC_YOUR_SECRET"   # Optional: HMAC-SHA256 signing secret
-```
-
-DingTalk notifications send Markdown-formatted messages containing alert severity, agent, metric, value, threshold, and timestamp. When `secret` is configured, requests are signed with HMAC-SHA256.
-
-**WeChat Work Robot:**
-
-```toml
-[[notification.channels]]
-type = "weixin"
-min_severity = "warning"
-webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
-```
-
-WeChat Work notifications send Markdown-formatted messages.
-
-> **Plugin System**: Notification channels are implemented as a plugin architecture. Each channel is an independent `ChannelPlugin`. The server uses `ChannelRegistry` to dynamically look up and instantiate channels — the `type` field in the config maps to the plugin name, and remaining fields are passed directly to the plugin for parsing. Built-in plugins: `email`, `webhook`, `sms`, `dingtalk`, `weixin`.
-
-#### Silence Windows (`[[notification.silence_windows]]`)
-
-Suppress notifications during maintenance windows:
-
-```toml
-[[notification.silence_windows]]
-start_time = "02:00"
-end_time = "04:00"
-recurrence = "daily"
+# Delete a silence window
+curl -X DELETE http://localhost:8080/v1/notifications/silence-windows/<id> \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 #### Alert Aggregation

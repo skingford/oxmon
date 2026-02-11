@@ -72,6 +72,56 @@ Get latest metric values for a specific agent.
 curl http://localhost:8080/v1/agents/web-server-01/latest
 ```
 
+### Metrics Discovery
+
+#### `GET /v1/metrics/names`
+
+Get all distinct metric names in a time range.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `timestamp__gte` | Time lower bound (default: 24h ago) | No |
+| `timestamp__lte` | Time upper bound (default: now) | No |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics/names
+```
+
+Response example:
+
+```json
+["cpu.usage", "cpu.core_usage", "memory.used_percent", "disk.used_percent"]
+```
+
+#### `GET /v1/metrics/agents`
+
+Get all distinct agent IDs reporting in a time range.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `timestamp__gte` | Time lower bound (default: 24h ago) | No |
+| `timestamp__lte` | Time upper bound (default: now) | No |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics/agents
+```
+
+#### `GET /v1/metrics/summary`
+
+Get aggregated metric statistics (min/max/avg/count).
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `agent_id` | Agent ID | Yes |
+| `metric_name` | Metric name | Yes |
+| `timestamp__gte` | Time lower bound (default: 1h ago) | No |
+| `timestamp__lte` | Time upper bound (default: now) | No |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/v1/metrics/summary?agent_id=web-01&metric_name=cpu.usage"
+```
+
 ### `GET /v1/metrics`
 
 Paginated query for metric data points (supports filtering by `agent_id__eq` and `metric_name__eq`).
@@ -113,11 +163,13 @@ Response example:
 ]
 ```
 
-### `GET /v1/alerts/rules`
+### Alert Rules Management
 
-List all configured alert rules.
+#### `GET /v1/alerts/rules`
 
-Default sort: `id` ascending. Default pagination: `limit=20&offset=0`.
+List all active alert rules in the engine.
+
+Default pagination: `limit=20&offset=0`.
 
 | Parameter | Description | Required |
 |-----------|-------------|----------|
@@ -125,10 +177,83 @@ Default sort: `id` ascending. Default pagination: `limit=20&offset=0`.
 | `offset` | Offset (default: 0) | No |
 
 ```bash
-curl http://localhost:8080/v1/alerts/rules
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/alerts/rules
 ```
 
-### `GET /v1/alerts/history`
+#### `GET /v1/alerts/rules/config`
+
+List persisted alert rule configurations from the database.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `limit` | Page size (default: 20) | No |
+| `offset` | Offset (default: 0) | No |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/alerts/rules/config
+```
+
+#### `GET /v1/alerts/rules/{id}`
+
+Get details of a single alert rule.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/alerts/rules/<id>
+```
+
+#### `POST /v1/alerts/rules`
+
+Create a new alert rule.
+
+```bash
+curl -X POST http://localhost:8080/v1/alerts/rules \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "high-cpu",
+    "rule_type": "threshold",
+    "metric": "cpu.usage",
+    "agent_pattern": "*",
+    "severity": "critical",
+    "config_json": "{\"operator\":\"greater_than\",\"value\":90.0,\"duration_secs\":300}",
+    "silence_secs": 600
+  }'
+```
+
+#### `PUT /v1/alerts/rules/{id}`
+
+Update an existing alert rule (partial update).
+
+```bash
+curl -X PUT http://localhost:8080/v1/alerts/rules/<id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"severity": "warning", "silence_secs": 1200}'
+```
+
+#### `DELETE /v1/alerts/rules/{id}`
+
+Delete an alert rule.
+
+```bash
+curl -X DELETE http://localhost:8080/v1/alerts/rules/<id> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+#### `PUT /v1/alerts/rules/{id}/enable`
+
+Enable or disable an alert rule.
+
+```bash
+curl -X PUT http://localhost:8080/v1/alerts/rules/<id>/enable \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+```
+
+### Alert History & Lifecycle
+
+#### `GET /v1/alerts/history`
 
 Query alert history.
 
@@ -144,7 +269,60 @@ Default sort: `timestamp` descending. Default pagination: `limit=20&offset=0`.
 | `offset` | Offset (default: 0) | No |
 
 ```bash
-curl "http://localhost:8080/v1/alerts/history?severity__eq=critical&limit=50"
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/v1/alerts/history?severity__eq=critical&limit=50"
+```
+
+#### `POST /v1/alerts/history/{id}/acknowledge`
+
+Mark an alert as acknowledged.
+
+```bash
+curl -X POST http://localhost:8080/v1/alerts/history/<id>/acknowledge \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+#### `POST /v1/alerts/history/{id}/resolve`
+
+Mark an alert as resolved.
+
+```bash
+curl -X POST http://localhost:8080/v1/alerts/history/<id>/resolve \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+#### `GET /v1/alerts/active`
+
+Get all active (unresolved) alerts.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `limit` | Page size (default: 20) | No |
+| `offset` | Offset (default: 0) | No |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/alerts/active
+```
+
+#### `GET /v1/alerts/summary`
+
+Get alert statistics summary for the last 24 hours.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/alerts/summary
+```
+
+Response example:
+
+```json
+{
+  "total": 42,
+  "by_severity": {
+    "critical": 3,
+    "warning": 15,
+    "info": 24
+  }
+}
 ```
 
 ### Agent Whitelist Management
@@ -392,6 +570,266 @@ Manually trigger certificate checks for all enabled domains.
 
 ```bash
 curl -X POST http://localhost:8080/v1/certs/check
+```
+
+#### `GET /v1/certs/domains/{id}/history`
+
+Get certificate check history for a domain.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `limit` | Page size (default: 20) | No |
+| `offset` | Offset (default: 0) | No |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/v1/certs/domains/<id>/history
+```
+
+#### `GET /v1/certs/summary`
+
+Get certificate health summary (total domains, valid/invalid/expiring counts).
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/certs/summary
+```
+
+### Notification Channel Management
+
+Notification channels are stored in the database and managed dynamically via REST API. Each channel type (email, webhook, sms, dingtalk, weixin) supports multiple instances. Recipients are managed separately per channel.
+
+#### `GET /v1/notifications/channels`
+
+List all notification channels with their recipients and recipient type.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `limit` | Page size (default: 20) | No |
+| `offset` | Offset (default: 0) | No |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/channels
+```
+
+Response example:
+
+```json
+[
+  {
+    "id": "ch_01JABCDEF",
+    "name": "ops-email",
+    "channel_type": "email",
+    "description": "Ops team email channel",
+    "min_severity": "warning",
+    "enabled": true,
+    "recipient_type": "email",
+    "recipients": ["ops@example.com", "admin@example.com"],
+    "created_at": "2026-02-10T10:00:00Z",
+    "updated_at": "2026-02-10T10:00:00Z"
+  }
+]
+```
+
+#### `GET /v1/notifications/channels/config`
+
+List persisted notification channel configurations (raw DB rows).
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `limit` | Page size (default: 20) | No |
+| `offset` | Offset (default: 0) | No |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/channels/config
+```
+
+#### `POST /v1/notifications/channels/config`
+
+Create a new notification channel. The `config_json` field contains channel-type-specific configuration (SMTP settings for email, gateway URL for SMS, etc.). Recipients can be provided during creation.
+
+```bash
+curl -X POST http://localhost:8080/v1/notifications/channels/config \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ops-email",
+    "channel_type": "email",
+    "description": "Ops team email alerts",
+    "min_severity": "warning",
+    "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":587,\"from\":\"alerts@example.com\"}",
+    "recipients": ["ops@example.com"]
+  }'
+```
+
+Channel types and their `config_json` fields:
+
+| Type | Required Config | Optional Config |
+|------|----------------|-----------------|
+| `email` | `smtp_host`, `smtp_port`, `from` | `smtp_username`, `smtp_password` |
+| `webhook` | (none) | `body_template` |
+| `sms` | `gateway_url`, `api_key` | — |
+| `dingtalk` | `webhook_url` | `secret` |
+| `weixin` | `webhook_url` | — |
+
+Recipient types per channel:
+
+| Channel | Recipient Type | Example |
+|---------|---------------|---------|
+| `email` | email address | `admin@example.com` |
+| `sms` | phone number | `+8613800138000` |
+| `webhook` | URL | `https://hooks.slack.com/services/xxx` |
+| `dingtalk` | webhook URL | `https://oapi.dingtalk.com/robot/send?access_token=...` |
+| `weixin` | webhook URL | `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...` |
+
+#### `PUT /v1/notifications/channels/config/{id}`
+
+Update a notification channel configuration (partial update). Changes take effect immediately via hot-reload.
+
+```bash
+curl -X PUT http://localhost:8080/v1/notifications/channels/config/<id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"min_severity": "critical", "enabled": false}'
+```
+
+#### `DELETE /v1/notifications/channels/config/{id}`
+
+Delete a notification channel and its recipients.
+
+```bash
+curl -X DELETE http://localhost:8080/v1/notifications/channels/config/<id> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+#### `POST /v1/notifications/channels/{id}/test`
+
+Send a test notification through a channel to verify configuration. Uses the channel's current recipients.
+
+```bash
+curl -X POST http://localhost:8080/v1/notifications/channels/<id>/test \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+#### `PUT /v1/notifications/channels/{id}/recipients`
+
+Set (replace) the recipient list for a channel.
+
+```bash
+curl -X PUT http://localhost:8080/v1/notifications/channels/<id>/recipients \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"recipients": ["admin@example.com", "ops@example.com"]}'
+```
+
+#### `GET /v1/notifications/channels/{id}/recipients`
+
+Get the current recipient list for a channel.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/v1/notifications/channels/<id>/recipients
+```
+
+### Silence Windows
+
+Silence windows suppress notifications during maintenance periods. Managed via REST API and stored in the database.
+
+#### `GET /v1/notifications/silence-windows`
+
+List all silence windows.
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `limit` | Page size (default: 20) | No |
+| `offset` | Offset (default: 0) | No |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/silence-windows
+```
+
+#### `POST /v1/notifications/silence-windows`
+
+Create a silence window.
+
+```bash
+curl -X POST http://localhost:8080/v1/notifications/silence-windows \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"start_time": "02:00", "end_time": "04:00", "recurrence": "daily"}'
+```
+
+#### `DELETE /v1/notifications/silence-windows/{id}`
+
+Delete a silence window.
+
+```bash
+curl -X DELETE http://localhost:8080/v1/notifications/silence-windows/<id> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Dashboard
+
+#### `GET /v1/dashboard/overview`
+
+Get a comprehensive dashboard overview including agent status, alert summary, certificate health, and storage info.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/dashboard/overview
+```
+
+Response example:
+
+```json
+{
+  "active_agents": 5,
+  "total_agents": 8,
+  "alerts_24h": 42,
+  "alerts_by_severity": {"critical": 3, "warning": 15, "info": 24},
+  "cert_summary": {"total_domains": 10, "valid": 8, "invalid": 1, "expiring_soon": 1},
+  "partition_count": 7,
+  "storage_total_bytes": 52428800,
+  "uptime_secs": 86400
+}
+```
+
+### System Management
+
+#### `GET /v1/system/config`
+
+Get runtime server configuration (sensitive fields are masked).
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/system/config
+```
+
+#### `GET /v1/system/storage`
+
+Get storage partition information (file list, sizes).
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/system/storage
+```
+
+Response example:
+
+```json
+{
+  "partitions": [
+    {"date": "2026-02-10", "size_bytes": 8388608},
+    {"date": "2026-02-09", "size_bytes": 7340032}
+  ],
+  "total_partitions": 2,
+  "total_size_bytes": 15728640
+}
+```
+
+#### `POST /v1/system/storage/cleanup`
+
+Manually trigger storage cleanup based on the retention policy.
+
+```bash
+curl -X POST http://localhost:8080/v1/system/storage/cleanup \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ### API Documentation (OpenAPI)

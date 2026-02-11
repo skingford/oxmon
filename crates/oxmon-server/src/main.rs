@@ -8,10 +8,8 @@ use oxmon_alert::rules::trend_prediction::TrendPredictionRule;
 use oxmon_alert::AlertRule;
 use oxmon_common::proto::metric_service_server::MetricServiceServer;
 use oxmon_common::types::Severity;
-use oxmon_notify::manager::{NotificationManager, SilenceWindow};
+use oxmon_notify::manager::NotificationManager;
 use oxmon_notify::plugin::ChannelRegistry;
-use oxmon_notify::routing::ChannelRoute;
-use oxmon_notify::NotificationChannel;
 use oxmon_storage::cert_store::CertStore;
 use oxmon_storage::engine::SqliteStorageEngine;
 use oxmon_storage::StorageEngine;
@@ -97,49 +95,51 @@ fn build_alert_rules(cfg: &[config::AlertRuleConfig]) -> Vec<Box<dyn AlertRule>>
     rules
 }
 
-fn build_notification_channels(
-    cfg: &[config::ChannelConfig],
-) -> (Vec<Box<dyn NotificationChannel>>, Vec<ChannelRoute>) {
-    let registry = ChannelRegistry::default();
-    let mut channels: Vec<Box<dyn NotificationChannel>> = Vec::new();
-    let mut routes: Vec<ChannelRoute> = Vec::new();
+/// 将 TOML 配置中的通知渠道 / 静默窗口迁移到 DB（仅首次）。
+fn migrate_toml_channels_to_db(
+    config: &config::ServerConfig,
+    cert_store: &CertStore,
+) {
+    use oxmon_storage::cert_store::{NotificationChannelRow, SilenceWindowRow};
 
-    for ch in cfg {
-        let severity: Severity = ch.min_severity.parse().unwrap_or(Severity::Info);
-        match registry.create_channel(&ch.channel_type, &ch.plugin_config) {
-            Ok(channel) => {
-                let idx = channels.len();
-                channels.push(channel);
-                routes.push(ChannelRoute {
-                    min_severity: severity,
-                    channel_index: idx,
-                });
-            }
-            Err(e) => {
-                tracing::error!(
-                    channel_type = %ch.channel_type,
-                    error = %e,
-                    "Failed to create notification channel"
-                );
-            }
+    // 只有当 DB 中没有任何渠道配置时才从 TOML 迁移
+    let existing = cert_store.count_notification_channels().unwrap_or(0);
+    if existing > 0 {
+        return;
+    }
+
+    for ch in &config.notification.channels {
+        let row = NotificationChannelRow {
+            id: oxmon_common::id::next_id(),
+            name: ch.channel_type.clone(),
+            channel_type: ch.channel_type.clone(),
+            description: None,
+            min_severity: ch.min_severity.clone(),
+            enabled: true,
+            config_json: ch.plugin_config.to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        if let Err(e) = cert_store.insert_notification_channel(&row) {
+            tracing::warn!(channel = %ch.channel_type, error = %e, "Failed to migrate TOML channel to DB");
+        } else {
+            tracing::info!(channel = %ch.channel_type, id = %row.id, "Migrated TOML channel config to DB");
         }
     }
 
-    (channels, routes)
-}
-
-fn build_silence_windows(cfg: &[config::SilenceWindowConfig]) -> Vec<SilenceWindow> {
-    cfg.iter()
-        .filter_map(|sw| {
-            let start = chrono::NaiveTime::parse_from_str(&sw.start_time, "%H:%M").ok()?;
-            let end = chrono::NaiveTime::parse_from_str(&sw.end_time, "%H:%M").ok()?;
-            Some(SilenceWindow {
-                start,
-                end,
-                recurrence: sw.recurrence.clone(),
-            })
-        })
-        .collect()
+    for sw in &config.notification.silence_windows {
+        let row = SilenceWindowRow {
+            id: oxmon_common::id::next_id(),
+            start_time: sw.start_time.clone(),
+            end_time: sw.end_time.clone(),
+            recurrence: sw.recurrence.clone(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        if let Err(e) = cert_store.insert_silence_window(&row) {
+            tracing::warn!(error = %e, "Failed to migrate TOML silence window to DB");
+        }
+    }
 }
 
 #[tokio::main]
@@ -171,16 +171,24 @@ async fn main() -> Result<()> {
     let storage = Arc::new(SqliteStorageEngine::new(Path::new(&config.data_dir))?);
     let rules = build_alert_rules(&config.alert.rules);
     let alert_engine = Arc::new(Mutex::new(AlertEngine::new(rules)));
-    let (channels, routes) = build_notification_channels(&config.notification.channels);
-    let silence_windows = build_silence_windows(&config.notification.silence_windows);
-    let notifier = Arc::new(NotificationManager::new(
-        channels,
-        routes,
-        silence_windows,
-        config.notification.aggregation_window_secs,
-    ));
     let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(30)));
     let cert_store = Arc::new(CertStore::new(Path::new(&config.data_dir))?);
+
+    // Migrate TOML channel configs to DB (first-time only)
+    migrate_toml_channels_to_db(&config, &cert_store);
+
+    // Build notification manager backed by DB
+    let registry = ChannelRegistry::default();
+    let notifier = Arc::new(NotificationManager::new(
+        registry,
+        cert_store.clone(),
+        config.notification.aggregation_window_secs,
+    ));
+
+    // Load channels from DB
+    if let Err(e) = notifier.reload().await {
+        tracing::error!(error = %e, "Failed to load notification channels from DB");
+    }
 
     // JWT secret: use configured value or generate random
     let jwt_secret = match &config.auth.jwt_secret {

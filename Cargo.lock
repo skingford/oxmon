@@ -1483,6 +1483,7 @@ dependencies = [
  "hmac",
  "lettre",
  "oxmon-common",
+ "oxmon-storage",
  "reqwest",
  "serde",
  "serde_json",

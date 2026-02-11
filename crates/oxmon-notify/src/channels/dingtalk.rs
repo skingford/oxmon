@@ -13,14 +13,16 @@ use tracing;
 type HmacSha256 = Hmac<Sha256>;
 
 pub struct DingTalkChannel {
+    instance_id: String,
     client: reqwest::Client,
     webhook_url: String,
     secret: Option<String>,
 }
 
 impl DingTalkChannel {
-    pub fn new(webhook_url: &str, secret: Option<String>) -> Self {
+    pub fn new(instance_id: &str, webhook_url: &str, secret: Option<String>) -> Self {
         Self {
+            instance_id: instance_id.to_string(),
             client: reqwest::Client::new(),
             webhook_url: webhook_url.to_string(),
             secret,
@@ -70,39 +72,23 @@ impl DingTalkChannel {
         );
         (title, text)
     }
-}
 
-#[async_trait]
-impl NotificationChannel for DingTalkChannel {
-    async fn send(&self, alert: &AlertEvent) -> Result<()> {
-        let (title, text) = Self::format_markdown(alert);
-        let url = self.sign_url(&self.webhook_url);
-
-        let payload = serde_json::json!({
-            "msgtype": "markdown",
-            "markdown": {
-                "title": title,
-                "text": text,
-            }
-        });
-
+    async fn send_to_url(&self, url: &str, payload: &Value) -> Result<()> {
         let mut last_err = None;
         for attempt in 0..3u32 {
             match self
                 .client
-                .post(&url)
+                .post(url)
                 .header("Content-Type", "application/json")
-                .json(&payload)
+                .json(payload)
                 .send()
                 .await
             {
                 Ok(resp) if resp.status().is_success() => {
-                    // DingTalk returns 200 even on errors; check errcode
                     match resp.json::<Value>().await {
                         Ok(body) => {
                             if body.get("errcode").and_then(|v| v.as_i64()) == Some(0) {
-                                last_err = None;
-                                break;
+                                return Ok(());
                             }
                             let errmsg = body
                                 .get("errmsg")
@@ -149,12 +135,43 @@ impl NotificationChannel for DingTalkChannel {
         if let Some(e) = last_err {
             tracing::error!(error = %e, "DingTalk notification failed after 3 retries");
         }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl NotificationChannel for DingTalkChannel {
+    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<()> {
+        let (title, text) = Self::format_markdown(alert);
+        let payload = serde_json::json!({
+            "msgtype": "markdown",
+            "markdown": {
+                "title": title,
+                "text": text,
+            }
+        });
+
+        if recipients.is_empty() {
+            // 使用 config 中的默认 webhook_url
+            let url = self.sign_url(&self.webhook_url);
+            self.send_to_url(&url, &payload).await?;
+        } else {
+            // recipients 是额外的 webhook URL 列表
+            for webhook in recipients {
+                let url = self.sign_url(webhook);
+                self.send_to_url(&url, &payload).await?;
+            }
+        }
 
         Ok(())
     }
 
-    fn channel_name(&self) -> &str {
+    fn channel_type(&self) -> &str {
         "dingtalk"
+    }
+
+    fn instance_id(&self) -> &str {
+        &self.instance_id
     }
 }
 
@@ -173,15 +190,29 @@ impl ChannelPlugin for DingTalkPlugin {
         "dingtalk"
     }
 
+    fn recipient_type(&self) -> &str {
+        "webhook_url"
+    }
+
     fn validate_config(&self, config: &Value) -> Result<()> {
         serde_json::from_value::<DingTalkConfig>(config.clone())
             .map_err(|e| anyhow::anyhow!("Invalid dingtalk config: {e}"))?;
         Ok(())
     }
 
-    fn create_channel(&self, config: &Value) -> Result<Box<dyn NotificationChannel>> {
+    fn create_channel(&self, instance_id: &str, config: &Value) -> Result<Box<dyn NotificationChannel>> {
         let cfg: DingTalkConfig = serde_json::from_value(config.clone())
             .map_err(|e| anyhow::anyhow!("Invalid dingtalk config: {e}"))?;
-        Ok(Box::new(DingTalkChannel::new(&cfg.webhook_url, cfg.secret)))
+        Ok(Box::new(DingTalkChannel::new(instance_id, &cfg.webhook_url, cfg.secret)))
+    }
+
+    fn redact_config(&self, config: &Value) -> Value {
+        let mut redacted = config.clone();
+        if let Some(obj) = redacted.as_object_mut() {
+            if obj.contains_key("secret") {
+                obj.insert("secret".to_string(), Value::String("***".to_string()));
+            }
+        }
+        redacted
     }
 }

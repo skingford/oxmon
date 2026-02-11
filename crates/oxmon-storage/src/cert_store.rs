@@ -103,12 +103,24 @@ CREATE TABLE IF NOT EXISTS notification_channels (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     channel_type TEXT NOT NULL,
+    description TEXT,
     min_severity TEXT NOT NULL DEFAULT 'info',
     enabled INTEGER NOT NULL DEFAULT 1,
     config_json TEXT NOT NULL DEFAULT '{}',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
+";
+
+const NOTIFICATION_RECIPIENTS_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS notification_recipients (
+    id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL,
+    value TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notif_recipients_channel ON notification_recipients(channel_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notif_recipients_uniq ON notification_recipients(channel_id, value);
 ";
 
 const NOTIFICATION_SILENCE_WINDOWS_SCHEMA: &str = "
@@ -163,7 +175,11 @@ impl CertStore {
         conn.execute_batch(USERS_SCHEMA)?;
         conn.execute_batch(ALERT_RULES_SCHEMA)?;
         conn.execute_batch(NOTIFICATION_CHANNELS_SCHEMA)?;
+        conn.execute_batch(NOTIFICATION_RECIPIENTS_SCHEMA)?;
         conn.execute_batch(NOTIFICATION_SILENCE_WINDOWS_SCHEMA)?;
+
+        // 迁移：为已有的 notification_channels 表添加 description 列
+        let _ = conn.execute_batch("ALTER TABLE notification_channels ADD COLUMN description TEXT;");
 
         // 迁移：为已有的 users 表添加 token_version 列
         let _ = conn.execute_batch(
@@ -1138,10 +1154,10 @@ impl CertStore {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
         conn.execute(
-            "INSERT INTO notification_channels (id, name, channel_type, min_severity, enabled, config_json, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO notification_channels (id, name, channel_type, description, min_severity, enabled, config_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
-                ch.id, ch.name, ch.channel_type, ch.min_severity,
+                ch.id, ch.name, ch.channel_type, ch.description, ch.min_severity,
                 ch.enabled as i32, ch.config_json, now, now,
             ],
         )?;
@@ -1153,7 +1169,7 @@ impl CertStore {
     pub fn get_notification_channel_by_id(&self, id: &str) -> Result<Option<NotificationChannelRow>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, name, channel_type, min_severity, enabled, config_json, created_at, updated_at
+            "SELECT id, name, channel_type, description, min_severity, enabled, config_json, created_at, updated_at
              FROM notification_channels WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_notification_channel(row)))?;
@@ -1168,7 +1184,7 @@ impl CertStore {
     pub fn list_notification_channels(&self, limit: usize, offset: usize) -> Result<Vec<NotificationChannelRow>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, name, channel_type, min_severity, enabled, config_json, created_at, updated_at
+            "SELECT id, name, channel_type, description, min_severity, enabled, config_json, created_at, updated_at
              FROM notification_channels ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
@@ -1197,6 +1213,11 @@ impl CertStore {
         if let Some(ref name) = update.name {
             sets.push(format!("name = ?{idx}"));
             params.push(Box::new(name.clone()));
+            idx += 1;
+        }
+        if let Some(ref description) = update.description {
+            sets.push(format!("description = ?{idx}"));
+            params.push(Box::new(description.clone()));
             idx += 1;
         }
         if let Some(ref min_severity) = update.min_severity {
@@ -1230,6 +1251,11 @@ impl CertStore {
 
     pub fn delete_notification_channel(&self, id: &str) -> Result<bool> {
         let conn = self.lock_conn();
+        // 级联删除关联的 recipients
+        conn.execute(
+            "DELETE FROM notification_recipients WHERE channel_id = ?1",
+            rusqlite::params![id],
+        )?;
         let deleted = conn.execute(
             "DELETE FROM notification_channels WHERE id = ?1",
             rusqlite::params![id],
@@ -1238,16 +1264,17 @@ impl CertStore {
     }
 
     fn row_to_notification_channel(row: &rusqlite::Row) -> Result<NotificationChannelRow> {
-        let enabled_int: i32 = row.get(4)?;
-        let created: i64 = row.get(6)?;
-        let updated: i64 = row.get(7)?;
+        let enabled_int: i32 = row.get(5)?;
+        let created: i64 = row.get(7)?;
+        let updated: i64 = row.get(8)?;
         Ok(NotificationChannelRow {
             id: row.get(0)?,
             name: row.get(1)?,
             channel_type: row.get(2)?,
-            min_severity: row.get(3)?,
+            description: row.get(3)?,
+            min_severity: row.get(4)?,
             enabled: enabled_int != 0,
-            config_json: row.get(5)?,
+            config_json: row.get(6)?,
             created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
             updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
         })
@@ -1319,6 +1346,108 @@ impl CertStore {
             created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
             updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
         })
+    }
+
+    // ---- Notification recipients CRUD ----
+
+    pub fn insert_recipient(&self, channel_id: &str, value: &str) -> Result<NotificationRecipientRow> {
+        let conn = self.lock_conn();
+        let id = oxmon_common::id::next_id();
+        let now = Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO notification_recipients (id, channel_id, value, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, channel_id, value, now],
+        )?;
+        Ok(NotificationRecipientRow {
+            id,
+            channel_id: channel_id.to_string(),
+            value: value.to_string(),
+            created_at: DateTime::from_timestamp(now, 0).unwrap_or_default(),
+        })
+    }
+
+    pub fn list_recipients_by_channel(&self, channel_id: &str) -> Result<Vec<NotificationRecipientRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, channel_id, value, created_at FROM notification_recipients WHERE channel_id = ?1 ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![channel_id], |row| {
+            let created: i64 = row.get(3)?;
+            Ok(NotificationRecipientRow {
+                id: row.get(0)?,
+                channel_id: row.get(1)?,
+                value: row.get(2)?,
+                created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+            })
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    pub fn delete_recipient(&self, id: &str) -> Result<bool> {
+        let conn = self.lock_conn();
+        let deleted = conn.execute(
+            "DELETE FROM notification_recipients WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        Ok(deleted > 0)
+    }
+
+    /// 替换某渠道的全部收件人：先删后批量插入。
+    pub fn set_channel_recipients(&self, channel_id: &str, values: &[String]) -> Result<Vec<NotificationRecipientRow>> {
+        let conn = self.lock_conn();
+        conn.execute(
+            "DELETE FROM notification_recipients WHERE channel_id = ?1",
+            rusqlite::params![channel_id],
+        )?;
+        let now = Utc::now().timestamp();
+        let mut results = Vec::with_capacity(values.len());
+        let mut stmt = conn.prepare(
+            "INSERT INTO notification_recipients (id, channel_id, value, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        for value in values {
+            let id = oxmon_common::id::next_id();
+            stmt.execute(rusqlite::params![id, channel_id, value, now])?;
+            results.push(NotificationRecipientRow {
+                id,
+                channel_id: channel_id.to_string(),
+                value: value.clone(),
+                created_at: DateTime::from_timestamp(now, 0).unwrap_or_default(),
+            });
+        }
+        Ok(results)
+    }
+
+    /// 列出所有已启用的通知渠道及其收件人。
+    pub fn list_enabled_channels_with_recipients(&self) -> Result<Vec<(NotificationChannelRow, Vec<String>)>> {
+        let channels = {
+            let conn = self.lock_conn();
+            let mut stmt = conn.prepare(
+                "SELECT id, name, channel_type, description, min_severity, enabled, config_json, created_at, updated_at
+                 FROM notification_channels WHERE enabled = 1 ORDER BY created_at ASC",
+            )?;
+            let rows = stmt.query_map([], |row| Ok(Self::row_to_notification_channel(row)))?;
+            let mut results = Vec::new();
+            for row in rows {
+                results.push(row??);
+            }
+            results
+        };
+
+        let mut result = Vec::with_capacity(channels.len());
+        for ch in channels {
+            let recipients = self.list_recipients_by_channel(&ch.id)?
+                .into_iter()
+                .map(|r| r.value)
+                .collect();
+            result.push((ch, recipients));
+        }
+        Ok(result)
     }
 
     // ---- Agent count ----
@@ -1624,6 +1753,7 @@ pub struct NotificationChannelRow {
     pub id: String,
     pub name: String,
     pub channel_type: String,
+    pub description: Option<String>,
     pub min_severity: String,
     pub enabled: bool,
     pub config_json: String,
@@ -1634,9 +1764,18 @@ pub struct NotificationChannelRow {
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct NotificationChannelUpdate {
     pub name: Option<String>,
+    pub description: Option<String>,
     pub min_severity: Option<String>,
     pub enabled: Option<bool>,
     pub config_json: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NotificationRecipientRow {
+    pub id: String,
+    pub channel_id: String,
+    pub value: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1844,7 +1983,7 @@ mod tests {
 
         let result = CertCheckResult {
             id: oxmon_common::id::next_id(),
-            domain_id: domain.id.clone(),
+            domain_id: domain.id,
             domain: "cert.com".to_string(),
             is_valid: true,
             chain_valid: true,

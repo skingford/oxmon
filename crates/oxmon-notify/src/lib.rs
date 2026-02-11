@@ -22,15 +22,27 @@ use oxmon_common::types::AlertEvent;
 ///
 /// Implementations are created by the corresponding [`plugin::ChannelPlugin`]
 /// and registered in the notification manager's routing table.
+///
+/// Each channel instance carries an `instance_id` (database primary key) and
+/// a `channel_type` (plugin type name). The `recipients` parameter enables
+/// the same channel instance to target multiple addresses without embedding
+/// them in the channel struct.
 #[async_trait]
 pub trait NotificationChannel: Send + Sync {
-    /// Delivers the alert event through this channel.
+    /// Delivers the alert event to the given recipients.
+    ///
+    /// `recipients` contains addresses relevant to the channel type:
+    /// email addresses, phone numbers, webhook URLs, etc.
+    /// An empty slice means the channel should skip delivery.
     ///
     /// # Errors
     ///
     /// Returns an error if delivery fails after retries (if applicable).
-    async fn send(&self, alert: &AlertEvent) -> Result<()>;
+    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<()>;
 
     /// Returns the channel type name (e.g., `"email"`, `"webhook"`).
-    fn channel_name(&self) -> &str;
+    fn channel_type(&self) -> &str;
+
+    /// Returns the unique instance ID (database row ID) for this channel.
+    fn instance_id(&self) -> &str;
 }

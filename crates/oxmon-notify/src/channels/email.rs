@@ -11,19 +11,19 @@ use serde_json::Value;
 use tracing;
 
 pub struct EmailChannel {
+    instance_id: String,
     transport: AsyncSmtpTransport<Tokio1Executor>,
     from: String,
-    recipients: Vec<String>,
 }
 
 impl EmailChannel {
     pub fn new(
+        instance_id: &str,
         smtp_host: &str,
         smtp_port: u16,
         username: Option<&str>,
         password: Option<&str>,
         from: &str,
-        recipients: Vec<String>,
     ) -> Result<Self> {
         let mut builder = AsyncSmtpTransport::<Tokio1Executor>::relay(smtp_host)?.port(smtp_port);
 
@@ -33,9 +33,9 @@ impl EmailChannel {
 
         let transport = builder.build();
         Ok(Self {
+            instance_id: instance_id.to_string(),
             transport,
             from: from.to_string(),
-            recipients,
         })
     }
 
@@ -55,14 +55,18 @@ impl EmailChannel {
 
 #[async_trait]
 impl NotificationChannel for EmailChannel {
-    async fn send(&self, alert: &AlertEvent) -> Result<()> {
+    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<()> {
+        if recipients.is_empty() {
+            return Ok(());
+        }
+
         let subject = format!(
             "[oxmon][{}] {} - {}",
             alert.severity, alert.metric_name, alert.agent_id
         );
         let body = Self::format_body(alert);
 
-        for recipient in &self.recipients {
+        for recipient in recipients {
             let email = Message::builder()
                 .from(self.from.parse()?)
                 .to(recipient.parse()?)
@@ -101,8 +105,12 @@ impl NotificationChannel for EmailChannel {
         Ok(())
     }
 
-    fn channel_name(&self) -> &str {
+    fn channel_type(&self) -> &str {
         "email"
+    }
+
+    fn instance_id(&self) -> &str {
+        &self.instance_id
     }
 }
 
@@ -115,7 +123,6 @@ struct EmailConfig {
     smtp_username: Option<String>,
     smtp_password: Option<String>,
     from: String,
-    recipients: Vec<String>,
 }
 
 pub struct EmailPlugin;
@@ -125,23 +132,37 @@ impl ChannelPlugin for EmailPlugin {
         "email"
     }
 
+    fn recipient_type(&self) -> &str {
+        "email"
+    }
+
     fn validate_config(&self, config: &Value) -> Result<()> {
         serde_json::from_value::<EmailConfig>(config.clone())
             .map_err(|e| anyhow::anyhow!("Invalid email config: {e}"))?;
         Ok(())
     }
 
-    fn create_channel(&self, config: &Value) -> Result<Box<dyn NotificationChannel>> {
+    fn create_channel(&self, instance_id: &str, config: &Value) -> Result<Box<dyn NotificationChannel>> {
         let cfg: EmailConfig = serde_json::from_value(config.clone())
             .map_err(|e| anyhow::anyhow!("Invalid email config: {e}"))?;
         let channel = EmailChannel::new(
+            instance_id,
             &cfg.smtp_host,
             cfg.smtp_port,
             cfg.smtp_username.as_deref(),
             cfg.smtp_password.as_deref(),
             &cfg.from,
-            cfg.recipients,
         )?;
         Ok(Box::new(channel))
+    }
+
+    fn redact_config(&self, config: &Value) -> Value {
+        let mut redacted = config.clone();
+        if let Some(obj) = redacted.as_object_mut() {
+            if obj.contains_key("smtp_password") {
+                obj.insert("smtp_password".to_string(), Value::String("***".to_string()));
+            }
+        }
+        redacted
     }
 }

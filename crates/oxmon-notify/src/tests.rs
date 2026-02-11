@@ -61,12 +61,12 @@ fn silence_window_overnight() {
 #[test]
 fn routing_severity_filter() {
     let route_warning = ChannelRoute {
+        channel_id: "ch-1".to_string(),
         min_severity: Severity::Warning,
-        channel_index: 0,
     };
     let route_info = ChannelRoute {
+        channel_id: "ch-2".to_string(),
         min_severity: Severity::Info,
-        channel_index: 1,
     };
 
     // Info should not pass warning filter
@@ -94,7 +94,7 @@ fn registry_default_has_all_builtin_plugins() {
 fn registry_unknown_plugin_returns_error() {
     let registry = ChannelRegistry::default();
     let config = serde_json::json!({});
-    let result = registry.create_channel("nonexistent", &config);
+    let result = registry.create_channel("nonexistent", "test-id", &config);
     let err = result
         .err()
         .expect("should return error for unknown plugin");
@@ -114,19 +114,19 @@ fn dingtalk_plugin_validates_config() {
         "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test",
         "secret": "SEC_test"
     });
-    assert!(registry.create_channel("dingtalk", &valid).is_ok());
+    assert!(registry.create_channel("dingtalk", "dt-1", &valid).is_ok());
 
     // Valid without optional secret
     let valid_no_secret = serde_json::json!({
         "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test"
     });
     assert!(registry
-        .create_channel("dingtalk", &valid_no_secret)
+        .create_channel("dingtalk", "dt-2", &valid_no_secret)
         .is_ok());
 
     // Missing required webhook_url
     let invalid = serde_json::json!({});
-    assert!(registry.create_channel("dingtalk", &invalid).is_err());
+    assert!(registry.create_channel("dingtalk", "dt-3", &invalid).is_err());
 }
 
 #[test]
@@ -137,16 +137,17 @@ fn weixin_plugin_validates_config() {
     let valid = serde_json::json!({
         "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test"
     });
-    assert!(registry.create_channel("weixin", &valid).is_ok());
+    assert!(registry.create_channel("weixin", "wx-1", &valid).is_ok());
 
     // Missing required webhook_url
     let invalid = serde_json::json!({});
-    assert!(registry.create_channel("weixin", &invalid).is_err());
+    assert!(registry.create_channel("weixin", "wx-2", &invalid).is_err());
 }
 
 #[test]
 fn dingtalk_hmac_signing_produces_correct_url_format() {
     let channel = crate::channels::dingtalk::DingTalkChannel::new(
+        "test-instance",
         "https://oapi.dingtalk.com/robot/send?access_token=test",
         Some("SEC_test_secret".to_string()),
     );
@@ -161,6 +162,7 @@ fn dingtalk_hmac_signing_produces_correct_url_format() {
 #[test]
 fn dingtalk_no_secret_returns_url_unchanged() {
     let channel = crate::channels::dingtalk::DingTalkChannel::new(
+        "test-instance",
         "https://oapi.dingtalk.com/robot/send?access_token=test",
         None,
     );
@@ -175,26 +177,27 @@ fn email_plugin_validates_config() {
     let valid = serde_json::json!({
         "smtp_host": "smtp.example.com",
         "smtp_port": 587,
-        "from": "test@example.com",
-        "recipients": ["admin@example.com"]
+        "from": "test@example.com"
     });
-    assert!(registry.create_channel("email", &valid).is_ok());
+    assert!(registry.create_channel("email", "em-1", &valid).is_ok());
 
     let invalid = serde_json::json!({});
-    assert!(registry.create_channel("email", &invalid).is_err());
+    assert!(registry.create_channel("email", "em-2", &invalid).is_err());
 }
 
 #[test]
 fn webhook_plugin_validates_config() {
     let registry = ChannelRegistry::default();
 
-    let valid = serde_json::json!({
-        "url": "https://hooks.example.com/webhook"
-    });
-    assert!(registry.create_channel("webhook", &valid).is_ok());
+    // Webhook config only needs optional body_template now
+    let valid = serde_json::json!({});
+    assert!(registry.create_channel("webhook", "wh-1", &valid).is_ok());
 
-    let invalid = serde_json::json!({});
-    assert!(registry.create_channel("webhook", &invalid).is_err());
+    // With body_template
+    let valid_template = serde_json::json!({
+        "body_template": "{\"text\": \"{{message}}\"}"
+    });
+    assert!(registry.create_channel("webhook", "wh-2", &valid_template).is_ok());
 }
 
 #[test]
@@ -203,11 +206,10 @@ fn sms_plugin_validates_config() {
 
     let valid = serde_json::json!({
         "gateway_url": "https://sms.example.com/send",
-        "api_key": "test-key",
-        "phone_numbers": ["+8613800138000"]
+        "api_key": "test-key"
     });
-    assert!(registry.create_channel("sms", &valid).is_ok());
+    assert!(registry.create_channel("sms", "sms-1", &valid).is_ok());
 
     let invalid = serde_json::json!({});
-    assert!(registry.create_channel("sms", &invalid).is_err());
+    assert!(registry.create_channel("sms", "sms-2", &invalid).is_err());
 }

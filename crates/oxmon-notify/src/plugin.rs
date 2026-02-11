@@ -13,11 +13,23 @@ pub trait ChannelPlugin: Send + Sync {
     /// Returns the plugin type name (e.g., `"email"`, `"dingtalk"`).
     fn name(&self) -> &str;
 
+    /// Describes the kind of recipient this channel accepts
+    /// (e.g., `"email"`, `"phone"`, `"webhook_url"`).
+    fn recipient_type(&self) -> &str;
+
     /// Validates a JSON config blob against this plugin's expected schema.
     fn validate_config(&self, config: &Value) -> Result<()>;
 
     /// Creates a configured channel instance from a validated JSON config.
-    fn create_channel(&self, config: &Value) -> Result<Box<dyn NotificationChannel>>;
+    /// `instance_id` is the database row ID used to uniquely identify this
+    /// channel instance.
+    fn create_channel(&self, instance_id: &str, config: &Value) -> Result<Box<dyn NotificationChannel>>;
+
+    /// Returns a copy of `config` with secrets redacted (e.g., passwords
+    /// replaced with `"***"`). Used for API responses.
+    fn redact_config(&self, config: &Value) -> Value {
+        config.clone()
+    }
 }
 
 /// Registry of available [`ChannelPlugin`]s, used to instantiate
@@ -53,6 +65,7 @@ impl ChannelRegistry {
     pub fn create_channel(
         &self,
         type_name: &str,
+        instance_id: &str,
         config: &Value,
     ) -> Result<Box<dyn NotificationChannel>> {
         let plugin = self
@@ -60,7 +73,11 @@ impl ChannelRegistry {
             .get(type_name)
             .ok_or_else(|| anyhow::anyhow!("Unknown channel plugin type: {type_name}"))?;
         plugin.validate_config(config)?;
-        plugin.create_channel(config)
+        plugin.create_channel(instance_id, config)
+    }
+
+    pub fn get_plugin(&self, type_name: &str) -> Option<&dyn ChannelPlugin> {
+        self.plugins.get(type_name).map(|p| p.as_ref())
     }
 
     pub fn has_plugin(&self, type_name: &str) -> bool {

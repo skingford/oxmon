@@ -88,6 +88,26 @@ severity = "critical"
 silence_secs = 3600
 
 # Notification Channels
+#
+# IMPORTANT: Notification channels are now managed via REST API and stored in the
+# database (cert.db). The TOML config below is only used for FIRST-TIME MIGRATION:
+# if the database has no channels configured, these entries will be imported once
+# at startup. After that, use the REST API to manage channels:
+#
+#   POST   /v1/notifications/channels/config       Create a channel
+#   GET    /v1/notifications/channels               List channels (with recipients)
+#   PUT    /v1/notifications/channels/config/{id}   Update a channel
+#   DELETE /v1/notifications/channels/config/{id}   Delete a channel
+#   PUT    /v1/notifications/channels/{id}/recipients   Set recipients
+#   POST   /v1/notifications/channels/{id}/test     Send test notification
+#
+# Each channel type supports multiple instances (e.g., multiple email configs for
+# different teams). Recipients (email addresses, phone numbers, webhook URLs) are
+# managed separately per channel via the recipients API.
+#
+# Built-in channel types: email, webhook, sms, dingtalk, weixin
+
+# Example seed channels (imported to DB on first startup only):
 
 [[notification.channels]]
 type = "email"
@@ -97,34 +117,44 @@ smtp_port = 587
 smtp_username = "alerts@example.com"
 smtp_password = "your-password"
 from = "alerts@example.com"
-recipients = ["admin@example.com"]
+# Note: recipients are now managed via API after migration
+# POST /v1/notifications/channels/{id}/recipients
 
-[[notification.channels]]
-type = "webhook"
-min_severity = "info"
-url = "https://hooks.slack.com/services/xxx/yyy/zzz"
-# Optional: custom body template (uses {{agent_id}}, {{metric}}, {{value}}, {{severity}}, {{message}})
+# [[notification.channels]]
+# type = "webhook"
+# min_severity = "info"
+# # Optional: custom body template (uses {{agent_id}}, {{metric}}, {{value}}, {{severity}}, {{message}})
 # body_template = '{"text": "[{{severity}}] {{agent_id}}: {{message}}"}'
+# # Note: webhook URLs are now added as recipients via API after migration
 
 # [[notification.channels]]
 # type = "sms"
 # min_severity = "critical"
 # gateway_url = "https://sms-gateway.example.com/send"
 # api_key = "your-sms-api-key"
-# phone_numbers = ["+8613800138000"]
+# # Note: phone numbers are now added as recipients via API after migration
 
 # [[notification.channels]]
 # type = "dingtalk"
 # min_severity = "warning"
 # webhook_url = "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
 # secret = "SEC_YOUR_SECRET"  # Optional: HMAC-SHA256 signing secret
+# # Note: additional webhook URLs can be added as recipients via API
 
 # [[notification.channels]]
 # type = "weixin"
 # min_severity = "warning"
 # webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
+# # Note: additional webhook URLs can be added as recipients via API
 
 # Silence Windows (suppress notifications during maintenance)
+#
+# Like channels, silence windows are now managed via REST API:
+#   GET    /v1/notifications/silence-windows           List windows
+#   POST   /v1/notifications/silence-windows           Create window
+#   DELETE /v1/notifications/silence-windows/{id}      Delete window
+#
+# TOML entries below are only imported on first startup if DB is empty.
 
 # [[notification.silence_windows]]
 # start_time = "02:00"

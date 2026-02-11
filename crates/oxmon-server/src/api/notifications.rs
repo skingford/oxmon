@@ -11,114 +11,93 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-/// 通知渠道信息
+/// 通知渠道概览（含收件人列表）
 #[derive(Serialize, ToSchema)]
-struct ChannelResponse {
-    /// 渠道索引
-    index: usize,
-    /// 渠道类型名称
-    channel_name: String,
-}
-
-/// 通知渠道路由信息
-#[derive(Serialize, ToSchema)]
-struct ChannelRouteResponse {
-    /// 最低告警级别
+struct ChannelOverview {
+    id: String,
+    name: String,
+    channel_type: String,
+    description: Option<String>,
     min_severity: String,
-    /// 关联的渠道索引
-    channel_index: usize,
+    enabled: bool,
+    recipient_type: Option<String>,
+    recipients: Vec<String>,
+    created_at: String,
+    updated_at: String,
 }
 
-/// 静默窗口信息
-#[derive(Serialize, ToSchema)]
-struct SilenceWindowResponse {
-    /// 开始时间（HH:MM）
-    start: String,
-    /// 结束时间（HH:MM）
-    end: String,
-    /// 循环规则
-    recurrence: Option<String>,
-}
-
-/// 通知概览
-#[derive(Serialize, ToSchema)]
-struct NotificationOverview {
-    /// 已配置的渠道列表（运行时）
-    channels: Vec<ChannelResponse>,
-    /// 路由规则
-    routes: Vec<ChannelRouteResponse>,
-    /// 静默窗口（运行时）
-    silence_windows: Vec<SilenceWindowResponse>,
-}
-
-/// 列出运行时通知渠道和路由配置。
-/// 鉴权：需要 Bearer Token。
+/// 列出所有通知渠道配置（含收件人）。
 #[utoipa::path(
     get,
     path = "/v1/notifications/channels",
     tag = "Notifications",
     security(("bearer_auth" = [])),
+    params(PaginationParams),
     responses(
-        (status = 200, description = "通知渠道概览", body = NotificationOverview),
+        (status = 200, description = "通知渠道列表", body = Vec<ChannelOverview>),
         (status = 401, description = "未认证", body = crate::api::ApiError)
     )
 )]
 async fn list_channels(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
+    Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
-    let channels: Vec<ChannelResponse> = state
-        .notifier
-        .channels()
-        .iter()
-        .enumerate()
-        .map(|(i, ch)| ChannelResponse {
-            index: i,
-            channel_name: ch.channel_name().to_string(),
-        })
-        .collect();
-
-    let routes: Vec<ChannelRouteResponse> = state
-        .notifier
-        .routes()
-        .iter()
-        .map(|r| ChannelRouteResponse {
-            min_severity: format!("{}", r.min_severity),
-            channel_index: r.channel_index,
-        })
-        .collect();
-
-    let silence_windows: Vec<SilenceWindowResponse> = state
-        .notifier
-        .silence_windows()
-        .iter()
-        .map(|sw| SilenceWindowResponse {
-            start: sw.start.format("%H:%M").to_string(),
-            end: sw.end.format("%H:%M").to_string(),
-            recurrence: sw.recurrence.clone(),
-        })
-        .collect();
-
-    success_response(
-        StatusCode::OK,
-        &trace_id,
-        NotificationOverview {
-            channels,
-            routes,
-            silence_windows,
-        },
-    )
+    match state
+        .cert_store
+        .list_notification_channels(pagination.limit(), pagination.offset())
+    {
+        Ok(channels) => {
+            let mut result = Vec::with_capacity(channels.len());
+            for ch in channels {
+                let recipients = state
+                    .cert_store
+                    .list_recipients_by_channel(&ch.id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|r| r.value)
+                    .collect();
+                let recipient_type = state
+                    .notifier
+                    .registry()
+                    .get_plugin(&ch.channel_type)
+                    .map(|p| p.recipient_type().to_string());
+                result.push(ChannelOverview {
+                    id: ch.id,
+                    name: ch.name,
+                    channel_type: ch.channel_type,
+                    description: ch.description,
+                    min_severity: ch.min_severity,
+                    enabled: ch.enabled,
+                    recipient_type,
+                    recipients,
+                    created_at: ch.created_at.to_rfc3339(),
+                    updated_at: ch.updated_at.to_rfc3339(),
+                });
+            }
+            success_response(StatusCode::OK, &trace_id, result)
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to list notification channels");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response()
+        }
+    }
 }
 
-/// 发送测试通知到指定渠道。
-/// 鉴权：需要 Bearer Token。
+/// 发送测试通知到指定渠道（按 ID）。
 #[utoipa::path(
     post,
-    path = "/v1/notifications/channels/{index}/test",
+    path = "/v1/notifications/channels/{id}/test",
     tag = "Notifications",
     security(("bearer_auth" = [])),
     params(
-        ("index" = usize, Path, description = "渠道索引")
+        ("id" = String, Path, description = "渠道 ID")
     ),
     responses(
         (status = 200, description = "测试通知已发送"),
@@ -129,21 +108,48 @@ async fn list_channels(
 async fn test_channel(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
-    Path(index): Path<usize>,
+    Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let channels = state.notifier.channels();
-    let channel = match channels.get(index) {
-        Some(ch) => ch,
-        None => {
+    let ch = match state.cert_store.get_notification_channel_by_id(&id) {
+        Ok(Some(ch)) => ch,
+        Ok(None) => {
+            return error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Channel not found")
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to get channel");
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &trace_id, "storage_error", "Database error")
+                .into_response();
+        }
+    };
+
+    let config: serde_json::Value = serde_json::from_str(&ch.config_json)
+        .unwrap_or_else(|_| serde_json::json!({}));
+
+    let channel = match state
+        .notifier
+        .registry()
+        .create_channel(&ch.channel_type, &ch.id, &config)
+    {
+        Ok(c) => c,
+        Err(e) => {
             return error_response(
-                StatusCode::NOT_FOUND,
+                StatusCode::BAD_REQUEST,
                 &trace_id,
-                "not_found",
-                "Channel not found",
+                "invalid_config",
+                &format!("Cannot create channel: {e}"),
             )
             .into_response();
         }
     };
+
+    let recipients: Vec<String> = state
+        .cert_store
+        .list_recipients_by_channel(&ch.id)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| r.value)
+        .collect();
 
     let test_event = oxmon_common::types::AlertEvent {
         id: format!("test-{}", chrono::Utc::now().timestamp_millis()),
@@ -160,7 +166,7 @@ async fn test_channel(
         updated_at: chrono::Utc::now(),
     };
 
-    match channel.send(&test_event).await {
+    match channel.send(&test_event, &recipients).await {
         Ok(()) => success_empty_response(StatusCode::OK, &trace_id, "Test notification sent"),
         Err(e) => {
             tracing::error!(error = %e, "Test notification failed");
@@ -175,7 +181,24 @@ async fn test_channel(
     }
 }
 
-// ---- Persisted notification channels CRUD ----
+// ---- Notification channels CRUD ----
+
+#[derive(Deserialize, ToSchema)]
+struct CreateChannelRequest {
+    name: String,
+    channel_type: String,
+    description: Option<String>,
+    #[serde(default = "default_min_severity")]
+    min_severity: String,
+    #[serde(default)]
+    config_json: String,
+    #[serde(default)]
+    recipients: Vec<String>,
+}
+
+fn default_min_severity() -> String {
+    "info".to_string()
+}
 
 /// 列出持久化的通知渠道配置。
 #[utoipa::path(
@@ -212,21 +235,7 @@ async fn list_channel_configs(
     }
 }
 
-#[derive(Deserialize, ToSchema)]
-struct CreateChannelRequest {
-    name: String,
-    channel_type: String,
-    #[serde(default = "default_min_severity")]
-    min_severity: String,
-    #[serde(default)]
-    config_json: String,
-}
-
-fn default_min_severity() -> String {
-    "info".to_string()
-}
-
-/// 创建通知渠道配置。
+/// 创建通知渠道配置（含收件人）。
 #[utoipa::path(
     post,
     path = "/v1/notifications/channels/config",
@@ -243,27 +252,71 @@ async fn create_channel_config(
     State(state): State<AppState>,
     Json(req): Json<CreateChannelRequest>,
 ) -> impl IntoResponse {
+    // 校验 config_json 是否可被对应 plugin 解析
+    let config_value: serde_json::Value = match serde_json::from_str(&req.config_json) {
+        Ok(v) => v,
+        Err(_) => serde_json::json!({}),
+    };
+    if let Some(plugin) = state.notifier.registry().get_plugin(&req.channel_type) {
+        if let Err(e) = plugin.validate_config(&config_value) {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "invalid_config",
+                &format!("Config validation failed: {e}"),
+            )
+            .into_response();
+        }
+    } else {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &trace_id,
+            "unknown_channel_type",
+            &format!("Unknown channel type: {}", req.channel_type),
+        )
+        .into_response();
+    }
+
     let row = NotificationChannelRow {
         id: oxmon_common::id::next_id(),
         name: req.name,
         channel_type: req.channel_type,
+        description: req.description,
         min_severity: req.min_severity,
         enabled: true,
         config_json: req.config_json,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };
+
+    let channel_id = row.id.clone();
     match state.cert_store.insert_notification_channel(&row) {
-        Ok(ch) => success_response(StatusCode::CREATED, &trace_id, ch),
+        Ok(ch) => {
+            // 写入收件人
+            if !req.recipients.is_empty() {
+                let _ = state.cert_store.set_channel_recipients(&channel_id, &req.recipients);
+            }
+            // 触发热重载
+            if let Err(e) = state.notifier.reload().await {
+                tracing::warn!(error = %e, "Failed to reload channels after create");
+            }
+            success_response(StatusCode::CREATED, &trace_id, ch)
+        }
         Err(e) => {
-            tracing::error!(error = %e, "Failed to create notification channel");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Database error",
-            )
-            .into_response()
+            let msg = e.to_string();
+            if msg.contains("UNIQUE constraint") {
+                error_response(StatusCode::CONFLICT, &trace_id, "conflict", "Channel name already exists")
+                    .into_response()
+            } else {
+                tracing::error!(error = %e, "Failed to create notification channel");
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &trace_id,
+                    "storage_error",
+                    "Database error",
+                )
+                .into_response()
+            }
         }
     }
 }
@@ -289,7 +342,12 @@ async fn update_channel_config(
     Json(update): Json<NotificationChannelUpdate>,
 ) -> impl IntoResponse {
     match state.cert_store.update_notification_channel(&id, &update) {
-        Ok(Some(ch)) => success_response(StatusCode::OK, &trace_id, ch),
+        Ok(Some(ch)) => {
+            if let Err(e) = state.notifier.reload().await {
+                tracing::warn!(error = %e, "Failed to reload channels after update");
+            }
+            success_response(StatusCode::OK, &trace_id, ch)
+        }
         Ok(None) => error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Channel not found")
             .into_response(),
         Err(e) => {
@@ -324,11 +382,113 @@ async fn delete_channel_config(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.cert_store.delete_notification_channel(&id) {
-        Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "Channel deleted"),
+        Ok(true) => {
+            if let Err(e) = state.notifier.reload().await {
+                tracing::warn!(error = %e, "Failed to reload channels after delete");
+            }
+            success_empty_response(StatusCode::OK, &trace_id, "Channel deleted")
+        }
         Ok(false) => error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Channel not found")
             .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Failed to delete notification channel");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response()
+        }
+    }
+}
+
+// ---- Recipients management ----
+
+#[derive(Deserialize, ToSchema)]
+struct SetRecipientsRequest {
+    recipients: Vec<String>,
+}
+
+/// 设置（替换）渠道收件人列表。
+#[utoipa::path(
+    put,
+    path = "/v1/notifications/channels/{id}/recipients",
+    tag = "Notifications",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "渠道 ID")),
+    request_body = SetRecipientsRequest,
+    responses(
+        (status = 200, description = "收件人已更新", body = Vec<String>),
+        (status = 401, description = "未认证", body = crate::api::ApiError),
+        (status = 404, description = "渠道不存在", body = crate::api::ApiError)
+    )
+)]
+async fn set_recipients(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<SetRecipientsRequest>,
+) -> impl IntoResponse {
+    // 验证渠道存在
+    match state.cert_store.get_notification_channel_by_id(&id) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Channel not found")
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to get channel");
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &trace_id, "storage_error", "Database error")
+                .into_response();
+        }
+    }
+
+    match state.cert_store.set_channel_recipients(&id, &req.recipients) {
+        Ok(rows) => {
+            if let Err(e) = state.notifier.reload().await {
+                tracing::warn!(error = %e, "Failed to reload channels after recipients update");
+            }
+            let values: Vec<String> = rows.into_iter().map(|r| r.value).collect();
+            success_response(StatusCode::OK, &trace_id, values)
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to set recipients");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response()
+        }
+    }
+}
+
+/// 获取渠道收件人列表。
+#[utoipa::path(
+    get,
+    path = "/v1/notifications/channels/{id}/recipients",
+    tag = "Notifications",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "渠道 ID")),
+    responses(
+        (status = 200, description = "收件人列表", body = Vec<String>),
+        (status = 401, description = "未认证", body = crate::api::ApiError)
+    )
+)]
+async fn get_recipients(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.cert_store.list_recipients_by_channel(&id) {
+        Ok(rows) => {
+            let values: Vec<String> = rows.into_iter().map(|r| r.value).collect();
+            success_response(StatusCode::OK, &trace_id, values)
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to list recipients");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
@@ -470,6 +630,7 @@ pub fn notification_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(test_channel))
         .routes(routes!(list_channel_configs, create_channel_config))
         .routes(routes!(update_channel_config, delete_channel_config))
+        .routes(routes!(set_recipients, get_recipients))
         .routes(routes!(list_silence_windows, create_silence_window))
         .routes(routes!(delete_silence_window))
 }
