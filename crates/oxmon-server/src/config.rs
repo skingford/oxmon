@@ -1,6 +1,6 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     #[serde(default = "default_grpc_port")]
     pub grpc_port: u16,
@@ -23,13 +23,13 @@ pub struct ServerConfig {
     pub auth: AuthConfig,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AlertConfig {
     #[serde(default)]
     pub rules: Vec<AlertRuleConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertRuleConfig {
     pub name: String,
     #[serde(rename = "type")]
@@ -61,7 +61,7 @@ pub struct AlertRuleConfig {
     pub silence_secs: u64,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NotificationConfig {
     #[serde(default)]
     pub channels: Vec<ChannelConfig>,
@@ -71,7 +71,7 @@ pub struct NotificationConfig {
     pub aggregation_window_secs: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelConfig {
     #[serde(rename = "type")]
     pub channel_type: String,
@@ -83,14 +83,14 @@ pub struct ChannelConfig {
     pub plugin_config: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SilenceWindowConfig {
     pub start_time: String,
     pub end_time: String,
     pub recurrence: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertCheckConfig {
     #[serde(default = "default_cert_check_enabled")]
     pub enabled: bool,
@@ -172,7 +172,7 @@ fn default_require_agent_auth() -> bool {
     false
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
     #[serde(default)]
     pub jwt_secret: Option<String>,

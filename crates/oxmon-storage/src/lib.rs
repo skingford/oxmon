@@ -83,4 +83,94 @@ pub trait StorageEngine: Send + Sync {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<AlertEvent>>;
+
+    /// Returns distinct metric names observed in the given time range.
+    fn query_distinct_metric_names(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<Vec<String>>;
+
+    /// Returns distinct agent IDs observed in the given time range.
+    fn query_distinct_agent_ids(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<Vec<String>>;
+
+    /// Returns aggregated metric statistics (min, max, avg, count) for the
+    /// given agent, metric, and time range.
+    fn query_metric_summary(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        agent_id: &str,
+        metric_name: &str,
+    ) -> Result<MetricSummary>;
+
+    /// Returns alert event counts grouped by severity in the given time range.
+    fn query_alert_summary(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<AlertSummary>;
+
+    /// Returns partition (daily database) information.
+    fn list_partitions(&self) -> Result<Vec<PartitionInfo>>;
+
+    /// Acknowledges an alert event by ID. Returns true if found and updated.
+    fn acknowledge_alert(&self, event_id: &str) -> Result<bool>;
+
+    /// Resolves an alert event by ID. Returns true if found and updated.
+    fn resolve_alert(&self, event_id: &str) -> Result<bool>;
+
+    /// Queries active (non-resolved) alert events.
+    fn query_active_alerts(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<AlertEvent>>;
+
+    /// Returns total count for paginated metrics query.
+    fn count_metrics(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        agent_id: Option<&str>,
+        metric_name: Option<&str>,
+    ) -> Result<u64>;
+
+    /// Returns total count for paginated alert history.
+    fn count_alert_history(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        severity: Option<&str>,
+        agent_id: Option<&str>,
+    ) -> Result<u64>;
+}
+
+/// Aggregated metric statistics.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MetricSummary {
+    pub min: f64,
+    pub max: f64,
+    pub avg: f64,
+    pub count: u64,
+}
+
+/// Alert summary with counts by severity.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AlertSummary {
+    pub total: u64,
+    pub by_severity: std::collections::HashMap<String, u64>,
+    pub by_rule: std::collections::HashMap<String, u64>,
+}
+
+/// Information about a storage partition (daily SQLite database).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PartitionInfo {
+    pub date: String,
+    pub size_bytes: u64,
+    pub path: String,
 }

@@ -27,6 +27,30 @@ impl AlertEngine {
         &self.rules
     }
 
+    /// Get a rule by its ID.
+    pub fn get_rule(&self, id: &str) -> Option<&dyn AlertRule> {
+        self.rules.iter().find(|r| r.id() == id).map(|r| r.as_ref())
+    }
+
+    /// Add a new rule at runtime.
+    pub fn add_rule(&mut self, rule: Box<dyn AlertRule>) {
+        self.rules.push(rule);
+    }
+
+    /// Remove a rule by ID. Returns true if found and removed.
+    pub fn remove_rule(&mut self, id: &str) -> bool {
+        let len_before = self.rules.len();
+        self.rules.retain(|r| r.id() != id);
+        self.rules.len() < len_before
+    }
+
+    /// Replace all rules with a new set.
+    pub fn replace_rules(&mut self, rules: Vec<Box<dyn AlertRule>>) {
+        self.rules = rules;
+        self.windows.clear();
+        self.last_fired.clear();
+    }
+
     pub fn ingest(&mut self, data_point: &MetricDataPoint) -> Vec<AlertEvent> {
         let now = Utc::now();
         let mut events = Vec::new();

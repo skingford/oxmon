@@ -162,4 +162,12 @@ impl NotificationManager {
     pub fn channels(&self) -> &[Box<dyn NotificationChannel>] {
         &self.channels
     }
+
+    pub fn routes(&self) -> &[ChannelRoute] {
+        &self.routes
+    }
+
+    pub fn silence_windows(&self) -> &[SilenceWindow] {
+        &self.silence_windows
+    }
 }

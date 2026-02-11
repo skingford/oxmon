@@ -79,6 +79,49 @@ CREATE INDEX IF NOT EXISTS idx_cert_details_not_after ON certificate_details(not
 CREATE INDEX IF NOT EXISTS idx_cert_details_domain ON certificate_details(domain);
 ";
 
+const ALERT_RULES_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS alert_rules (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    rule_type TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    agent_pattern TEXT NOT NULL DEFAULT '*',
+    severity TEXT NOT NULL DEFAULT 'info',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    config_json TEXT NOT NULL DEFAULT '{}',
+    silence_secs INTEGER NOT NULL DEFAULT 600,
+    source TEXT NOT NULL DEFAULT 'api',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_alert_rules_name ON alert_rules(name);
+CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules(enabled);
+";
+
+const NOTIFICATION_CHANNELS_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS notification_channels (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    channel_type TEXT NOT NULL,
+    min_severity TEXT NOT NULL DEFAULT 'info',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    config_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+";
+
+const NOTIFICATION_SILENCE_WINDOWS_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS notification_silence_windows (
+    id TEXT PRIMARY KEY,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    recurrence TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+";
+
 const USERS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -118,6 +161,9 @@ impl CertStore {
         let _ = conn.execute_batch("ALTER TABLE cert_check_results ADD COLUMN updated_at INTEGER;");
 
         conn.execute_batch(USERS_SCHEMA)?;
+        conn.execute_batch(ALERT_RULES_SCHEMA)?;
+        conn.execute_batch(NOTIFICATION_CHANNELS_SCHEMA)?;
+        conn.execute_batch(NOTIFICATION_SILENCE_WINDOWS_SCHEMA)?;
 
         // 迁移：为已有的 users 表添加 token_version 列
         let _ = conn.execute_batch(
@@ -842,6 +888,447 @@ impl CertStore {
         }
     }
 
+    // ---- cert_check_results history ----
+
+    pub fn query_check_results_by_domain_id(
+        &self,
+        domain_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<CertCheckResult>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, domain_id, domain, is_valid, chain_valid, not_before, not_after, days_until_expiry, issuer, subject, san_list, resolved_ips, error, checked_at, created_at, updated_at
+             FROM cert_check_results
+             WHERE domain_id = ?1
+             ORDER BY checked_at DESC
+             LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = stmt.query_map(
+            rusqlite::params![domain_id, limit as i64, offset as i64],
+            |row| Ok(Self::row_to_check_result(row)),
+        )?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row??);
+        }
+        Ok(results)
+    }
+
+    pub fn count_check_results_by_domain_id(&self, domain_id: &str) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM cert_check_results WHERE domain_id = ?1",
+            rusqlite::params![domain_id],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
+    /// Returns a certificate health summary.
+    pub fn cert_summary(&self) -> Result<CertHealthSummary> {
+        let conn = self.lock_conn();
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM cert_domains WHERE enabled = 1",
+            [],
+            |row| row.get(0),
+        )?;
+
+        // Get latest result per domain, count valid/invalid/expiring
+        let mut stmt = conn.prepare(
+            "SELECT r.is_valid, r.days_until_expiry
+             FROM cert_check_results r
+             INNER JOIN (
+                 SELECT domain_id, MAX(checked_at) AS max_checked
+                 FROM cert_check_results
+                 GROUP BY domain_id
+             ) latest ON r.domain_id = latest.domain_id AND r.checked_at = latest.max_checked
+             INNER JOIN cert_domains d ON d.id = r.domain_id AND d.enabled = 1",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i32>(0)?, row.get::<_, Option<i64>>(1)?))
+        })?;
+
+        let mut valid: u64 = 0;
+        let mut invalid: u64 = 0;
+        let mut expiring_soon: u64 = 0; // within 30 days
+
+        for row in rows {
+            let (is_valid, days) = row?;
+            if is_valid != 0 {
+                valid += 1;
+                if let Some(d) = days {
+                    if d <= 30 {
+                        expiring_soon += 1;
+                    }
+                }
+            } else {
+                invalid += 1;
+            }
+        }
+
+        Ok(CertHealthSummary {
+            total_domains: total as u64,
+            valid,
+            invalid,
+            expiring_soon,
+        })
+    }
+
+    // ---- Alert rules CRUD ----
+
+    pub fn insert_alert_rule(&self, rule: &AlertRuleRow) -> Result<AlertRuleRow> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO alert_rules (id, name, rule_type, metric, agent_pattern, severity, enabled, config_json, silence_secs, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            rusqlite::params![
+                rule.id, rule.name, rule.rule_type, rule.metric, rule.agent_pattern,
+                rule.severity, rule.enabled as i32, rule.config_json, rule.silence_secs as i64,
+                rule.source, now, now,
+            ],
+        )?;
+        drop(conn);
+        self.get_alert_rule_by_id(&rule.id)
+            .and_then(|opt| opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted rule")))
+    }
+
+    pub fn get_alert_rule_by_id(&self, id: &str) -> Result<Option<AlertRuleRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, rule_type, metric, agent_pattern, severity, enabled, config_json, silence_secs, source, created_at, updated_at
+             FROM alert_rules WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_alert_rule(row)))?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(Some(r)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_alert_rules(&self, limit: usize, offset: usize) -> Result<Vec<AlertRuleRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, rule_type, metric, agent_pattern, severity, enabled, config_json, silence_secs, source, created_at, updated_at
+             FROM alert_rules ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+            Ok(Self::row_to_alert_rule(row))
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row??);
+        }
+        Ok(results)
+    }
+
+    pub fn count_alert_rules(&self) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM alert_rules", [], |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
+    pub fn update_alert_rule(&self, id: &str, update: &AlertRuleUpdate) -> Result<Option<AlertRuleRow>> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        let mut sets = vec!["updated_at = ?1".to_string()];
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now)];
+        let mut idx = 2;
+
+        if let Some(ref name) = update.name {
+            sets.push(format!("name = ?{idx}"));
+            params.push(Box::new(name.clone()));
+            idx += 1;
+        }
+        if let Some(ref metric) = update.metric {
+            sets.push(format!("metric = ?{idx}"));
+            params.push(Box::new(metric.clone()));
+            idx += 1;
+        }
+        if let Some(ref agent_pattern) = update.agent_pattern {
+            sets.push(format!("agent_pattern = ?{idx}"));
+            params.push(Box::new(agent_pattern.clone()));
+            idx += 1;
+        }
+        if let Some(ref severity) = update.severity {
+            sets.push(format!("severity = ?{idx}"));
+            params.push(Box::new(severity.clone()));
+            idx += 1;
+        }
+        if let Some(enabled) = update.enabled {
+            sets.push(format!("enabled = ?{idx}"));
+            params.push(Box::new(enabled as i32));
+            idx += 1;
+        }
+        if let Some(ref config_json) = update.config_json {
+            sets.push(format!("config_json = ?{idx}"));
+            params.push(Box::new(config_json.clone()));
+            idx += 1;
+        }
+        if let Some(silence_secs) = update.silence_secs {
+            sets.push(format!("silence_secs = ?{idx}"));
+            params.push(Box::new(silence_secs as i64));
+            idx += 1;
+        }
+
+        let sql = format!("UPDATE alert_rules SET {} WHERE id = ?{idx}", sets.join(", "));
+        params.push(Box::new(id.to_string()));
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let updated = conn.execute(&sql, param_refs.as_slice())?;
+        drop(conn);
+
+        if updated == 0 {
+            return Ok(None);
+        }
+        self.get_alert_rule_by_id(id)
+    }
+
+    pub fn delete_alert_rule(&self, id: &str) -> Result<bool> {
+        let conn = self.lock_conn();
+        let deleted = conn.execute(
+            "DELETE FROM alert_rules WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        Ok(deleted > 0)
+    }
+
+    pub fn set_alert_rule_enabled(&self, id: &str, enabled: bool) -> Result<Option<AlertRuleRow>> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        let updated = conn.execute(
+            "UPDATE alert_rules SET enabled = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![enabled as i32, now, id],
+        )?;
+        drop(conn);
+        if updated == 0 {
+            return Ok(None);
+        }
+        self.get_alert_rule_by_id(id)
+    }
+
+    fn row_to_alert_rule(row: &rusqlite::Row) -> Result<AlertRuleRow> {
+        let enabled_int: i32 = row.get(6)?;
+        let silence: i64 = row.get(8)?;
+        let created: i64 = row.get(10)?;
+        let updated: i64 = row.get(11)?;
+        Ok(AlertRuleRow {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            rule_type: row.get(2)?,
+            metric: row.get(3)?,
+            agent_pattern: row.get(4)?,
+            severity: row.get(5)?,
+            enabled: enabled_int != 0,
+            config_json: row.get(7)?,
+            silence_secs: silence as u64,
+            source: row.get(9)?,
+            created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+            updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+        })
+    }
+
+    // ---- Notification channels CRUD ----
+
+    pub fn insert_notification_channel(&self, ch: &NotificationChannelRow) -> Result<NotificationChannelRow> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO notification_channels (id, name, channel_type, min_severity, enabled, config_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                ch.id, ch.name, ch.channel_type, ch.min_severity,
+                ch.enabled as i32, ch.config_json, now, now,
+            ],
+        )?;
+        drop(conn);
+        self.get_notification_channel_by_id(&ch.id)
+            .and_then(|opt| opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted channel")))
+    }
+
+    pub fn get_notification_channel_by_id(&self, id: &str) -> Result<Option<NotificationChannelRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, channel_type, min_severity, enabled, config_json, created_at, updated_at
+             FROM notification_channels WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_notification_channel(row)))?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(Some(r)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_notification_channels(&self, limit: usize, offset: usize) -> Result<Vec<NotificationChannelRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, channel_type, min_severity, enabled, config_json, created_at, updated_at
+             FROM notification_channels ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+            Ok(Self::row_to_notification_channel(row))
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row??);
+        }
+        Ok(results)
+    }
+
+    pub fn count_notification_channels(&self) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM notification_channels", [], |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
+    pub fn update_notification_channel(&self, id: &str, update: &NotificationChannelUpdate) -> Result<Option<NotificationChannelRow>> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        let mut sets = vec!["updated_at = ?1".to_string()];
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now)];
+        let mut idx = 2;
+
+        if let Some(ref name) = update.name {
+            sets.push(format!("name = ?{idx}"));
+            params.push(Box::new(name.clone()));
+            idx += 1;
+        }
+        if let Some(ref min_severity) = update.min_severity {
+            sets.push(format!("min_severity = ?{idx}"));
+            params.push(Box::new(min_severity.clone()));
+            idx += 1;
+        }
+        if let Some(enabled) = update.enabled {
+            sets.push(format!("enabled = ?{idx}"));
+            params.push(Box::new(enabled as i32));
+            idx += 1;
+        }
+        if let Some(ref config_json) = update.config_json {
+            sets.push(format!("config_json = ?{idx}"));
+            params.push(Box::new(config_json.clone()));
+            idx += 1;
+        }
+
+        let sql = format!("UPDATE notification_channels SET {} WHERE id = ?{idx}", sets.join(", "));
+        params.push(Box::new(id.to_string()));
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let updated = conn.execute(&sql, param_refs.as_slice())?;
+        drop(conn);
+
+        if updated == 0 {
+            return Ok(None);
+        }
+        self.get_notification_channel_by_id(id)
+    }
+
+    pub fn delete_notification_channel(&self, id: &str) -> Result<bool> {
+        let conn = self.lock_conn();
+        let deleted = conn.execute(
+            "DELETE FROM notification_channels WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        Ok(deleted > 0)
+    }
+
+    fn row_to_notification_channel(row: &rusqlite::Row) -> Result<NotificationChannelRow> {
+        let enabled_int: i32 = row.get(4)?;
+        let created: i64 = row.get(6)?;
+        let updated: i64 = row.get(7)?;
+        Ok(NotificationChannelRow {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            channel_type: row.get(2)?,
+            min_severity: row.get(3)?,
+            enabled: enabled_int != 0,
+            config_json: row.get(5)?,
+            created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+            updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+        })
+    }
+
+    // ---- Silence windows CRUD ----
+
+    pub fn insert_silence_window(&self, sw: &SilenceWindowRow) -> Result<SilenceWindowRow> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO notification_silence_windows (id, start_time, end_time, recurrence, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![sw.id, sw.start_time, sw.end_time, sw.recurrence, now, now],
+        )?;
+        drop(conn);
+        self.get_silence_window_by_id(&sw.id)
+            .and_then(|opt| opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted silence window")))
+    }
+
+    pub fn get_silence_window_by_id(&self, id: &str) -> Result<Option<SilenceWindowRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, start_time, end_time, recurrence, created_at, updated_at
+             FROM notification_silence_windows WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_silence_window(row)))?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(Some(r)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_silence_windows(&self, limit: usize, offset: usize) -> Result<Vec<SilenceWindowRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, start_time, end_time, recurrence, created_at, updated_at
+             FROM notification_silence_windows ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+            Ok(Self::row_to_silence_window(row))
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row??);
+        }
+        Ok(results)
+    }
+
+    pub fn delete_silence_window(&self, id: &str) -> Result<bool> {
+        let conn = self.lock_conn();
+        let deleted = conn.execute(
+            "DELETE FROM notification_silence_windows WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        Ok(deleted > 0)
+    }
+
+    fn row_to_silence_window(row: &rusqlite::Row) -> Result<SilenceWindowRow> {
+        let created: i64 = row.get(4)?;
+        let updated: i64 = row.get(5)?;
+        Ok(SilenceWindowRow {
+            id: row.get(0)?,
+            start_time: row.get(1)?,
+            end_time: row.get(2)?,
+            recurrence: row.get(3)?,
+            created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+            updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+        })
+    }
+
+    // ---- Agent count ----
+
+    pub fn count_agents(&self) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM agent_whitelist", [], |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
     // ---- Certificate details operations ----
 
     // ---- User operations ----
@@ -1101,6 +1588,73 @@ impl CertStore {
             updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
         })
     }
+}
+
+// ---- Data types for new tables ----
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AlertRuleRow {
+    pub id: String,
+    pub name: String,
+    pub rule_type: String,
+    pub metric: String,
+    pub agent_pattern: String,
+    pub severity: String,
+    pub enabled: bool,
+    pub config_json: String,
+    pub silence_secs: u64,
+    pub source: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct AlertRuleUpdate {
+    pub name: Option<String>,
+    pub metric: Option<String>,
+    pub agent_pattern: Option<String>,
+    pub severity: Option<String>,
+    pub enabled: Option<bool>,
+    pub config_json: Option<String>,
+    pub silence_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NotificationChannelRow {
+    pub id: String,
+    pub name: String,
+    pub channel_type: String,
+    pub min_severity: String,
+    pub enabled: bool,
+    pub config_json: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct NotificationChannelUpdate {
+    pub name: Option<String>,
+    pub min_severity: Option<String>,
+    pub enabled: Option<bool>,
+    pub config_json: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SilenceWindowRow {
+    pub id: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub recurrence: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CertHealthSummary {
+    pub total_domains: u64,
+    pub valid: u64,
+    pub invalid: u64,
+    pub expiring_soon: u64,
 }
 
 #[cfg(test)]

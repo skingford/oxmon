@@ -229,6 +229,7 @@ async fn main() -> Result<()> {
         start_time: Utc::now(),
         jwt_secret,
         token_expire_secs: config.auth.token_expire_secs,
+        config: Arc::new(config.clone()),
     };
 
     // gRPC server

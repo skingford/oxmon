@@ -49,6 +49,41 @@ async fn openapi_paths_should_be_covered_by_test_matrix() {
         "GET /v1/certs/status/{domain}",
         "POST /v1/certs/domains/{id}/check",
         "POST /v1/certs/check",
+        // New endpoints: metrics discovery
+        "GET /v1/metrics/names",
+        "GET /v1/metrics/agents",
+        "GET /v1/metrics/summary",
+        // New endpoints: cert history & summary
+        "GET /v1/certs/domains/{id}/history",
+        "GET /v1/certs/summary",
+        // New endpoints: alert rules CRUD
+        "POST /v1/alerts/rules",
+        "GET /v1/alerts/rules/{id}",
+        "GET /v1/alerts/rules/config",
+        "PUT /v1/alerts/rules/{id}",
+        "DELETE /v1/alerts/rules/{id}",
+        "PUT /v1/alerts/rules/{id}/enable",
+        // New endpoints: alert lifecycle
+        "POST /v1/alerts/history/{id}/acknowledge",
+        "POST /v1/alerts/history/{id}/resolve",
+        "GET /v1/alerts/active",
+        "GET /v1/alerts/summary",
+        // New endpoints: notifications
+        "GET /v1/notifications/channels",
+        "POST /v1/notifications/channels/{index}/test",
+        "GET /v1/notifications/channels/config",
+        "POST /v1/notifications/channels/config",
+        "PUT /v1/notifications/channels/config/{id}",
+        "DELETE /v1/notifications/channels/config/{id}",
+        "GET /v1/notifications/silence-windows",
+        "POST /v1/notifications/silence-windows",
+        "DELETE /v1/notifications/silence-windows/{id}",
+        // New endpoints: dashboard
+        "GET /v1/dashboard/overview",
+        // New endpoints: system
+        "GET /v1/system/config",
+        "GET /v1/system/storage",
+        "POST /v1/system/storage/cleanup",
     ]
     .into_iter()
     .map(|s| s.to_string())

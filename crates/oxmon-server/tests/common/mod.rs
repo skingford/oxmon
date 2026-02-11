@@ -11,6 +11,7 @@ use oxmon_common::proto::{MetricBatchProto, MetricDataPointProto, ReportResponse
 use oxmon_common::types::{AddAgentRequest, LoginRequest};
 use oxmon_notify::manager::NotificationManager;
 use oxmon_server::app;
+use oxmon_server::config::ServerConfig;
 use oxmon_server::grpc;
 use oxmon_server::state::{AgentRegistry, AppState};
 use oxmon_storage::auth::hash_token;
@@ -61,6 +62,18 @@ pub fn build_test_context() -> Result<TestContext> {
     let notifier = Arc::new(NotificationManager::new(vec![], vec![], vec![], 0));
     let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(10)));
 
+    let config = ServerConfig {
+        grpc_port: 9090,
+        http_port: 8080,
+        data_dir: temp_dir.path().to_string_lossy().to_string(),
+        retention_days: 7,
+        require_agent_auth: false,
+        alert: Default::default(),
+        notification: Default::default(),
+        cert_check: Default::default(),
+        auth: Default::default(),
+    };
+
     let state = AppState {
         storage,
         alert_engine,
@@ -71,6 +84,7 @@ pub fn build_test_context() -> Result<TestContext> {
         start_time: Utc::now(),
         jwt_secret: Arc::new("test-secret".to_string()),
         token_expire_secs: 3600,
+        config: Arc::new(config),
     };
 
     let app = app::build_http_app(state.clone());
