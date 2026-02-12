@@ -584,6 +584,8 @@ struct AlertEventResponse {
     timestamp: DateTime<Utc>,
     /// 预测突破时间（趋势预测规则）
     predicted_breach: Option<DateTime<Utc>>,
+    /// 状态：1=未处理, 2=已确认, 3=已处理
+    status: u8,
 }
 
 /// 分页查询告警事件历史（支持按 agent_id__eq、severity__eq、时间范围过滤）。
@@ -633,6 +635,7 @@ async fn alert_history(
                     threshold: e.threshold,
                     timestamp: e.timestamp,
                     predicted_breach: e.predicted_breach,
+                    status: e.status,
                 })
                 .collect();
             success_response(StatusCode::OK, &trace_id, resp)

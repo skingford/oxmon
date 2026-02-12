@@ -103,6 +103,7 @@ impl AlertRule for TrendPredictionRule {
             threshold: self.predict_threshold,
             timestamp: now,
             predicted_breach: Some(breach_time),
+            status: 1,
             created_at: now,
             updated_at: now,
         })

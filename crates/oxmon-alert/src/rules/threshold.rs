@@ -120,6 +120,7 @@ impl AlertRule for ThresholdRule {
             threshold: self.value,
             timestamp: now,
             predicted_breach: None,
+            status: 1,
             created_at: now,
             updated_at: now,
         })

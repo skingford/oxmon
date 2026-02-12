@@ -104,6 +104,7 @@ impl AlertRule for CertExpirationRule {
             },
             timestamp: now,
             predicted_breach: None,
+            status: 1,
             created_at: now,
             updated_at: now,
         })

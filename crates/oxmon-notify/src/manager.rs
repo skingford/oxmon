@@ -200,6 +200,7 @@ impl NotificationManager {
                     threshold: events[0].threshold,
                     timestamp: now,
                     predicted_breach: None,
+                    status: 1,
                     created_at: now,
                     updated_at: now,
                 };

@@ -231,7 +231,7 @@ impl StorageEngine for SqliteStorageEngine {
         for key in keys {
             self.partitions.with_partition(&key, |conn| {
                 let mut sql = String::from(
-                    "SELECT id, rule_id, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach, created_at, updated_at
+                    "SELECT id, rule_id, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach, created_at, updated_at, status
                      FROM alert_events WHERE timestamp >= ?1 AND timestamp <= ?2",
                 );
                 let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
@@ -260,6 +260,7 @@ impl StorageEngine for SqliteStorageEngine {
                     let sev_str: String = row.get(4)?;
                     let created_at: i64 = row.get(10)?;
                     let updated_at: i64 = row.get(11)?;
+                    let status_str: Option<String> = row.get(12)?;
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
@@ -273,16 +274,22 @@ impl StorageEngine for SqliteStorageEngine {
                         predicted_ms,
                         created_at,
                         updated_at,
+                        status_str,
                     ))
                 })?;
 
                 for row in rows {
-                    let (id, rule_id, agent_id, metric_name, sev_str, message, value, threshold, ts_ms, predicted_ms, created_at, updated_at) = row?;
+                    let (id, rule_id, agent_id, metric_name, sev_str, message, value, threshold, ts_ms, predicted_ms, created_at, updated_at, status_str) = row?;
                     let timestamp = DateTime::from_timestamp_millis(ts_ms)
                         .unwrap_or_default();
                     let predicted_breach = predicted_ms
                         .and_then(DateTime::from_timestamp_millis);
                     let severity_val: Severity = sev_str.parse().unwrap_or(Severity::Info);
+                    let status = match status_str.as_deref() {
+                        Some("acknowledged") => 2,
+                        Some("resolved") => 3,
+                        _ => 1,
+                    };
                     results.push(AlertEvent {
                         id,
                         rule_id,
@@ -294,6 +301,7 @@ impl StorageEngine for SqliteStorageEngine {
                         threshold,
                         timestamp,
                         predicted_breach,
+                        status,
                         created_at: DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
                         updated_at: DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
                     });
@@ -501,7 +509,7 @@ impl StorageEngine for SqliteStorageEngine {
         for key in keys {
             self.partitions.with_partition(&key, |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, rule_id, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach, created_at, updated_at
+                    "SELECT id, rule_id, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach, created_at, updated_at, status
                      FROM alert_events
                      WHERE timestamp >= ?1 AND timestamp <= ?2
                        AND (status IS NULL OR status NOT IN ('resolved'))
@@ -513,6 +521,7 @@ impl StorageEngine for SqliteStorageEngine {
                     let sev_str: String = row.get(4)?;
                     let created_at: i64 = row.get(10)?;
                     let updated_at: i64 = row.get(11)?;
+                    let status_str: Option<String> = row.get(12)?;
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
@@ -526,16 +535,22 @@ impl StorageEngine for SqliteStorageEngine {
                         predicted_ms,
                         created_at,
                         updated_at,
+                        status_str,
                     ))
                 })?;
                 for row in rows {
-                    let (id, rule_id, agent_id, metric_name, sev_str, message, value, threshold, ts_ms, predicted_ms, created_at, updated_at) = row?;
+                    let (id, rule_id, agent_id, metric_name, sev_str, message, value, threshold, ts_ms, predicted_ms, created_at, updated_at, status_str) = row?;
                     let timestamp = DateTime::from_timestamp_millis(ts_ms).unwrap_or_default();
                     let predicted_breach = predicted_ms.and_then(DateTime::from_timestamp_millis);
                     let severity_val: Severity = sev_str.parse().unwrap_or(Severity::Info);
+                    let status = match status_str.as_deref() {
+                        Some("acknowledged") => 2,
+                        Some("resolved") => 3,
+                        _ => 1,
+                    };
                     results.push(AlertEvent {
                         id, rule_id, agent_id, metric_name, severity: severity_val,
-                        message, value, threshold, timestamp, predicted_breach,
+                        message, value, threshold, timestamp, predicted_breach, status,
                         created_at: DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
                         updated_at: DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
                     });

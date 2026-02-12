@@ -86,6 +86,7 @@ fn write_and_query_alert_events() {
         threshold: 90.0,
         timestamp: now,
         predicted_breach: None,
+        status: 1,
         created_at: now,
         updated_at: now,
     };
@@ -129,6 +130,7 @@ fn query_alert_history_filters() {
             threshold: 90.0,
             timestamp: ts,
             predicted_breach: None,
+            status: 1,
             created_at: ts,
             updated_at: ts,
         };
@@ -196,6 +198,7 @@ fn pagination() {
             threshold: 90.0,
             timestamp: ts,
             predicted_breach: None,
+            status: 1,
             created_at: ts,
             updated_at: ts,
         };

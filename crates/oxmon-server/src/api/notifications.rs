@@ -162,6 +162,7 @@ async fn test_channel(
         threshold: 0.0,
         timestamp: chrono::Utc::now(),
         predicted_breach: None,
+        status: 1,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };

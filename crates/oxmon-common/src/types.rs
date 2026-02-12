@@ -77,6 +77,8 @@ pub struct AlertEvent {
     pub timestamp: DateTime<Utc>,
     /// For trend prediction rules: predicted time to breach
     pub predicted_breach: Option<DateTime<Utc>>,
+    /// Status: 1=未处理, 2=已确认, 3=已处理
+    pub status: u8,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
