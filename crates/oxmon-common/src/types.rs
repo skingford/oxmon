@@ -298,6 +298,47 @@ pub struct CertificateDetails {
     pub created_at: DateTime<Utc>,
     /// 更新时间
     pub updated_at: DateTime<Utc>,
+
+    // ---- 新增字段 ----
+
+    /// 证书序列号（十六进制）
+    pub serial_number: Option<String>,
+    /// 证书 SHA-256 指纹
+    pub fingerprint_sha256: Option<String>,
+    /// 证书版本（1/2/3）
+    pub version: Option<i32>,
+    /// 签名算法（如 SHA256withRSA）
+    pub signature_algorithm: Option<String>,
+    /// 公钥算法（RSA, ECDSA, Ed25519）
+    pub public_key_algorithm: Option<String>,
+    /// 公钥长度（如 2048, 4096, 256）
+    pub public_key_bits: Option<i32>,
+    /// 主体通用名称
+    pub subject_cn: Option<String>,
+    /// 主体组织
+    pub subject_o: Option<String>,
+    /// 密钥用途（JSON 数组）
+    pub key_usage: Option<Vec<String>>,
+    /// 扩展密钥用途（JSON 数组）
+    pub extended_key_usage: Option<Vec<String>>,
+    /// 是否 CA 证书
+    pub is_ca: Option<bool>,
+    /// 是否通配符证书
+    pub is_wildcard: Option<bool>,
+    /// OCSP 响应器地址（JSON 数组）
+    pub ocsp_urls: Option<Vec<String>>,
+    /// CRL 分发点（JSON 数组）
+    pub crl_urls: Option<Vec<String>>,
+    /// CA 颁发者 URL（JSON 数组）
+    pub ca_issuer_urls: Option<Vec<String>>,
+    /// Certificate Transparency SCT 数量
+    pub sct_count: Option<i32>,
+    /// 协商的 TLS 版本
+    pub tls_version: Option<String>,
+    /// 协商的加密套件
+    pub cipher_suite: Option<String>,
+    /// 证书链深度
+    pub chain_depth: Option<i32>,
 }
 
 /// 证书详情查询过滤器
@@ -357,4 +398,82 @@ pub struct ChangePasswordRequest {
     pub current_password: String,
     /// 新密码（必填）
     pub new_password: String,
+}
+
+// ---- System dictionary types ----
+
+/// 系统字典条目
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DictionaryItem {
+    /// 唯一标识
+    pub id: String,
+    /// 字典类型（如 channel_type, severity, rule_type 等）
+    pub dict_type: String,
+    /// 字典键（英文标识，同一 dict_type 下唯一）
+    pub dict_key: String,
+    /// 显示标签（中文/英文）
+    pub dict_label: String,
+    /// 字典值（可选，用于存放额外值）
+    pub dict_value: Option<String>,
+    /// 排序序号
+    pub sort_order: i32,
+    /// 是否启用
+    pub enabled: bool,
+    /// 是否系统内置（系统内置项不可删除）
+    pub is_system: bool,
+    /// 描述信息
+    pub description: Option<String>,
+    /// 扩展 JSON（可选，用于存放额外配置）
+    pub extra_json: Option<String>,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 更新时间
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 创建字典条目请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct CreateDictionaryRequest {
+    /// 字典类型（必填）
+    pub dict_type: String,
+    /// 字典键（必填，同一 dict_type 下唯一）
+    pub dict_key: String,
+    /// 显示标签（必填）
+    pub dict_label: String,
+    /// 字典值（可选）
+    pub dict_value: Option<String>,
+    /// 排序序号（可选，默认 0）
+    pub sort_order: Option<i32>,
+    /// 是否启用（可选，默认 true）
+    pub enabled: Option<bool>,
+    /// 描述信息（可选）
+    pub description: Option<String>,
+    /// 扩展 JSON（可选）
+    pub extra_json: Option<String>,
+}
+
+/// 更新字典条目请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct UpdateDictionaryRequest {
+    /// 显示标签（可选）
+    pub dict_label: Option<String>,
+    /// 字典值（可选）
+    pub dict_value: Option<Option<String>>,
+    /// 排序序号（可选）
+    pub sort_order: Option<i32>,
+    /// 是否启用（可选）
+    pub enabled: Option<bool>,
+    /// 描述信息（可选）
+    pub description: Option<Option<String>>,
+    /// 扩展 JSON（可选）
+    pub extra_json: Option<Option<String>>,
+}
+
+/// 字典类型摘要
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DictionaryTypeSummary {
+    /// 字典类型
+    pub dict_type: String,
+    /// 该类型下的条目数量
+    pub count: u64,
 }

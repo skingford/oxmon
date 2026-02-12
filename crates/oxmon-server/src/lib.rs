@@ -3,6 +3,7 @@ pub mod app;
 pub mod auth;
 pub mod cert;
 pub mod config;
+pub mod dictionary_seed;
 pub mod grpc;
 pub mod logging;
 pub mod openapi;

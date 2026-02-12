@@ -1,6 +1,7 @@
 pub mod alerts;
 pub mod certificates;
 pub mod dashboard;
+pub mod dictionaries;
 pub mod notifications;
 pub mod pagination;
 pub mod system;
@@ -936,4 +937,5 @@ pub fn protected_routes() -> OpenApiRouter<AppState> {
         .merge(notifications::notification_routes())
         .merge(dashboard::dashboard_routes())
         .merge(system::system_routes())
+        .merge(dictionaries::dictionary_routes())
 }

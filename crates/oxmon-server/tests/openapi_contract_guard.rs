@@ -86,6 +86,13 @@ async fn openapi_paths_should_be_covered_by_test_matrix() {
         "GET /v1/system/config",
         "GET /v1/system/storage",
         "POST /v1/system/storage/cleanup",
+        // New endpoints: dictionaries
+        "GET /v1/dictionaries/types",
+        "GET /v1/dictionaries/type/{dict_type}",
+        "GET /v1/dictionaries/{id}",
+        "POST /v1/dictionaries",
+        "PUT /v1/dictionaries/{id}",
+        "DELETE /v1/dictionaries/{id}",
     ]
     .into_iter()
     .map(|s| s.to_string())

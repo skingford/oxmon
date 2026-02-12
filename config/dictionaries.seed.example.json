@@ -1,0 +1,25 @@
+{
+  "dictionaries": [
+    {
+      "dict_type": "channel_type",
+      "dict_key": "slack",
+      "dict_label": "Slack",
+      "description": "Slack 机器人通知（自定义扩展）",
+      "sort_order": 10
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "custom.app.requests",
+      "dict_label": "应用请求数",
+      "description": "自定义应用级别指标",
+      "sort_order": 100
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "custom.app.latency_ms",
+      "dict_label": "应用延迟(ms)",
+      "description": "自定义应用延迟指标",
+      "sort_order": 101
+    }
+  ]
+}

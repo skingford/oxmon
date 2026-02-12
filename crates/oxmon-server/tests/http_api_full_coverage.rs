@@ -432,6 +432,182 @@ async fn certificate_list_should_default_to_20_when_pagination_missing() {
 }
 
 #[tokio::test]
+async fn dictionary_endpoints_should_cover_crud_paths() {
+    let ctx = build_test_context().expect("test context should build");
+    let token = login_and_get_token(&ctx.app).await;
+
+    // List types (initially empty)
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/dictionaries/types",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    let types: Vec<serde_json::Value> = decode_data(&body);
+    assert!(types.is_empty());
+
+    // Create a dictionary item
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/dictionaries",
+        Some(&token),
+        Some(json!({
+            "dict_type": "channel_type",
+            "dict_key": "email",
+            "dict_label": "邮件",
+            "description": "邮件通知"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_ok_envelope(&body);
+    let item_id = body["data"]["id"].as_str().expect("id should exist").to_string();
+    assert_eq!(body["data"]["dict_type"], "channel_type");
+    assert_eq!(body["data"]["dict_key"], "email");
+    assert_eq!(body["data"]["is_system"], false);
+
+    // Create second item of same type
+    let (status, _, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/dictionaries",
+        Some(&token),
+        Some(json!({
+            "dict_type": "channel_type",
+            "dict_key": "webhook",
+            "dict_label": "Webhook",
+            "sort_order": 2
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // Create duplicate should fail
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/dictionaries",
+        Some(&token),
+        Some(json!({
+            "dict_type": "channel_type",
+            "dict_key": "email",
+            "dict_label": "重复"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_err_envelope(&body, 1005);
+
+    // Get by id
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        &format!("/v1/dictionaries/{item_id}"),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["dict_key"], "email");
+
+    // Get non-existent
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/dictionaries/nonexistent",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_err_envelope(&body, 1004);
+
+    // List by type
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/dictionaries/type/channel_type",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    let items: Vec<serde_json::Value> = decode_data(&body);
+    assert_eq!(items.len(), 2);
+
+    // List types again (should have 1 type)
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/dictionaries/types",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let types: Vec<serde_json::Value> = decode_data(&body);
+    assert_eq!(types.len(), 1);
+    assert_eq!(types[0]["dict_type"], "channel_type");
+    assert_eq!(types[0]["count"], 2);
+
+    // Update
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "PUT",
+        &format!("/v1/dictionaries/{item_id}"),
+        Some(&token),
+        Some(json!({
+            "dict_label": "电子邮件",
+            "enabled": false
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["dict_label"], "电子邮件");
+    assert_eq!(body["data"]["enabled"], false);
+
+    // Update non-existent
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "PUT",
+        "/v1/dictionaries/nonexistent",
+        Some(&token),
+        Some(json!({"dict_label": "test"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_err_envelope(&body, 1004);
+
+    // Delete
+    let (status, _, _) = request_no_body(
+        &ctx.app,
+        "DELETE",
+        &format!("/v1/dictionaries/{item_id}"),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Delete again should 404
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "DELETE",
+        &format!("/v1/dictionaries/{item_id}"),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_err_envelope(&body, 1004);
+
+    // Auth required
+    let (status, _, _) = request_no_body(&ctx.app, "GET", "/v1/dictionaries/types", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn openapi_endpoints_should_be_accessible() {
     let ctx = build_test_context().expect("test context should build");
 

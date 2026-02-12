@@ -62,10 +62,11 @@ Agent (per monitored host)          Server (central)
 - **DB-backed notification channels**: Channels are stored in `notification_channels` table with a separate `notification_recipients` table. Each channel type supports multiple instances. `NotificationManager` uses `RwLock<HashMap<String, ChannelInstance>>` with build-then-swap hot-reload via `reload()`. Initial setup via `init-channels` CLI subcommand or REST API (no TOML migration).
 - **Recipient separation**: Recipients (email addresses, phone numbers, webhook URLs) are stored in `notification_recipients` and managed independently per channel via REST API (`/v1/notifications/channels/{id}/recipients`).
 - **Silence windows from DB**: Silence windows are read from DB at notification time rather than loaded into memory at startup.
+- **System dictionaries**: Centralized enum management for system constants (channel types, severity levels, rule types, alert statuses, agent statuses, compare operators, metric names, rule sources, recipient types). Stored in `system_dictionaries` table with `dict_type` + `dict_key` unique constraint. System built-in items (`is_system = true`) are protected from deletion. Default seed data (~50 items) is auto-initialized on first startup when the table is empty. Managed via REST API (`/v1/dictionaries`) or `init-dictionaries` CLI subcommand. Seed data defined in `oxmon-server/src/dictionary_seed.rs`.
 
 ## REST API Routes
 
-Core metrics API is in `oxmon-server/src/api.rs`. Certificate management API is in `oxmon-server/src/cert/api.rs`. Certificate details API is in `oxmon-server/src/api/certificates.rs`. Agent whitelist API is in `oxmon-server/src/api/whitelist.rs`. Alert rules & lifecycle API is in `oxmon-server/src/api/alerts.rs`. Notification channels & silence windows API is in `oxmon-server/src/api/notifications.rs`. Dashboard API is in `oxmon-server/src/api/dashboard.rs`. System management API is in `oxmon-server/src/api/system.rs`. OpenAPI spec is served from `oxmon-server/src/openapi.rs`. All routes are prefixed with `/v1/`.
+Core metrics API is in `oxmon-server/src/api.rs`. Certificate management API is in `oxmon-server/src/cert/api.rs`. Certificate details API is in `oxmon-server/src/api/certificates.rs`. Agent whitelist API is in `oxmon-server/src/api/whitelist.rs`. Alert rules & lifecycle API is in `oxmon-server/src/api/alerts.rs`. Notification channels & silence windows API is in `oxmon-server/src/api/notifications.rs`. Dashboard API is in `oxmon-server/src/api/dashboard.rs`. System management API is in `oxmon-server/src/api/system.rs`. Dictionary management API is in `oxmon-server/src/api/dictionaries.rs`. OpenAPI spec is served from `oxmon-server/src/openapi.rs`. All routes are prefixed with `/v1/`.
 
 ## CLI Subcommands
 
@@ -73,11 +74,14 @@ Core metrics API is in `oxmon-server/src/api.rs`. Certificate management API is 
 oxmon-server [config.toml]                                    # Start server (default)
 oxmon-server init-channels <config.toml> <seed.json>          # Initialize channels from seed file
 oxmon-server init-rules <config.toml> <seed.json>             # Initialize alert rules from seed file
+oxmon-server init-dictionaries <config.toml> <seed.json>      # Initialize dictionaries from seed file
 ```
 
 The `init-channels` subcommand reads a JSON seed file (see `config/channels.seed.example.json`) and inserts notification channels and silence windows into the database. Duplicate channel names are skipped.
 
 The `init-rules` subcommand reads a JSON seed file (see `config/rules.seed.example.json`) and inserts alert rules into the database. Duplicate rule names are skipped.
+
+The `init-dictionaries` subcommand reads a JSON seed file (see `config/dictionaries.seed.example.json`) and inserts dictionary items into the database. Duplicate `dict_type` + `dict_key` pairs are skipped.
 
 ## Configuration
 

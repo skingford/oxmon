@@ -1,6 +1,8 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use oxmon_common::types::{CertCheckResult, CertDomain, CreateDomainRequest};
+use oxmon_common::types::{
+    CertCheckResult, CertDomain, CreateDomainRequest, DictionaryItem, DictionaryTypeSummary,
+};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -73,7 +75,26 @@ CREATE TABLE IF NOT EXISTS certificate_details (
     chain_error TEXT,
     last_checked INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    serial_number TEXT,
+    fingerprint_sha256 TEXT,
+    version INTEGER,
+    signature_algorithm TEXT,
+    public_key_algorithm TEXT,
+    public_key_bits INTEGER,
+    subject_cn TEXT,
+    subject_o TEXT,
+    key_usage TEXT,
+    extended_key_usage TEXT,
+    is_ca INTEGER,
+    is_wildcard INTEGER,
+    ocsp_urls TEXT,
+    crl_urls TEXT,
+    ca_issuer_urls TEXT,
+    sct_count INTEGER,
+    tls_version TEXT,
+    cipher_suite TEXT,
+    chain_depth INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_cert_details_not_after ON certificate_details(not_after);
 CREATE INDEX IF NOT EXISTS idx_cert_details_domain ON certificate_details(domain);
@@ -134,6 +155,26 @@ CREATE TABLE IF NOT EXISTS notification_silence_windows (
 );
 ";
 
+const SYSTEM_DICTIONARIES_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS system_dictionaries (
+    id TEXT PRIMARY KEY,
+    dict_type TEXT NOT NULL,
+    dict_key TEXT NOT NULL,
+    dict_label TEXT NOT NULL,
+    dict_value TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    is_system INTEGER NOT NULL DEFAULT 0,
+    description TEXT,
+    extra_json TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dict_type_key ON system_dictionaries(dict_type, dict_key);
+CREATE INDEX IF NOT EXISTS idx_dict_type ON system_dictionaries(dict_type);
+CREATE INDEX IF NOT EXISTS idx_dict_enabled ON system_dictionaries(enabled);
+";
+
 const USERS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -166,6 +207,33 @@ impl CertStore {
         // 迁移 certificate_details：如果旧表缺少 id 列（以 domain 为主键），则重建
         Self::migrate_certificate_details(&conn)?;
 
+        // 迁移：为已有的 certificate_details 表添加新增的证书字段
+        for col in &[
+            "serial_number TEXT",
+            "fingerprint_sha256 TEXT",
+            "version INTEGER",
+            "signature_algorithm TEXT",
+            "public_key_algorithm TEXT",
+            "public_key_bits INTEGER",
+            "subject_cn TEXT",
+            "subject_o TEXT",
+            "key_usage TEXT",
+            "extended_key_usage TEXT",
+            "is_ca INTEGER",
+            "is_wildcard INTEGER",
+            "ocsp_urls TEXT",
+            "crl_urls TEXT",
+            "ca_issuer_urls TEXT",
+            "sct_count INTEGER",
+            "tls_version TEXT",
+            "cipher_suite TEXT",
+            "chain_depth INTEGER",
+        ] {
+            let _ = conn.execute_batch(&format!(
+                "ALTER TABLE certificate_details ADD COLUMN {col};"
+            ));
+        }
+
         // 迁移：为已有的 cert_check_results 表添加 resolved_ips 列
         let _ = conn.execute_batch("ALTER TABLE cert_check_results ADD COLUMN resolved_ips TEXT;");
         // 迁移：为已有的 cert_check_results 表添加 created_at / updated_at 列
@@ -177,6 +245,7 @@ impl CertStore {
         conn.execute_batch(NOTIFICATION_CHANNELS_SCHEMA)?;
         conn.execute_batch(NOTIFICATION_RECIPIENTS_SCHEMA)?;
         conn.execute_batch(NOTIFICATION_SILENCE_WINDOWS_SCHEMA)?;
+        conn.execute_batch(SYSTEM_DICTIONARIES_SCHEMA)?;
 
         // 迁移：为已有的 notification_channels 表添加 description 列
         let _ = conn.execute_batch("ALTER TABLE notification_channels ADD COLUMN description TEXT;");
@@ -312,7 +381,26 @@ impl CertStore {
                 chain_error TEXT,
                 last_checked INTEGER NOT NULL,
                 created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                serial_number TEXT,
+                fingerprint_sha256 TEXT,
+                version INTEGER,
+                signature_algorithm TEXT,
+                public_key_algorithm TEXT,
+                public_key_bits INTEGER,
+                subject_cn TEXT,
+                subject_o TEXT,
+                key_usage TEXT,
+                extended_key_usage TEXT,
+                is_ca INTEGER,
+                is_wildcard INTEGER,
+                ocsp_urls TEXT,
+                crl_urls TEXT,
+                ca_issuer_urls TEXT,
+                sct_count INTEGER,
+                tls_version TEXT,
+                cipher_suite TEXT,
+                chain_depth INTEGER
             );
         ",
         )?;
@@ -1559,6 +1647,11 @@ impl CertStore {
         let conn = self.lock_conn();
         let ip_json = serde_json::to_string(&details.ip_addresses)?;
         let san_json = serde_json::to_string(&details.subject_alt_names)?;
+        let key_usage_json = details.key_usage.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
+        let eku_json = details.extended_key_usage.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
+        let ocsp_json = details.ocsp_urls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
+        let crl_json = details.crl_urls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
+        let ca_issuer_json = details.ca_issuer_urls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
         let now = Utc::now().timestamp();
 
         // 尝试更新已有记录
@@ -1567,7 +1660,14 @@ impl CertStore {
                 not_before = ?2, not_after = ?3, ip_addresses = ?4,
                 issuer_cn = ?5, issuer_o = ?6, issuer_ou = ?7, issuer_c = ?8,
                 subject_alt_names = ?9, chain_valid = ?10, chain_error = ?11,
-                last_checked = ?12, updated_at = ?13
+                last_checked = ?12, updated_at = ?13,
+                serial_number = ?14, fingerprint_sha256 = ?15, version = ?16,
+                signature_algorithm = ?17, public_key_algorithm = ?18, public_key_bits = ?19,
+                subject_cn = ?20, subject_o = ?21,
+                key_usage = ?22, extended_key_usage = ?23,
+                is_ca = ?24, is_wildcard = ?25,
+                ocsp_urls = ?26, crl_urls = ?27, ca_issuer_urls = ?28,
+                sct_count = ?29, tls_version = ?30, cipher_suite = ?31, chain_depth = ?32
              WHERE domain = ?1",
             rusqlite::params![
                 details.domain,
@@ -1583,6 +1683,25 @@ impl CertStore {
                 details.chain_error,
                 details.last_checked.timestamp(),
                 now,
+                details.serial_number,
+                details.fingerprint_sha256,
+                details.version,
+                details.signature_algorithm,
+                details.public_key_algorithm,
+                details.public_key_bits,
+                details.subject_cn,
+                details.subject_o,
+                key_usage_json,
+                eku_json,
+                details.is_ca.map(|b| b as i32),
+                details.is_wildcard.map(|b| b as i32),
+                ocsp_json,
+                crl_json,
+                ca_issuer_json,
+                details.sct_count,
+                details.tls_version,
+                details.cipher_suite,
+                details.chain_depth,
             ],
         )?;
 
@@ -1592,8 +1711,14 @@ impl CertStore {
             conn.execute(
                 "INSERT INTO certificate_details
                  (id, domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
-                  subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                  subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at,
+                  serial_number, fingerprint_sha256, version, signature_algorithm, public_key_algorithm,
+                  public_key_bits, subject_cn, subject_o, key_usage, extended_key_usage,
+                  is_ca, is_wildcard, ocsp_urls, crl_urls, ca_issuer_urls,
+                  sct_count, tls_version, cipher_suite, chain_depth)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                         ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30,
+                         ?31, ?32, ?33, ?34)",
                 rusqlite::params![
                     id,
                     details.domain,
@@ -1610,6 +1735,25 @@ impl CertStore {
                     details.last_checked.timestamp(),
                     now,
                     now,
+                    details.serial_number,
+                    details.fingerprint_sha256,
+                    details.version,
+                    details.signature_algorithm,
+                    details.public_key_algorithm,
+                    details.public_key_bits,
+                    details.subject_cn,
+                    details.subject_o,
+                    key_usage_json,
+                    eku_json,
+                    details.is_ca.map(|b| b as i32),
+                    details.is_wildcard.map(|b| b as i32),
+                    ocsp_json,
+                    crl_json,
+                    ca_issuer_json,
+                    details.sct_count,
+                    details.tls_version,
+                    details.cipher_suite,
+                    details.chain_depth,
                 ],
             )?;
         }
@@ -1623,7 +1767,11 @@ impl CertStore {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
-                    subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at
+                    subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at,
+                    serial_number, fingerprint_sha256, version, signature_algorithm, public_key_algorithm,
+                    public_key_bits, subject_cn, subject_o, key_usage, extended_key_usage,
+                    is_ca, is_wildcard, ocsp_urls, crl_urls, ca_issuer_urls,
+                    sct_count, tls_version, cipher_suite, chain_depth
              FROM certificate_details WHERE domain = ?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![domain], |row| {
@@ -1645,7 +1793,11 @@ impl CertStore {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
-                    subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at
+                    subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at,
+                    serial_number, fingerprint_sha256, version, signature_algorithm, public_key_algorithm,
+                    public_key_bits, subject_cn, subject_o, key_usage, extended_key_usage,
+                    is_ca, is_wildcard, ocsp_urls, crl_urls, ca_issuer_urls,
+                    sct_count, tls_version, cipher_suite, chain_depth
              FROM certificate_details WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![id], |row| {
@@ -1668,7 +1820,11 @@ impl CertStore {
         let conn = self.lock_conn();
         let mut sql = String::from(
             "SELECT id, domain, not_before, not_after, ip_addresses, issuer_cn, issuer_o, issuer_ou, issuer_c,
-                    subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at
+                    subject_alt_names, chain_valid, chain_error, last_checked, created_at, updated_at,
+                    serial_number, fingerprint_sha256, version, signature_algorithm, public_key_algorithm,
+                    public_key_bits, subject_cn, subject_o, key_usage, extended_key_usage,
+                    is_ca, is_wildcard, ocsp_urls, crl_urls, ca_issuer_urls,
+                    sct_count, tls_version, cipher_suite, chain_depth
              FROM certificate_details WHERE 1=1",
         );
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -1711,6 +1867,239 @@ impl CertStore {
         Ok(results)
     }
 
+    // ---- System dictionaries CRUD ----
+
+    pub fn insert_dictionary(
+        &self,
+        req: &oxmon_common::types::CreateDictionaryRequest,
+    ) -> Result<DictionaryItem> {
+        let conn = self.lock_conn();
+        let id = oxmon_common::id::next_id();
+        let now = Utc::now().timestamp();
+        let sort_order = req.sort_order.unwrap_or(0);
+        let enabled = req.enabled.unwrap_or(true);
+        conn.execute(
+            "INSERT INTO system_dictionaries (id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10, ?11)",
+            rusqlite::params![
+                id,
+                req.dict_type,
+                req.dict_key,
+                req.dict_label,
+                req.dict_value,
+                sort_order,
+                enabled as i32,
+                req.description,
+                req.extra_json,
+                now,
+                now,
+            ],
+        )?;
+        drop(conn);
+        self.get_dictionary_by_id(&id)
+            .and_then(|opt| opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted dictionary")))
+    }
+
+    pub fn batch_insert_dictionaries(&self, items: &[DictionaryItem]) -> Result<usize> {
+        let conn = self.lock_conn();
+        let tx = conn.unchecked_transaction()?;
+        let mut count = 0usize;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO system_dictionaries (id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            )?;
+            for item in items {
+                let inserted = stmt.execute(rusqlite::params![
+                    item.id,
+                    item.dict_type,
+                    item.dict_key,
+                    item.dict_label,
+                    item.dict_value,
+                    item.sort_order,
+                    item.enabled as i32,
+                    item.is_system as i32,
+                    item.description,
+                    item.extra_json,
+                    item.created_at.timestamp(),
+                    item.updated_at.timestamp(),
+                ])?;
+                count += inserted;
+            }
+        }
+        tx.commit()?;
+        Ok(count)
+    }
+
+    pub fn get_dictionary_by_id(&self, id: &str) -> Result<Option<DictionaryItem>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at
+             FROM system_dictionaries WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_dictionary(row)))?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(Some(r)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_dictionaries_by_type(
+        &self,
+        dict_type: &str,
+        enabled_only: bool,
+    ) -> Result<Vec<DictionaryItem>> {
+        let conn = self.lock_conn();
+        let sql = if enabled_only {
+            "SELECT id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at
+             FROM system_dictionaries WHERE dict_type = ?1 AND enabled = 1 ORDER BY sort_order ASC, created_at ASC"
+        } else {
+            "SELECT id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at
+             FROM system_dictionaries WHERE dict_type = ?1 ORDER BY sort_order ASC, created_at ASC"
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map(rusqlite::params![dict_type], |row| {
+            Ok(Self::row_to_dictionary(row))
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row??);
+        }
+        Ok(results)
+    }
+
+    pub fn list_all_dict_types(&self) -> Result<Vec<DictionaryTypeSummary>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT dict_type, COUNT(*) FROM system_dictionaries GROUP BY dict_type ORDER BY dict_type ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let dict_type: String = row.get(0)?;
+            let count: i64 = row.get(1)?;
+            Ok(DictionaryTypeSummary {
+                dict_type,
+                count: count as u64,
+            })
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    pub fn update_dictionary(
+        &self,
+        id: &str,
+        update: &oxmon_common::types::UpdateDictionaryRequest,
+    ) -> Result<Option<DictionaryItem>> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        let mut sets = vec!["updated_at = ?1".to_string()];
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now)];
+        let mut idx = 2;
+
+        if let Some(ref label) = update.dict_label {
+            sets.push(format!("dict_label = ?{idx}"));
+            params.push(Box::new(label.clone()));
+            idx += 1;
+        }
+        if let Some(ref dict_value) = update.dict_value {
+            sets.push(format!("dict_value = ?{idx}"));
+            params.push(Box::new(dict_value.clone()));
+            idx += 1;
+        }
+        if let Some(sort_order) = update.sort_order {
+            sets.push(format!("sort_order = ?{idx}"));
+            params.push(Box::new(sort_order));
+            idx += 1;
+        }
+        if let Some(enabled) = update.enabled {
+            sets.push(format!("enabled = ?{idx}"));
+            params.push(Box::new(enabled as i32));
+            idx += 1;
+        }
+        if let Some(ref description) = update.description {
+            sets.push(format!("description = ?{idx}"));
+            params.push(Box::new(description.clone()));
+            idx += 1;
+        }
+        if let Some(ref extra_json) = update.extra_json {
+            sets.push(format!("extra_json = ?{idx}"));
+            params.push(Box::new(extra_json.clone()));
+            idx += 1;
+        }
+
+        let sql = format!(
+            "UPDATE system_dictionaries SET {} WHERE id = ?{idx}",
+            sets.join(", ")
+        );
+        params.push(Box::new(id.to_string()));
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let updated = conn.execute(&sql, param_refs.as_slice())?;
+        drop(conn);
+
+        if updated == 0 {
+            return Ok(None);
+        }
+        self.get_dictionary_by_id(id)
+    }
+
+    pub fn delete_dictionary(&self, id: &str) -> Result<bool> {
+        let conn = self.lock_conn();
+        let deleted = conn.execute(
+            "DELETE FROM system_dictionaries WHERE id = ?1 AND is_system = 0",
+            rusqlite::params![id],
+        )?;
+        Ok(deleted > 0)
+    }
+
+    pub fn count_dictionaries(&self) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM system_dictionaries",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
+    pub fn count_dictionaries_by_type(&self, dict_type: &str) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM system_dictionaries WHERE dict_type = ?1",
+            rusqlite::params![dict_type],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
+    fn row_to_dictionary(row: &rusqlite::Row) -> Result<DictionaryItem> {
+        let sort_order: i32 = row.get(5)?;
+        let enabled_int: i32 = row.get(6)?;
+        let is_system_int: i32 = row.get(7)?;
+        let created: i64 = row.get(10)?;
+        let updated: i64 = row.get(11)?;
+        Ok(DictionaryItem {
+            id: row.get(0)?,
+            dict_type: row.get(1)?,
+            dict_key: row.get(2)?,
+            dict_label: row.get(3)?,
+            dict_value: row.get(4)?,
+            sort_order,
+            enabled: enabled_int != 0,
+            is_system: is_system_int != 0,
+            description: row.get(8)?,
+            extra_json: row.get(9)?,
+            created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+            updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+        })
+    }
+
     fn row_to_cert_details(row: &rusqlite::Row) -> Result<oxmon_common::types::CertificateDetails> {
         let not_before: i64 = row.get(2)?;
         let not_after: i64 = row.get(3)?;
@@ -1723,6 +2112,15 @@ impl CertStore {
 
         let ip_addresses: Vec<String> = serde_json::from_str(&ip_json).unwrap_or_default();
         let subject_alt_names: Vec<String> = serde_json::from_str(&san_json).unwrap_or_default();
+
+        // 新增字段 (index 15..33)
+        let key_usage_json: Option<String> = row.get(23)?;
+        let eku_json: Option<String> = row.get(24)?;
+        let is_ca_int: Option<i32> = row.get(25)?;
+        let is_wildcard_int: Option<i32> = row.get(26)?;
+        let ocsp_json: Option<String> = row.get(27)?;
+        let crl_json: Option<String> = row.get(28)?;
+        let ca_issuer_json: Option<String> = row.get(29)?;
 
         Ok(oxmon_common::types::CertificateDetails {
             id: row.get(0)?,
@@ -1740,6 +2138,25 @@ impl CertStore {
             last_checked: DateTime::from_timestamp(last_checked, 0).unwrap_or_default(),
             created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
             updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+            serial_number: row.get(15)?,
+            fingerprint_sha256: row.get(16)?,
+            version: row.get(17)?,
+            signature_algorithm: row.get(18)?,
+            public_key_algorithm: row.get(19)?,
+            public_key_bits: row.get(20)?,
+            subject_cn: row.get(21)?,
+            subject_o: row.get(22)?,
+            key_usage: key_usage_json.and_then(|s| serde_json::from_str(&s).ok()),
+            extended_key_usage: eku_json.and_then(|s| serde_json::from_str(&s).ok()),
+            is_ca: is_ca_int.map(|v| v != 0),
+            is_wildcard: is_wildcard_int.map(|v| v != 0),
+            ocsp_urls: ocsp_json.and_then(|s| serde_json::from_str(&s).ok()),
+            crl_urls: crl_json.and_then(|s| serde_json::from_str(&s).ok()),
+            ca_issuer_urls: ca_issuer_json.and_then(|s| serde_json::from_str(&s).ok()),
+            sct_count: row.get(30)?,
+            tls_version: row.get(31)?,
+            cipher_suite: row.get(32)?,
+            chain_depth: row.get(33)?,
         })
     }
 }
@@ -1974,6 +2391,304 @@ mod tests {
             .query_result_by_domain("delete.com")
             .unwrap()
             .is_none());
+    }
+
+    // ---- Dictionary tests ----
+
+    #[test]
+    fn test_dictionary_insert_and_get() {
+        let (_dir, store) = setup();
+        let req = oxmon_common::types::CreateDictionaryRequest {
+            dict_type: "channel_type".to_string(),
+            dict_key: "email".to_string(),
+            dict_label: "邮件".to_string(),
+            dict_value: None,
+            sort_order: Some(1),
+            enabled: None,
+            description: Some("邮件通知".to_string()),
+            extra_json: None,
+        };
+        let item = store.insert_dictionary(&req).unwrap();
+        assert_eq!(item.dict_type, "channel_type");
+        assert_eq!(item.dict_key, "email");
+        assert_eq!(item.dict_label, "邮件");
+        assert_eq!(item.sort_order, 1);
+        assert!(item.enabled);
+        assert!(!item.is_system);
+
+        let fetched = store.get_dictionary_by_id(&item.id).unwrap().unwrap();
+        assert_eq!(fetched.id, item.id);
+        assert_eq!(fetched.description, Some("邮件通知".to_string()));
+    }
+
+    #[test]
+    fn test_dictionary_duplicate_type_key_rejected() {
+        let (_dir, store) = setup();
+        let req = oxmon_common::types::CreateDictionaryRequest {
+            dict_type: "severity".to_string(),
+            dict_key: "info".to_string(),
+            dict_label: "信息".to_string(),
+            dict_value: None,
+            sort_order: None,
+            enabled: None,
+            description: None,
+            extra_json: None,
+        };
+        store.insert_dictionary(&req).unwrap();
+        assert!(store.insert_dictionary(&req).is_err());
+    }
+
+    #[test]
+    fn test_dictionary_list_by_type() {
+        let (_dir, store) = setup();
+        for (key, label, order) in &[("info", "信息", 1), ("warning", "警告", 2), ("critical", "严重", 3)] {
+            store
+                .insert_dictionary(&oxmon_common::types::CreateDictionaryRequest {
+                    dict_type: "severity".to_string(),
+                    dict_key: key.to_string(),
+                    dict_label: label.to_string(),
+                    dict_value: None,
+                    sort_order: Some(*order),
+                    enabled: None,
+                    description: None,
+                    extra_json: None,
+                })
+                .unwrap();
+        }
+        // Add a different type
+        store
+            .insert_dictionary(&oxmon_common::types::CreateDictionaryRequest {
+                dict_type: "channel_type".to_string(),
+                dict_key: "email".to_string(),
+                dict_label: "邮件".to_string(),
+                dict_value: None,
+                sort_order: None,
+                enabled: None,
+                description: None,
+                extra_json: None,
+            })
+            .unwrap();
+
+        let severity_items = store.list_dictionaries_by_type("severity", false).unwrap();
+        assert_eq!(severity_items.len(), 3);
+        // Should be ordered by sort_order
+        assert_eq!(severity_items[0].dict_key, "info");
+        assert_eq!(severity_items[2].dict_key, "critical");
+
+        let channel_items = store.list_dictionaries_by_type("channel_type", false).unwrap();
+        assert_eq!(channel_items.len(), 1);
+    }
+
+    #[test]
+    fn test_dictionary_list_all_types() {
+        let (_dir, store) = setup();
+        for (dt, dk, dl) in &[
+            ("severity", "info", "信息"),
+            ("severity", "warning", "警告"),
+            ("channel_type", "email", "邮件"),
+        ] {
+            store
+                .insert_dictionary(&oxmon_common::types::CreateDictionaryRequest {
+                    dict_type: dt.to_string(),
+                    dict_key: dk.to_string(),
+                    dict_label: dl.to_string(),
+                    dict_value: None,
+                    sort_order: None,
+                    enabled: None,
+                    description: None,
+                    extra_json: None,
+                })
+                .unwrap();
+        }
+        let types = store.list_all_dict_types().unwrap();
+        assert_eq!(types.len(), 2);
+        // Ordered alphabetically
+        assert_eq!(types[0].dict_type, "channel_type");
+        assert_eq!(types[0].count, 1);
+        assert_eq!(types[1].dict_type, "severity");
+        assert_eq!(types[1].count, 2);
+    }
+
+    #[test]
+    fn test_dictionary_update() {
+        let (_dir, store) = setup();
+        let item = store
+            .insert_dictionary(&oxmon_common::types::CreateDictionaryRequest {
+                dict_type: "severity".to_string(),
+                dict_key: "info".to_string(),
+                dict_label: "信息".to_string(),
+                dict_value: None,
+                sort_order: None,
+                enabled: None,
+                description: None,
+                extra_json: None,
+            })
+            .unwrap();
+
+        let updated = store
+            .update_dictionary(
+                &item.id,
+                &oxmon_common::types::UpdateDictionaryRequest {
+                    dict_label: Some("提示信息".to_string()),
+                    dict_value: None,
+                    sort_order: Some(10),
+                    enabled: Some(false),
+                    description: Some(Some("低级别提示".to_string())),
+                    extra_json: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.dict_label, "提示信息");
+        assert_eq!(updated.sort_order, 10);
+        assert!(!updated.enabled);
+        assert_eq!(updated.description, Some("低级别提示".to_string()));
+    }
+
+    #[test]
+    fn test_dictionary_delete_non_system() {
+        let (_dir, store) = setup();
+        let item = store
+            .insert_dictionary(&oxmon_common::types::CreateDictionaryRequest {
+                dict_type: "test".to_string(),
+                dict_key: "key1".to_string(),
+                dict_label: "label1".to_string(),
+                dict_value: None,
+                sort_order: None,
+                enabled: None,
+                description: None,
+                extra_json: None,
+            })
+            .unwrap();
+        assert!(store.delete_dictionary(&item.id).unwrap());
+        assert!(store.get_dictionary_by_id(&item.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_dictionary_delete_system_protected() {
+        let (_dir, store) = setup();
+        // Insert a system item via batch
+        let now = Utc::now();
+        let system_item = DictionaryItem {
+            id: oxmon_common::id::next_id(),
+            dict_type: "severity".to_string(),
+            dict_key: "info".to_string(),
+            dict_label: "信息".to_string(),
+            dict_value: None,
+            sort_order: 1,
+            enabled: true,
+            is_system: true,
+            description: None,
+            extra_json: None,
+            created_at: now,
+            updated_at: now,
+        };
+        store.batch_insert_dictionaries(&[system_item.clone()]).unwrap();
+        // Delete should fail (is_system = 1)
+        assert!(!store.delete_dictionary(&system_item.id).unwrap());
+        assert!(store.get_dictionary_by_id(&system_item.id).unwrap().is_some());
+    }
+
+    #[test]
+    fn test_dictionary_batch_insert_ignore_duplicates() {
+        let (_dir, store) = setup();
+        let now = Utc::now();
+        let items: Vec<DictionaryItem> = vec![
+            DictionaryItem {
+                id: oxmon_common::id::next_id(),
+                dict_type: "severity".to_string(),
+                dict_key: "info".to_string(),
+                dict_label: "信息".to_string(),
+                dict_value: None,
+                sort_order: 1,
+                enabled: true,
+                is_system: true,
+                description: None,
+                extra_json: None,
+                created_at: now,
+                updated_at: now,
+            },
+            DictionaryItem {
+                id: oxmon_common::id::next_id(),
+                dict_type: "severity".to_string(),
+                dict_key: "warning".to_string(),
+                dict_label: "警告".to_string(),
+                dict_value: None,
+                sort_order: 2,
+                enabled: true,
+                is_system: true,
+                description: None,
+                extra_json: None,
+                created_at: now,
+                updated_at: now,
+            },
+        ];
+        let count = store.batch_insert_dictionaries(&items).unwrap();
+        assert_eq!(count, 2);
+
+        // Insert again, should be ignored
+        let count2 = store.batch_insert_dictionaries(&items).unwrap();
+        assert_eq!(count2, 0);
+
+        // Total should still be 2
+        assert_eq!(store.count_dictionaries().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_dictionary_count_by_type() {
+        let (_dir, store) = setup();
+        for key in &["a", "b", "c"] {
+            store
+                .insert_dictionary(&oxmon_common::types::CreateDictionaryRequest {
+                    dict_type: "test_type".to_string(),
+                    dict_key: key.to_string(),
+                    dict_label: key.to_string(),
+                    dict_value: None,
+                    sort_order: None,
+                    enabled: None,
+                    description: None,
+                    extra_json: None,
+                })
+                .unwrap();
+        }
+        assert_eq!(store.count_dictionaries_by_type("test_type").unwrap(), 3);
+        assert_eq!(store.count_dictionaries_by_type("nonexistent").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_dictionary_list_enabled_only() {
+        let (_dir, store) = setup();
+        store
+            .insert_dictionary(&oxmon_common::types::CreateDictionaryRequest {
+                dict_type: "test".to_string(),
+                dict_key: "enabled1".to_string(),
+                dict_label: "Enabled 1".to_string(),
+                dict_value: None,
+                sort_order: None,
+                enabled: Some(true),
+                description: None,
+                extra_json: None,
+            })
+            .unwrap();
+        let disabled = store
+            .insert_dictionary(&oxmon_common::types::CreateDictionaryRequest {
+                dict_type: "test".to_string(),
+                dict_key: "disabled1".to_string(),
+                dict_label: "Disabled 1".to_string(),
+                dict_value: None,
+                sort_order: None,
+                enabled: Some(false),
+                description: None,
+                extra_json: None,
+            })
+            .unwrap();
+
+        let all = store.list_dictionaries_by_type("test", false).unwrap();
+        assert_eq!(all.len(), 2);
+
+        let enabled = store.list_dictionaries_by_type("test", true).unwrap();
+        assert_eq!(enabled.len(), 1);
+        assert_ne!(enabled[0].id, disabled.id);
     }
 
     #[test]

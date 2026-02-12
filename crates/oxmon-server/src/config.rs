@@ -127,6 +127,33 @@ fn default_seed_severity() -> String {
     "info".to_string()
 }
 
+// ---- Dictionaries seed file types (used by `init-dictionaries` CLI subcommand) ----
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DictionariesSeedFile {
+    #[serde(default)]
+    pub dictionaries: Vec<SeedDictionary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeedDictionary {
+    pub dict_type: String,
+    pub dict_key: String,
+    pub dict_label: String,
+    #[serde(default)]
+    pub dict_value: Option<String>,
+    #[serde(default)]
+    pub sort_order: Option<i32>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub is_system: Option<bool>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub extra_json: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertCheckConfig {
     #[serde(default = "default_cert_check_enabled")]

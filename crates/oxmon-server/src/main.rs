@@ -24,9 +24,10 @@ use oxmon_server::state::{AgentRegistry, AppState};
 
 fn print_usage() {
     eprintln!("Usage:");
-    eprintln!("  oxmon-server [config.toml]                           Start the server");
-    eprintln!("  oxmon-server init-channels <config.toml> <seed.json> Initialize channels from seed file");
-    eprintln!("  oxmon-server init-rules <config.toml> <seed.json>    Initialize alert rules from seed file");
+    eprintln!("  oxmon-server [config.toml]                                Start the server");
+    eprintln!("  oxmon-server init-channels <config.toml> <seed.json>      Initialize channels from seed file");
+    eprintln!("  oxmon-server init-rules <config.toml> <seed.json>         Initialize alert rules from seed file");
+    eprintln!("  oxmon-server init-dictionaries <config.toml> <seed.json>  Initialize dictionaries from seed file");
 }
 
 #[tokio::main]
@@ -65,6 +66,19 @@ async fn main() -> Result<()> {
                 anyhow::anyhow!("init-rules requires <seed.json> argument")
             })?;
             run_init_rules(config_path, seed_path)
+        }
+        Some("init-dictionaries") => {
+            let config_path = args.get(2).ok_or_else(|| {
+                print_usage();
+                anyhow::anyhow!(
+                    "init-dictionaries requires <config.toml> and <seed.json> arguments"
+                )
+            })?;
+            let seed_path = args.get(3).ok_or_else(|| {
+                print_usage();
+                anyhow::anyhow!("init-dictionaries requires <seed.json> argument")
+            })?;
+            run_init_dictionaries(config_path, seed_path)
         }
         Some("--help" | "-h") => {
             print_usage();
@@ -241,6 +255,14 @@ fn run_init_rules(config_path: &str, seed_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Initialize dictionaries from a JSON seed file.
+fn run_init_dictionaries(config_path: &str, seed_path: &str) -> Result<()> {
+    let config = config::ServerConfig::load(config_path)?;
+    let _cert_store = CertStore::new(Path::new(&config.data_dir))?;
+    oxmon_server::dictionary_seed::init_from_seed_file(&_cert_store, seed_path)?;
+    Ok(())
+}
+
 async fn run_server(config_path: &str) -> Result<()> {
     let config = config::ServerConfig::load(config_path)?;
 
@@ -353,6 +375,11 @@ async fn run_server(config_path: &str) -> Result<()> {
         Err(e) => {
             tracing::error!(error = %e, "Failed to check users table");
         }
+    }
+
+    // Initialize default system dictionaries (one-time, only when table is empty)
+    if let Err(e) = oxmon_server::dictionary_seed::init_default_dictionaries(&cert_store) {
+        tracing::error!(error = %e, "Failed to initialize default system dictionaries");
     }
 
     let state = AppState {
