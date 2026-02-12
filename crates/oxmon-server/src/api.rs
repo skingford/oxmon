@@ -467,12 +467,18 @@ async fn query_all_metrics(
 struct AlertRuleResponse {
     /// 规则唯一标识
     id: String,
+    /// 规则名称
+    name: String,
+    /// 规则类型（threshold / rate_of_change / trend_prediction / cert_expiration）
+    rule_type: String,
     /// 监控指标名称
     metric: String,
     /// Agent 匹配模式（支持 glob）
     agent_pattern: String,
     /// 告警级别
     severity: String,
+    /// 是否启用
+    enabled: bool,
 }
 
 /// 分页查询告警规则列表。
@@ -493,28 +499,36 @@ async fn list_alert_rules(
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
-    let limit = pagination.limit();
-    let offset = pagination.offset();
-
-    let engine = state
-        .alert_engine
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut rules: Vec<AlertRuleResponse> = engine
-        .rules()
-        .iter()
-        .map(|r| AlertRuleResponse {
-            id: r.id().to_string(),
-            metric: r.metric().to_string(),
-            agent_pattern: r.agent_pattern().to_string(),
-            severity: r.severity().to_string(),
-        })
-        .collect();
-
-    rules.sort_by(|a, b| a.id.cmp(&b.id));
-    let rules: Vec<AlertRuleResponse> = rules.into_iter().skip(offset).take(limit).collect();
-
-    success_response(StatusCode::OK, &trace_id, rules)
+    match state
+        .cert_store
+        .list_alert_rules(pagination.limit(), pagination.offset())
+    {
+        Ok(rules) => {
+            let resp: Vec<AlertRuleResponse> = rules
+                .into_iter()
+                .map(|r| AlertRuleResponse {
+                    id: r.id,
+                    name: r.name,
+                    rule_type: r.rule_type,
+                    metric: r.metric,
+                    agent_pattern: r.agent_pattern,
+                    severity: r.severity,
+                    enabled: r.enabled,
+                })
+                .collect();
+            success_response(StatusCode::OK, &trace_id, resp)
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to list alert rules");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response()
+        }
+    }
 }
 
 // GET /v1/alerts/history

@@ -99,6 +99,34 @@ pub struct SeedSilenceWindow {
     pub recurrence: Option<String>,
 }
 
+// ---- Rules seed file types (used by `init-rules` CLI subcommand) ----
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulesSeedFile {
+    #[serde(default)]
+    pub rules: Vec<SeedAlertRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeedAlertRule {
+    pub name: String,
+    pub rule_type: String,
+    pub metric: String,
+    #[serde(default = "default_agent_pattern")]
+    pub agent_pattern: String,
+    #[serde(default = "default_seed_severity")]
+    pub severity: String,
+    #[serde(default = "default_seed_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_silence_secs")]
+    pub silence_secs: u64,
+    pub config: serde_json::Value,
+}
+
+fn default_seed_severity() -> String {
+    "info".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertCheckConfig {
     #[serde(default = "default_cert_check_enabled")]

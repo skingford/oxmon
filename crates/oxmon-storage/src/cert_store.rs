@@ -1138,6 +1138,20 @@ impl CertStore {
         self.get_alert_rule_by_id(id)
     }
 
+    pub fn list_enabled_alert_rules(&self) -> Result<Vec<AlertRuleRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, rule_type, metric, agent_pattern, severity, enabled, config_json, silence_secs, source, created_at, updated_at
+             FROM alert_rules WHERE enabled = 1 ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map([], |row| Ok(Self::row_to_alert_rule(row)))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row??);
+        }
+        Ok(results)
+    }
+
     fn row_to_alert_rule(row: &rusqlite::Row) -> Result<AlertRuleRow> {
         let enabled_int: i32 = row.get(6)?;
         let silence: i64 = row.get(8)?;

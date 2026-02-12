@@ -6,4 +6,5 @@ pub mod config;
 pub mod grpc;
 pub mod logging;
 pub mod openapi;
+pub mod rule_builder;
 pub mod state;

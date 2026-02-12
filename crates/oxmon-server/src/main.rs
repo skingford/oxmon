@@ -1,16 +1,10 @@
 use anyhow::Result;
 use chrono::Utc;
 use oxmon_alert::engine::AlertEngine;
-use oxmon_alert::rules::cert_expiration::CertExpirationRule;
-use oxmon_alert::rules::rate_of_change::RateOfChangeRule;
-use oxmon_alert::rules::threshold::{CompareOp, ThresholdRule};
-use oxmon_alert::rules::trend_prediction::TrendPredictionRule;
-use oxmon_alert::AlertRule;
 use oxmon_common::proto::metric_service_server::MetricServiceServer;
-use oxmon_common::types::Severity;
 use oxmon_notify::manager::NotificationManager;
 use oxmon_notify::plugin::ChannelRegistry;
-use oxmon_storage::cert_store::CertStore;
+use oxmon_storage::cert_store::{AlertRuleRow, CertStore};
 use oxmon_storage::engine::SqliteStorageEngine;
 use oxmon_storage::StorageEngine;
 use std::net::SocketAddr;
@@ -25,80 +19,14 @@ use oxmon_server::app;
 use oxmon_server::cert::scheduler::CertCheckScheduler;
 use oxmon_server::config::{self, SeedFile};
 use oxmon_server::grpc;
+use oxmon_server::rule_builder;
 use oxmon_server::state::{AgentRegistry, AppState};
-
-fn build_alert_rules(cfg: &[config::AlertRuleConfig]) -> Vec<Box<dyn AlertRule>> {
-    let mut rules: Vec<Box<dyn AlertRule>> = Vec::new();
-    for r in cfg {
-        let severity: Severity = r.severity.parse().unwrap_or(Severity::Info);
-        match r.rule_type.as_str() {
-            "threshold" => {
-                if let (Some(op_str), Some(value), Some(duration)) =
-                    (&r.operator, r.value, r.duration_secs)
-                {
-                    if let Ok(op) = op_str.parse::<CompareOp>() {
-                        rules.push(Box::new(ThresholdRule {
-                            id: r.name.clone(),
-                            metric: r.metric.clone(),
-                            agent_pattern: r.agent_pattern.clone(),
-                            severity,
-                            operator: op,
-                            value,
-                            duration_secs: duration,
-                            silence_secs: r.silence_secs,
-                        }));
-                    }
-                }
-            }
-            "rate_of_change" => {
-                if let (Some(rate), Some(window)) = (r.rate_threshold, r.window_secs) {
-                    rules.push(Box::new(RateOfChangeRule {
-                        id: r.name.clone(),
-                        metric: r.metric.clone(),
-                        agent_pattern: r.agent_pattern.clone(),
-                        severity,
-                        rate_threshold: rate,
-                        window_secs: window,
-                        silence_secs: r.silence_secs,
-                    }));
-                }
-            }
-            "trend_prediction" => {
-                if let (Some(thresh), Some(horizon), Some(min_dp)) =
-                    (r.predict_threshold, r.horizon_secs, r.min_data_points)
-                {
-                    rules.push(Box::new(TrendPredictionRule {
-                        id: r.name.clone(),
-                        metric: r.metric.clone(),
-                        agent_pattern: r.agent_pattern.clone(),
-                        severity,
-                        predict_threshold: thresh,
-                        horizon_secs: horizon,
-                        min_data_points: min_dp,
-                        silence_secs: r.silence_secs,
-                    }));
-                }
-            }
-            "cert_expiration" => {
-                let warning = r.warning_days.unwrap_or(30);
-                let critical = r.critical_days.unwrap_or(7);
-                rules.push(Box::new(CertExpirationRule::new(
-                    r.name.clone(),
-                    warning,
-                    critical,
-                    r.silence_secs,
-                )));
-            }
-            other => tracing::warn!(rule_type = other, "Unknown alert rule type"),
-        }
-    }
-    rules
-}
 
 fn print_usage() {
     eprintln!("Usage:");
     eprintln!("  oxmon-server [config.toml]                           Start the server");
     eprintln!("  oxmon-server init-channels <config.toml> <seed.json> Initialize channels from seed file");
+    eprintln!("  oxmon-server init-rules <config.toml> <seed.json>    Initialize alert rules from seed file");
 }
 
 #[tokio::main]
@@ -126,6 +54,17 @@ async fn main() -> Result<()> {
                 anyhow::anyhow!("init-channels requires <seed.json> argument")
             })?;
             run_init_channels(config_path, seed_path)
+        }
+        Some("init-rules") => {
+            let config_path = args.get(2).ok_or_else(|| {
+                print_usage();
+                anyhow::anyhow!("init-rules requires <config.toml> and <seed.json> arguments")
+            })?;
+            let seed_path = args.get(3).ok_or_else(|| {
+                print_usage();
+                anyhow::anyhow!("init-rules requires <seed.json> argument")
+            })?;
+            run_init_rules(config_path, seed_path)
         }
         Some("--help" | "-h") => {
             print_usage();
@@ -247,6 +186,61 @@ fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Initialize alert rules from a JSON seed file.
+fn run_init_rules(config_path: &str, seed_path: &str) -> Result<()> {
+    let config = config::ServerConfig::load(config_path)?;
+    let cert_store = CertStore::new(Path::new(&config.data_dir))?;
+
+    let seed_content = std::fs::read_to_string(seed_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read seed file '{}': {}", seed_path, e))?;
+    let seed: config::RulesSeedFile = serde_json::from_str(&seed_content)
+        .map_err(|e| anyhow::anyhow!("Failed to parse seed file '{}': {}", seed_path, e))?;
+
+    // List existing rule names for dedup
+    let existing = cert_store.list_alert_rules(10000, 0)?;
+    let existing_names: std::collections::HashSet<String> =
+        existing.iter().map(|r| r.name.clone()).collect();
+
+    let mut created = 0u32;
+    let mut skipped = 0u32;
+
+    for r in &seed.rules {
+        if existing_names.contains(&r.name) {
+            tracing::warn!(name = %r.name, "Alert rule already exists, skipping");
+            skipped += 1;
+            continue;
+        }
+
+        let row = AlertRuleRow {
+            id: oxmon_common::id::next_id(),
+            name: r.name.clone(),
+            rule_type: r.rule_type.clone(),
+            metric: r.metric.clone(),
+            agent_pattern: r.agent_pattern.clone(),
+            severity: r.severity.clone(),
+            enabled: r.enabled,
+            config_json: r.config.to_string(),
+            silence_secs: r.silence_secs,
+            source: "seed".to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        match cert_store.insert_alert_rule(&row) {
+            Ok(inserted) => {
+                tracing::info!(name = %r.name, id = %inserted.id, "Alert rule created");
+                created += 1;
+            }
+            Err(e) => {
+                tracing::error!(name = %r.name, error = %e, "Failed to create alert rule");
+            }
+        }
+    }
+
+    tracing::info!(created, skipped, "init-rules completed");
+    Ok(())
+}
+
 async fn run_server(config_path: &str) -> Result<()> {
     let config = config::ServerConfig::load(config_path)?;
 
@@ -259,10 +253,57 @@ async fn run_server(config_path: &str) -> Result<()> {
 
     // Build components
     let storage = Arc::new(SqliteStorageEngine::new(Path::new(&config.data_dir))?);
-    let rules = build_alert_rules(&config.alert.rules);
-    let alert_engine = Arc::new(Mutex::new(AlertEngine::new(rules)));
     let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(30)));
     let cert_store = Arc::new(CertStore::new(Path::new(&config.data_dir))?);
+
+    // Migrate TOML alert rules to DB (one-time, only when DB is empty)
+    if !config.alert.rules.is_empty() {
+        match cert_store.count_alert_rules() {
+            Ok(0) => {
+                tracing::info!(
+                    count = config.alert.rules.len(),
+                    "Migrating TOML alert rules to database"
+                );
+                for r in &config.alert.rules {
+                    let row = AlertRuleRow {
+                        id: oxmon_common::id::next_id(),
+                        name: r.name.clone(),
+                        rule_type: r.rule_type.clone(),
+                        metric: r.metric.clone(),
+                        agent_pattern: r.agent_pattern.clone(),
+                        severity: r.severity.clone(),
+                        enabled: true,
+                        config_json: rule_builder::config_to_json(r),
+                        silence_secs: r.silence_secs,
+                        source: "toml".to_string(),
+                        created_at: Utc::now(),
+                        updated_at: Utc::now(),
+                    };
+                    match cert_store.insert_alert_rule(&row) {
+                        Ok(_) => tracing::info!(name = %r.name, "Migrated alert rule"),
+                        Err(e) => {
+                            tracing::warn!(name = %r.name, error = %e, "Failed to migrate alert rule")
+                        }
+                    }
+                }
+            }
+            Ok(_) => {
+                tracing::info!(
+                    "Alert rules already exist in DB, skipping TOML migration. \
+                     TOML [[alert.rules]] is deprecated; manage rules via REST API or init-rules CLI."
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to check alert rules count");
+            }
+        }
+    }
+
+    // Load alert engine from DB
+    let alert_engine = Arc::new(Mutex::new(AlertEngine::new(vec![])));
+    if let Err(e) = rule_builder::reload_alert_engine(&cert_store, &alert_engine) {
+        tracing::error!(error = %e, "Failed to load alert rules from DB");
+    }
 
     // Build notification manager backed by DB
     let registry = ChannelRegistry::default();

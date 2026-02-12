@@ -1,0 +1,54 @@
+{
+  "rules": [
+    {
+      "name": "high-cpu",
+      "rule_type": "threshold",
+      "metric": "cpu.usage",
+      "agent_pattern": "*",
+      "severity": "critical",
+      "silence_secs": 600,
+      "config": {
+        "operator": "greater_than",
+        "value": 90.0,
+        "duration_secs": 300
+      }
+    },
+    {
+      "name": "memory-spike",
+      "rule_type": "rate_of_change",
+      "metric": "memory.used_percent",
+      "agent_pattern": "*",
+      "severity": "warning",
+      "silence_secs": 600,
+      "config": {
+        "rate_threshold": 20.0,
+        "window_secs": 300
+      }
+    },
+    {
+      "name": "disk-trend",
+      "rule_type": "trend_prediction",
+      "metric": "disk.used_percent",
+      "agent_pattern": "*",
+      "severity": "warning",
+      "silence_secs": 3600,
+      "config": {
+        "predict_threshold": 90.0,
+        "horizon_secs": 86400,
+        "min_data_points": 5
+      }
+    },
+    {
+      "name": "cert-expiry",
+      "rule_type": "cert_expiration",
+      "metric": "certificate.days_until_expiry",
+      "agent_pattern": "cert-checker",
+      "severity": "critical",
+      "silence_secs": 3600,
+      "config": {
+        "warning_days": 30,
+        "critical_days": 7
+      }
+    }
+  ]
+}

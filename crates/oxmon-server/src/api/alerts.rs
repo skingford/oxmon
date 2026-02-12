@@ -94,6 +94,8 @@ struct CreateAlertRuleRequest {
     agent_pattern: String,
     #[serde(default = "default_severity")]
     severity: String,
+    #[serde(default = "default_enabled")]
+    enabled: bool,
     #[serde(default)]
     config_json: String,
     #[serde(default = "default_silence_secs")]
@@ -108,6 +110,9 @@ fn default_severity() -> String {
 }
 fn default_silence_secs() -> u64 {
     600
+}
+fn default_enabled() -> bool {
+    true
 }
 
 /// 创建告警规则。
@@ -134,7 +139,7 @@ async fn create_alert_rule(
         metric: req.metric,
         agent_pattern: req.agent_pattern,
         severity: req.severity,
-        enabled: true,
+        enabled: req.enabled,
         config_json: req.config_json,
         silence_secs: req.silence_secs,
         source: "api".to_string(),
@@ -142,12 +147,28 @@ async fn create_alert_rule(
         updated_at: chrono::Utc::now(),
     };
     match state.cert_store.insert_alert_rule(&row) {
-        Ok(rule) => success_response(StatusCode::CREATED, &trace_id, AlertRuleDetailResponse::from(rule)),
+        Ok(rule) => {
+            if let Err(e) =
+                crate::rule_builder::reload_alert_engine(&state.cert_store, &state.alert_engine)
+            {
+                tracing::error!(error = %e, "Failed to reload alert engine after rule creation");
+            }
+            success_response(
+                StatusCode::CREATED,
+                &trace_id,
+                AlertRuleDetailResponse::from(rule),
+            )
+        }
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("UNIQUE constraint") {
-                error_response(StatusCode::CONFLICT, &trace_id, "conflict", "Rule name already exists")
-                    .into_response()
+                error_response(
+                    StatusCode::CONFLICT,
+                    &trace_id,
+                    "conflict",
+                    "Rule name already exists",
+                )
+                .into_response()
             } else {
                 tracing::error!(error = %e, "Failed to create alert rule");
                 error_response(
@@ -183,7 +204,18 @@ async fn update_alert_rule(
     Json(update): Json<AlertRuleUpdate>,
 ) -> impl IntoResponse {
     match state.cert_store.update_alert_rule(&id, &update) {
-        Ok(Some(rule)) => success_response(StatusCode::OK, &trace_id, AlertRuleDetailResponse::from(rule)),
+        Ok(Some(rule)) => {
+            if let Err(e) =
+                crate::rule_builder::reload_alert_engine(&state.cert_store, &state.alert_engine)
+            {
+                tracing::error!(error = %e, "Failed to reload alert engine after rule update");
+            }
+            success_response(
+                StatusCode::OK,
+                &trace_id,
+                AlertRuleDetailResponse::from(rule),
+            )
+        }
         Ok(None) => error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Rule not found")
             .into_response(),
         Err(e) => {
@@ -218,7 +250,14 @@ async fn delete_alert_rule(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.cert_store.delete_alert_rule(&id) {
-        Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "Rule deleted"),
+        Ok(true) => {
+            if let Err(e) =
+                crate::rule_builder::reload_alert_engine(&state.cert_store, &state.alert_engine)
+            {
+                tracing::error!(error = %e, "Failed to reload alert engine after rule deletion");
+            }
+            success_empty_response(StatusCode::OK, &trace_id, "Rule deleted")
+        }
         Ok(false) => error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Rule not found")
             .into_response(),
         Err(e) => {
@@ -260,50 +299,25 @@ async fn set_alert_rule_enabled(
     Json(req): Json<EnableRequest>,
 ) -> impl IntoResponse {
     match state.cert_store.set_alert_rule_enabled(&id, req.enabled) {
-        Ok(Some(rule)) => success_response(StatusCode::OK, &trace_id, AlertRuleDetailResponse::from(rule)),
+        Ok(Some(rule)) => {
+            if let Err(e) =
+                crate::rule_builder::reload_alert_engine(&state.cert_store, &state.alert_engine)
+            {
+                tracing::error!(
+                    error = %e,
+                    "Failed to reload alert engine after rule enable/disable"
+                );
+            }
+            success_response(
+                StatusCode::OK,
+                &trace_id,
+                AlertRuleDetailResponse::from(rule),
+            )
+        }
         Ok(None) => error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Rule not found")
             .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Failed to update rule enabled state");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Database error",
-            )
-            .into_response()
-        }
-    }
-}
-
-/// 列出持久化的告警规则。
-#[utoipa::path(
-    get,
-    path = "/v1/alerts/rules/config",
-    tag = "Alerts",
-    security(("bearer_auth" = [])),
-    params(PaginationParams),
-    responses(
-        (status = 200, description = "告警规则配置列表", body = Vec<AlertRuleDetailResponse>),
-        (status = 401, description = "未认证", body = crate::api::ApiError)
-    )
-)]
-async fn list_alert_rules_config(
-    Extension(trace_id): Extension<TraceId>,
-    State(state): State<AppState>,
-    Query(pagination): Query<PaginationParams>,
-) -> impl IntoResponse {
-    match state
-        .cert_store
-        .list_alert_rules(pagination.limit(), pagination.offset())
-    {
-        Ok(rules) => {
-            let resp: Vec<AlertRuleDetailResponse> =
-                rules.into_iter().map(AlertRuleDetailResponse::from).collect();
-            success_response(StatusCode::OK, &trace_id, resp)
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to list alert rules");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
@@ -458,7 +472,6 @@ pub fn alert_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(super::list_alert_rules, create_alert_rule))
         .routes(routes!(get_alert_rule))
-        .routes(routes!(list_alert_rules_config))
         .routes(routes!(update_alert_rule, delete_alert_rule))
         .routes(routes!(set_alert_rule_enabled))
         .routes(routes!(acknowledge_alert))

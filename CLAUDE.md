@@ -53,6 +53,7 @@ Agent (per monitored host)          Server (central)
 
 - **Trait-based extensibility**: `Collector`, `AlertRule`, `ChannelPlugin`, `StorageEngine` are all traits. New implementations register through their respective registries/engines.
 - **Shared state**: `AppState` (in `oxmon-server/src/state.rs`) wraps components in `Arc` and is cloned into axum/gRPC handlers.
+- **DB-backed alert rules**: Alert rules are stored in the `alert_rules` table and loaded into `AlertEngine` at startup via `rule_builder::reload_alert_engine()`. CRUD operations via REST API (`/v1/alerts/rules`) trigger immediate hot-reload. TOML `[[alert.rules]]` is deprecated and auto-migrated to DB on first startup. Initial setup via `init-rules` CLI subcommand or REST API. Conversion from DB rows to trait objects is in `oxmon-server/src/rule_builder.rs`.
 - **Alert deduplication**: The alert engine uses per-(rule_id, agent_id) sliding windows with configurable silence periods.
 - **Agent glob matching**: Alert rules use `glob-match` patterns to target specific agents.
 - **No OpenSSL**: All TLS uses `rustls`/`tokio-rustls`. The `reqwest` dependency uses `rustls-tls` feature. SQLite is bundled.
@@ -71,10 +72,13 @@ Core metrics API is in `oxmon-server/src/api.rs`. Certificate management API is 
 ```
 oxmon-server [config.toml]                                    # Start server (default)
 oxmon-server init-channels <config.toml> <seed.json>          # Initialize channels from seed file
+oxmon-server init-rules <config.toml> <seed.json>             # Initialize alert rules from seed file
 ```
 
 The `init-channels` subcommand reads a JSON seed file (see `config/channels.seed.example.json`) and inserts notification channels and silence windows into the database. Duplicate channel names are skipped.
 
+The `init-rules` subcommand reads a JSON seed file (see `config/rules.seed.example.json`) and inserts alert rules into the database. Duplicate rule names are skipped.
+
 ## Configuration
 
-Example configs are in `config/agent.example.toml` and `config/server.example.toml`. Parsed via `toml` crate in each binary's `config.rs`. Notification channels are **not** configured in TOML — use `init-channels` CLI or REST API.
+Example configs are in `config/agent.example.toml` and `config/server.example.toml`. Parsed via `toml` crate in each binary's `config.rs`. Notification channels are **not** configured in TOML — use `init-channels` CLI or REST API. Alert rules are **not** configured in TOML — use `init-rules` CLI or REST API. Legacy TOML `[[alert.rules]]` are auto-migrated to DB on first startup when the DB is empty.

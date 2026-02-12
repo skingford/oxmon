@@ -25,6 +25,17 @@ impl FromStr for CompareOp {
     }
 }
 
+impl std::fmt::Display for CompareOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::GreaterThan => write!(f, "greater_than"),
+            Self::LessThan => write!(f, "less_than"),
+            Self::GreaterEqual => write!(f, "greater_equal"),
+            Self::LessEqual => write!(f, "less_equal"),
+        }
+    }
+}
+
 impl CompareOp {
     fn check(&self, value: f64, threshold: f64) -> bool {
         match self {
