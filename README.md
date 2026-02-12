@@ -9,6 +9,7 @@ Lightweight server monitoring system built with Rust. Collects system metrics (C
 - [Architecture](#architecture)
 - [Crate Structure](#crate-structure)
 - [Quick Start](#quick-start)
+- [Local Testing (Mock Ingest + API Checks)](#local-testing-mock-ingest--api-checks)
 - [Configuration](#configuration)
 - [Collected Metrics](#collected-metrics)
 - [API Reference](#api-reference)
@@ -100,6 +101,78 @@ pm2 save && pm2 startup
 ```
 
 The agent collects system metrics every 10 seconds (configurable) and reports them to the server via gRPC.
+
+## Local Testing (Mock Ingest + API Checks)
+
+The repository includes three scripts for local integration testing:
+
+- `scripts/mock-report-all.sh`: ingest all mock scenarios (baseline + alert-triggering data)
+- `scripts/mock-query-check.sh`: validate core read APIs and print a summary table
+- `scripts/mock-e2e.sh`: one-command workflow that runs ingest + API checks
+
+### 1) One-command E2E (recommended)
+
+```bash
+# Runs all mock scenarios, then validates API endpoints
+scripts/mock-e2e.sh
+
+# When server has require_agent_auth=true
+scripts/mock-e2e.sh --auto-auth --username admin --password changeme
+```
+
+### 2) Run ingest and checks separately
+
+```bash
+# Step 1: ingest all scenarios
+scripts/mock-report-all.sh --scenario all --agent-count 5
+
+# Step 2: validate metrics / alerts / dashboard endpoints
+scripts/mock-query-check.sh
+```
+
+### 3) Run a single scenario only
+
+```bash
+# Trigger rate_of_change scenario only
+scripts/mock-report-all.sh --scenario rate
+
+# Trigger trend_prediction scenario only
+scripts/mock-report-all.sh --scenario trend
+```
+
+Supported scenarios: `all`, `baseline`, `threshold`, `rate`, `trend`, `cert`.
+
+### 4) Common options
+
+```bash
+# Print batch summaries during ingest
+scripts/mock-report-all.sh --print-payload
+
+# Print raw API responses during validation
+scripts/mock-query-check.sh --verbose
+
+# Select target for /v1/metrics/summary
+scripts/mock-query-check.sh --summary-agent mock-threshold --summary-metric cpu.usage
+```
+
+### 5) Token map file format (optional)
+
+If you don't use `--auto-auth` but server auth is enabled, pass a token mapping file:
+
+```ini
+mock-normal-01=token_xxx
+mock-normal-02=token_yyy
+mock-threshold=token_zzz
+mock-rate=token_aaa
+mock-trend=token_bbb
+cert-checker=token_ccc
+```
+
+Then run:
+
+```bash
+scripts/mock-report-all.sh --auth-token-file ./tokens.env
+```
 
 ## Configuration
 

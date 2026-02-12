@@ -9,6 +9,7 @@
 - [架构](#架构)
 - [Crate 结构](#crate-结构)
 - [快速开始](#快速开始)
+- [本地联调（模拟上报 + 接口校验）](#本地联调模拟上报--接口校验)
 - [配置说明](#配置说明)
 - [采集指标列表](#采集指标列表)
 - [API Reference](#api-reference)
@@ -100,6 +101,78 @@ pm2 save && pm2 startup
 ```
 
 Agent 每 10 秒（可配置）采集一次系统指标，通过 gRPC 上报给 Server。
+
+## 本地联调（模拟上报 + 接口校验）
+
+仓库内置了 3 个联调脚本：
+
+- `scripts/mock-report-all.sh`：上报全场景测试数据（正常 + 告警触发）
+- `scripts/mock-query-check.sh`：校验核心读取接口并输出摘要表
+- `scripts/mock-e2e.sh`：一键串联“上报 + 校验”
+
+### 1）一键 E2E（推荐）
+
+```bash
+# 默认跑 all 场景，完成上报后自动校验接口
+scripts/mock-e2e.sh
+
+# 服务端开启 require_agent_auth=true 时
+scripts/mock-e2e.sh --auto-auth --username admin --password changeme
+```
+
+### 2）分步执行（便于排查）
+
+```bash
+# 第一步：上报所有场景
+scripts/mock-report-all.sh --scenario all --agent-count 5
+
+# 第二步：校验 metrics / alerts / dashboard
+scripts/mock-query-check.sh
+```
+
+### 3）只跑单一场景
+
+```bash
+# 仅触发 rate_of_change 场景
+scripts/mock-report-all.sh --scenario rate
+
+# 仅触发 trend_prediction 场景
+scripts/mock-report-all.sh --scenario trend
+```
+
+支持场景：`all`、`baseline`、`threshold`、`rate`、`trend`、`cert`。
+
+### 4）常用参数
+
+```bash
+# 上报阶段打印每个批次摘要
+scripts/mock-report-all.sh --print-payload
+
+# 校验阶段打印接口原始响应
+scripts/mock-query-check.sh --verbose
+
+# 指定 metrics/summary 的查询目标
+scripts/mock-query-check.sh --summary-agent mock-threshold --summary-metric cpu.usage
+```
+
+### 5）token 文件格式（可选）
+
+当你不使用 `--auto-auth`，但服务端要求 Agent 认证时，可以传 token 映射文件：
+
+```ini
+mock-normal-01=token_xxx
+mock-normal-02=token_yyy
+mock-threshold=token_zzz
+mock-rate=token_aaa
+mock-trend=token_bbb
+cert-checker=token_ccc
+```
+
+然后执行：
+
+```bash
+scripts/mock-report-all.sh --auth-token-file ./tokens.env
+```
 
 ## 配置说明
 
