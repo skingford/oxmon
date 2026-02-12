@@ -637,10 +637,10 @@ impl CertStore {
             "SELECT r.id, r.domain_id, r.domain, r.is_valid, r.chain_valid, r.not_before, r.not_after, r.days_until_expiry, r.issuer, r.subject, r.san_list, r.resolved_ips, r.error, r.checked_at, r.created_at, r.updated_at
              FROM cert_check_results r
              INNER JOIN (
-                 SELECT domain_id, MAX(checked_at) AS max_checked
+                 SELECT MAX(id) AS max_id
                  FROM cert_check_results
                  GROUP BY domain_id
-             ) latest ON r.domain_id = latest.domain_id AND r.checked_at = latest.max_checked
+             ) latest ON r.id = latest.max_id
              INNER JOIN cert_domains d ON d.id = r.domain_id AND d.enabled = 1
              ORDER BY r.checked_at DESC
              LIMIT ?1 OFFSET ?2",

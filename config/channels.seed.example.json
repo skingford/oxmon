@@ -42,6 +42,41 @@
         "secret": "SEC_YOUR_SECRET"
       },
       "recipients": []
+    },
+    {
+      "name": "aliyun-sms",
+      "channel_type": "sms",
+      "description": "Aliyun SMS for critical alerts",
+      "min_severity": "critical",
+      "enabled": true,
+      "config": {
+        "provider": "aliyun",
+        "access_key_id": "LTAI5tYOUR_ACCESS_KEY_ID",
+        "access_key_secret": "YOUR_ACCESS_KEY_SECRET",
+        "sign_name": "your_sign_name",
+        "template_code": "SMS_123456789"
+      },
+      "recipients": [
+        "13800138000"
+      ]
+    },
+    {
+      "name": "tencent-sms",
+      "channel_type": "sms",
+      "description": "Tencent Cloud SMS for warning alerts",
+      "min_severity": "warning",
+      "enabled": true,
+      "config": {
+        "provider": "tencent",
+        "secret_id": "YOUR_TENCENT_SECRET_ID",
+        "secret_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "sdk_app_id": "1400123456",
+        "sign_name": "your_sign_name",
+        "template_id": "123456"
+      },
+      "recipients": [
+        "13800138000"
+      ]
     }
   ],
   "silence_windows": [

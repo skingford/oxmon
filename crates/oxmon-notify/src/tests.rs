@@ -204,6 +204,7 @@ fn webhook_plugin_validates_config() {
 fn sms_plugin_validates_config() {
     let registry = ChannelRegistry::default();
 
+    // generic without provider field (backward compatible)
     let valid = serde_json::json!({
         "gateway_url": "https://sms.example.com/send",
         "api_key": "test-key"
@@ -212,4 +213,147 @@ fn sms_plugin_validates_config() {
 
     let invalid = serde_json::json!({});
     assert!(registry.create_channel("sms", "sms-2", &invalid).is_err());
+}
+
+#[test]
+fn sms_plugin_validates_generic_with_provider_field() {
+    let registry = ChannelRegistry::default();
+    let valid = serde_json::json!({
+        "provider": "generic",
+        "gateway_url": "https://sms.example.com/send",
+        "api_key": "test-key"
+    });
+    assert!(registry.create_channel("sms", "sms-g", &valid).is_ok());
+}
+
+#[test]
+fn sms_plugin_validates_aliyun_config() {
+    let registry = ChannelRegistry::default();
+
+    let valid = serde_json::json!({
+        "provider": "aliyun",
+        "access_key_id": "LTAI5tXXXXXX",
+        "access_key_secret": "xxxxxxxxxxxxxxxx",
+        "sign_name": "oxmon",
+        "template_code": "SMS_123456"
+    });
+    assert!(registry.create_channel("sms", "sms-ali-1", &valid).is_ok());
+
+    // with optional fields
+    let valid_full = serde_json::json!({
+        "provider": "aliyun",
+        "access_key_id": "LTAI5tXXXXXX",
+        "access_key_secret": "xxxxxxxxxxxxxxxx",
+        "sign_name": "oxmon",
+        "template_code": "SMS_123456",
+        "template_param": "{\"code\":\"1234\"}",
+        "endpoint": "dysmsapi.aliyuncs.com"
+    });
+    assert!(registry.create_channel("sms", "sms-ali-2", &valid_full).is_ok());
+
+    // missing required field
+    let invalid = serde_json::json!({
+        "provider": "aliyun",
+        "access_key_id": "LTAI5tXXXXXX"
+    });
+    assert!(registry.create_channel("sms", "sms-ali-3", &invalid).is_err());
+}
+
+#[test]
+fn sms_plugin_validates_tencent_config() {
+    let registry = ChannelRegistry::default();
+
+    let valid = serde_json::json!({
+        "provider": "tencent",
+        "secret_id": "AKIDxxxxxxxx",
+        "secret_key": "xxxxxxxxxxxxxxxx",
+        "sdk_app_id": "1400123456",
+        "sign_name": "oxmon",
+        "template_id": "12345"
+    });
+    assert!(registry.create_channel("sms", "sms-tc-1", &valid).is_ok());
+
+    // missing required field
+    let invalid = serde_json::json!({
+        "provider": "tencent",
+        "secret_id": "AKIDxxxxxxxx"
+    });
+    assert!(registry.create_channel("sms", "sms-tc-2", &invalid).is_err());
+}
+
+#[test]
+fn sms_plugin_rejects_unknown_provider() {
+    let registry = ChannelRegistry::default();
+    let config = serde_json::json!({
+        "provider": "unknown_provider",
+        "some_field": "value"
+    });
+    let result = registry.create_channel("sms", "sms-unknown", &config);
+    let err = match result {
+        Err(e) => e,
+        Ok(_) => panic!("expected error for unknown provider"),
+    };
+    assert!(err.to_string().contains("Unknown sms provider"));
+}
+
+#[test]
+fn sms_aliyun_percent_encode() {
+    use crate::channels::sms::SmsChannel;
+    assert_eq!(SmsChannel::aliyun_percent_encode("/"), "%2F");
+    assert_eq!(SmsChannel::aliyun_percent_encode("a b+c"), "a%20b%2Bc");
+    assert_eq!(SmsChannel::aliyun_percent_encode("hello"), "hello");
+    assert_eq!(SmsChannel::aliyun_percent_encode("a~b_c-d.e"), "a~b_c-d.e");
+}
+
+#[test]
+fn sms_aliyun_sign_deterministic() {
+    use crate::channels::sms::SmsChannel;
+    let params = vec![
+        ("Action".to_string(), "SendSms".to_string()),
+        ("AccessKeyId".to_string(), "testkey".to_string()),
+    ];
+    let sig1 = SmsChannel::aliyun_sign(&params, "testsecret");
+    let sig2 = SmsChannel::aliyun_sign(&params, "testsecret");
+    assert_eq!(sig1, sig2);
+    assert!(!sig1.is_empty());
+}
+
+#[test]
+fn sms_tencent_sign_produces_valid_authorization() {
+    use crate::channels::sms::SmsChannel;
+    let auth = SmsChannel::tencent_sign(
+        "AKIDtest",
+        "testsecretkey",
+        "sms",
+        "sms.tencentcloudapi.com",
+        "{}",
+        1700000000,
+    );
+    assert!(auth.starts_with("TC3-HMAC-SHA256 Credential=AKIDtest/"));
+    assert!(auth.contains("SignedHeaders=content-type;host"));
+    assert!(auth.contains("Signature="));
+}
+
+#[test]
+fn sms_redact_config_covers_all_providers() {
+    let registry = ChannelRegistry::default();
+    let plugin = registry.get_plugin("sms").unwrap();
+
+    // Generic
+    let generic = serde_json::json!({"api_key": "secret123", "gateway_url": "https://x.com"});
+    let redacted = plugin.redact_config(&generic);
+    assert_eq!(redacted["api_key"], "***");
+    assert_eq!(redacted["gateway_url"], "https://x.com");
+
+    // Aliyun
+    let aliyun = serde_json::json!({"access_key_secret": "secret123", "access_key_id": "visible"});
+    let redacted = plugin.redact_config(&aliyun);
+    assert_eq!(redacted["access_key_secret"], "***");
+    assert_eq!(redacted["access_key_id"], "visible");
+
+    // Tencent
+    let tencent = serde_json::json!({"secret_key": "secret123", "secret_id": "visible"});
+    let redacted = plugin.redact_config(&tencent);
+    assert_eq!(redacted["secret_key"], "***");
+    assert_eq!(redacted["secret_id"], "visible");
 }

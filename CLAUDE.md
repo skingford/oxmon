@@ -46,7 +46,7 @@ Agent (per monitored host)          Server (central)
 | `oxmon-agent` | Agent binary: collection loop, gRPC client, offline buffering |
 | `oxmon-storage` | `StorageEngine` trait, time-partitioned SQLite (daily), cert storage, agent whitelist, token auth (`auth` module) |
 | `oxmon-alert` | `AlertRule` trait, rule types (threshold, rate-of-change, trend, cert-expiration), sliding window engine |
-| `oxmon-notify` | `ChannelPlugin` trait, plugin registry, DB-backed multi-instance channels, recipient management, routing by severity, silence windows. Plugins: email, webhook, sms, dingtalk, weixin |
+| `oxmon-notify` | `ChannelPlugin` trait, plugin registry, DB-backed multi-instance channels, recipient management, routing by severity, silence windows. Plugins: email, webhook, sms (generic/aliyun/tencent), dingtalk, weixin |
 | `oxmon-server` | Server binary: gRPC handler, REST API, `AppState`, cert scheduler |
 
 ## Key Patterns

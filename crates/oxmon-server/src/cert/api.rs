@@ -18,6 +18,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use oxmon_storage::StorageEngine;
 
 use super::checker::check_certificate;
+use super::collector::CertificateCollector;
 
 /// 新增证书监控域名。
 /// 鉴权：需要 Bearer Token。
@@ -572,7 +573,7 @@ async fn check_single_domain(
     )
     .await;
 
-    if let Err(e) = store_check_result(&state, &domain.id, &domain.domain, &result) {
+    if let Err(e) = store_check_result(&state, &domain.id, &domain.domain, domain.port, &result).await {
         tracing::error!(domain = %domain.domain, error = %e, "Failed to store manual check result");
     }
 
@@ -627,7 +628,7 @@ async fn check_all_domains(
         )
         .await;
 
-        if let Err(e) = store_check_result(&state, &domain.id, &domain.domain, &result) {
+        if let Err(e) = store_check_result(&state, &domain.id, &domain.domain, domain.port, &result).await {
             tracing::error!(domain = %domain.domain, error = %e, "Failed to store manual check result");
         }
 
@@ -637,16 +638,36 @@ async fn check_all_domains(
     success_response(StatusCode::OK, &trace_id, results)
 }
 
-fn store_check_result(
+async fn store_check_result(
     state: &AppState,
     domain_id: &str,
     domain_name: &str,
+    port: i32,
     result: &oxmon_common::types::CertCheckResult,
 ) -> anyhow::Result<()> {
     state.cert_store.insert_check_result(result)?;
     state
         .cert_store
         .update_last_checked_at(domain_id, Utc::now())?;
+
+    // Sync certificate details
+    match CertificateCollector::new(state.connect_timeout_secs).await {
+        Ok(collector) => {
+            match collector.collect(domain_name, port as u16).await {
+                Ok(details) => {
+                    if let Err(e) = state.cert_store.upsert_certificate_details(&details) {
+                        tracing::error!(domain = %domain_name, error = %e, "Failed to store certificate details");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(domain = %domain_name, error = %e, "Failed to collect certificate details");
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to create certificate collector");
+        }
+    }
 
     // Emit metrics
     let now = Utc::now();
