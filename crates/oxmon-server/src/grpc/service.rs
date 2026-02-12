@@ -125,6 +125,55 @@ impl MetricService for MetricServiceImpl {
             }));
         }
 
+        // Auto-register agent when auth is not required
+        if !self.auth.require_auth {
+            match self.state.cert_store.agent_exists(&proto.agent_id) {
+                Ok(false) => {
+                    let token = oxmon_storage::auth::generate_token();
+                    match oxmon_storage::auth::hash_token(&token) {
+                        Ok(token_hash) => {
+                            match self.state.cert_store.add_agent_to_whitelist(
+                                &proto.agent_id,
+                                &token,
+                                &token_hash,
+                                Some("auto-registered"),
+                            ) {
+                                Ok(id) => {
+                                    tracing::info!(
+                                        agent_id = %proto.agent_id,
+                                        id = %id,
+                                        "Agent auto-registered to whitelist"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        agent_id = %proto.agent_id,
+                                        error = %e,
+                                        "Failed to auto-register agent (may already exist)"
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                agent_id = %proto.agent_id,
+                                error = %e,
+                                "Failed to hash token for auto-registration"
+                            );
+                        }
+                    }
+                }
+                Ok(true) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        agent_id = %proto.agent_id,
+                        error = %e,
+                        "Failed to check agent whitelist for auto-registration"
+                    );
+                }
+            }
+        }
+
         // Convert proto to domain types
         let data_points: Vec<MetricDataPoint> = proto
             .data_points

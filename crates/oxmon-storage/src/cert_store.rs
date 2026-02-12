@@ -844,6 +844,17 @@ impl CertStore {
         }
     }
 
+    /// Check if an agent_id exists in the whitelist.
+    pub fn agent_exists(&self, agent_id: &str) -> Result<bool> {
+        let conn = self.lock_conn();
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM agent_whitelist WHERE agent_id = ?1",
+            rusqlite::params![agent_id],
+            |row| row.get(0),
+        )?;
+        Ok(exists)
+    }
+
     pub fn update_agent_whitelist(&self, id: &str, description: Option<&str>) -> Result<bool> {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
