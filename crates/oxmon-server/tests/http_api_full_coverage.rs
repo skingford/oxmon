@@ -713,30 +713,27 @@ async fn system_config_endpoints_should_cover_crud_paths() {
     let items: Vec<serde_json::Value> = decode_data(&body);
     assert!(items.is_empty());
 
-    // Create an email system config
+    // Create a runtime system config
     let (status, body, _) = request_json(
         &ctx.app,
         "POST",
         "/v1/system/configs",
         Some(&token),
         Some(json!({
-            "config_key": "email_default",
-            "config_type": "email",
-            "display_name": "默认邮件配置",
-            "description": "公司 SMTP 服务器",
-            "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":465,\"smtp_username\":\"noreply@example.com\",\"smtp_password\":\"secret123\",\"from\":\"noreply@example.com\"}"
+            "config_key": "test_runtime_setting",
+            "config_type": "runtime",
+            "display_name": "测试运行时参数",
+            "description": "用于测试的运行时参数",
+            "config_json": "{\"value\":120}"
         })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_ok_envelope(&body);
     let config_id = body["data"]["id"].as_str().expect("id should exist").to_string();
-    assert_eq!(body["data"]["config_key"], "email_default");
-    assert_eq!(body["data"]["config_type"], "email");
-    // Password should be redacted
-    assert_eq!(body["data"]["config_json"]["smtp_password"], "***");
-    // Other fields should be visible
-    assert_eq!(body["data"]["config_json"]["smtp_host"], "smtp.example.com");
+    assert_eq!(body["data"]["config_key"], "test_runtime_setting");
+    assert_eq!(body["data"]["config_type"], "runtime");
+    assert_eq!(body["data"]["config_json"]["value"], 120);
 
     // Create duplicate config_key should fail
     let (status, body, _) = request_json(
@@ -745,10 +742,10 @@ async fn system_config_endpoints_should_cover_crud_paths() {
         "/v1/system/configs",
         Some(&token),
         Some(json!({
-            "config_key": "email_default",
-            "config_type": "email",
+            "config_key": "test_runtime_setting",
+            "config_type": "runtime",
             "display_name": "重复",
-            "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":465,\"from\":\"a@b.com\"}"
+            "config_json": "{\"value\":200}"
         })),
     )
     .await;
@@ -763,9 +760,26 @@ async fn system_config_endpoints_should_cover_crud_paths() {
         Some(&token),
         Some(json!({
             "config_key": "bad_json",
-            "config_type": "email",
+            "config_type": "runtime",
             "display_name": "Bad",
             "config_json": "not-json"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_err_envelope(&body, 1001);
+
+    // Create email config (non-runtime) should fail
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/system/configs",
+        Some(&token),
+        Some(json!({
+            "config_key": "email_rejected",
+            "config_type": "email",
+            "display_name": "Should Fail",
+            "config_json": "{\"smtp_host\":\"smtp.example.com\"}"
         })),
     )
     .await;
@@ -782,8 +796,8 @@ async fn system_config_endpoints_should_cover_crud_paths() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    assert_eq!(body["data"]["config_key"], "email_default");
-    assert_eq!(body["data"]["config_json"]["smtp_password"], "***");
+    assert_eq!(body["data"]["config_key"], "test_runtime_setting");
+    assert_eq!(body["data"]["config_json"]["value"], 120);
 
     // Get non-existent
     let (status, body, _) = request_no_body(
@@ -803,14 +817,14 @@ async fn system_config_endpoints_should_cover_crud_paths() {
         &format!("/v1/system/configs/{config_id}"),
         Some(&token),
         Some(json!({
-            "display_name": "更新后的邮件配置",
+            "display_name": "更新后的运行时参数",
             "enabled": false
         })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    assert_eq!(body["data"]["display_name"], "更新后的邮件配置");
+    assert_eq!(body["data"]["display_name"], "更新后的运行时参数");
     assert_eq!(body["data"]["enabled"], false);
 
     // Update non-existent
@@ -825,29 +839,25 @@ async fn system_config_endpoints_should_cover_crud_paths() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_err_envelope(&body, 1004);
 
-    // Create SMS config with provider
+    // Create another runtime config
     let (status, body, _) = request_json(
         &ctx.app,
         "POST",
         "/v1/system/configs",
         Some(&token),
         Some(json!({
-            "config_key": "sms_aliyun",
-            "config_type": "sms",
-            "provider": "aliyun",
-            "display_name": "阿里云短信",
-            "config_json": "{\"provider\":\"aliyun\",\"access_key_id\":\"LTAI5t\",\"access_key_secret\":\"mySecret\",\"sign_name\":\"oxmon\",\"template_code\":\"SMS_123\"}"
+            "config_key": "another_runtime",
+            "config_type": "runtime",
+            "display_name": "另一个运行时参数",
+            "config_json": "{\"value\":999}"
         })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_ok_envelope(&body);
     let sms_id = body["data"]["id"].as_str().expect("id should exist").to_string();
-    assert_eq!(body["data"]["provider"], "aliyun");
-    // Secret should be redacted
-    assert_eq!(body["data"]["config_json"]["access_key_secret"], "***");
-    // Non-secret should be visible
-    assert_eq!(body["data"]["config_json"]["access_key_id"], "LTAI5t");
+    assert_eq!(body["data"]["config_type"], "runtime");
+    assert_eq!(body["data"]["config_json"]["value"], 999);
 
     // Delete
     let (status, _, _) = request_no_body(

@@ -188,6 +188,18 @@ async fn create_system_config(
     State(state): State<AppState>,
     Json(req): Json<CreateSystemConfigRequest>,
 ) -> impl IntoResponse {
+    // 限制只能创建 runtime 类型的系统配置
+    // 发送方配置（email/sms）应直接在 notification_channels.config_json 中配置
+    if req.config_type != "runtime" {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &trace_id,
+            "bad_request",
+            "Only config_type='runtime' is allowed. Sender configs (email/sms) should be configured directly in notification channels.",
+        )
+        .into_response();
+    }
+
     // 验证 config_json 是有效 JSON
     let config_val: serde_json::Value = match serde_json::from_str(&req.config_json) {
         Ok(v) => v,
@@ -202,19 +214,17 @@ async fn create_system_config(
         }
     };
 
-    // 验证 config_type 和对应的 plugin 配置
-    if let Some(plugin) = state.notifier.registry().get_plugin(&req.config_type) {
-        if let Err(e) = plugin.validate_config(&config_val) {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                &trace_id,
-                "bad_request",
-                &format!("Config validation failed: {e}"),
-            )
-            .into_response();
-        }
+    // Runtime 配置通常是简单的值，不需要 plugin 验证
+    // 验证 config_json 包含 "value" 字段
+    if !config_val.is_object() || config_val.get("value").is_none() {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &trace_id,
+            "bad_request",
+            "Runtime config_json must be an object with 'value' field",
+        )
+        .into_response();
     }
-    // 对于不在 plugin 注册表中的 config_type 也允许创建（未来扩展）
 
     let row = SystemConfigRow {
         id: oxmon_common::id::next_id(),
@@ -330,12 +340,7 @@ async fn delete_system_config(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.cert_store.delete_system_config(&id) {
-        Ok(true) => {
-            if let Err(e) = state.notifier.reload().await {
-                tracing::warn!(error = %e, "Failed to reload channels after system config delete");
-            }
-            success_empty_response(StatusCode::OK, &trace_id, "System config deleted")
-        }
+        Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "System config deleted"),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,
@@ -344,19 +349,14 @@ async fn delete_system_config(
         )
         .into_response(),
         Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("Cannot delete") {
-                error_response(StatusCode::CONFLICT, &trace_id, "conflict", &msg).into_response()
-            } else {
-                tracing::error!(error = %e, "Failed to delete system config");
-                error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &trace_id,
-                    "storage_error",
-                    "Database error",
-                )
-                .into_response()
-            }
+            tracing::error!(error = %e, "Failed to delete system config");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response()
         }
     }
 }

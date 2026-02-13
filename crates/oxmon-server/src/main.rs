@@ -145,7 +145,6 @@ fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
             min_severity: ch.min_severity.clone(),
             enabled: ch.enabled,
             config_json: ch.config.to_string(),
-            system_config_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

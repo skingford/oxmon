@@ -21,7 +21,6 @@ struct ChannelOverview {
     min_severity: String,
     enabled: bool,
     recipient_type: Option<String>,
-    system_config_id: Option<String>,
     recipients: Vec<String>,
     created_at: String,
     updated_at: String,
@@ -71,7 +70,6 @@ async fn list_channels(
                     min_severity: ch.min_severity,
                     enabled: ch.enabled,
                     recipient_type,
-                    system_config_id: ch.system_config_id,
                     recipients,
                     created_at: ch.created_at.to_rfc3339(),
                     updated_at: ch.updated_at.to_rfc3339(),
@@ -229,8 +227,6 @@ struct CreateChannelRequest {
     min_severity: String,
     #[serde(default)]
     config_json: String,
-    /// 系统配置 ID（email/sms 渠道必填，引用发送方配置）
-    system_config_id: Option<String>,
     #[serde(default)]
     recipients: Vec<String>,
 }
@@ -321,51 +317,15 @@ async fn create_channel_config(
                 .into_response();
             }
         }
-    } else if req.system_config_id.is_none() {
-        // 无自身配置也无全局配置引用 — 创建后将无法发送通知
+    } else {
+        // 无配置 — 创建后将无法发送通知
         return error_response(
             StatusCode::BAD_REQUEST,
             &trace_id,
             "missing_config",
-            "Channel has no config_json and no system_config_id",
+            "Channel must have a valid config_json",
         )
         .into_response();
-    }
-
-    // 如果提供了 system_config_id，验证引用的系统配置存在且启用
-    if let Some(ref sc_id) = req.system_config_id {
-        match state.cert_store.get_system_config_by_id(sc_id) {
-            Ok(Some(sc)) => {
-                if !sc.enabled {
-                    return error_response(
-                        StatusCode::BAD_REQUEST,
-                        &trace_id,
-                        "disabled_system_config",
-                        "Referenced system config is disabled",
-                    )
-                    .into_response();
-                }
-            }
-            Ok(None) => {
-                return error_response(
-                    StatusCode::BAD_REQUEST,
-                    &trace_id,
-                    "invalid_system_config",
-                    &format!("System config not found: {sc_id}"),
-                )
-                .into_response();
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to lookup system config");
-                return error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &trace_id,
-                    "storage_error",
-                    "Database error",
-                )
-                .into_response();
-            }
-        }
     }
 
     let row = NotificationChannelRow {
@@ -376,7 +336,6 @@ async fn create_channel_config(
         min_severity: req.min_severity,
         enabled: true,
         config_json: req.config_json,
-        system_config_id: req.system_config_id,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };

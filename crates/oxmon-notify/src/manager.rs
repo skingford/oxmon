@@ -79,15 +79,11 @@ pub fn parse_config_json(raw: &str) -> Option<serde_json::Value> {
 
 /// Resolve the effective configuration for a notification channel.
 ///
-/// Priority:
-/// 1. Channel's own `config_json` (if non-empty and not `{}`)
-/// 2. Global system config via `system_config_id` (if present and enabled)
-/// 3. None (channel should be skipped)
+/// Returns the channel's `config_json` if non-empty, otherwise None (channel should be skipped).
 pub fn resolve_config(
-    cert_store: &CertStore,
+    _cert_store: &CertStore,
     row: &NotificationChannelRow,
 ) -> Option<serde_json::Value> {
-    // Step 1: Try channel's own config_json
     if let Some(cfg) = parse_config_json(&row.config_json) {
         if is_meaningful_config(&cfg) {
             tracing::debug!(
@@ -99,61 +95,12 @@ pub fn resolve_config(
         }
     }
 
-    // Step 2: Fallback to system_config_id
-    if let Some(ref sc_id) = row.system_config_id {
-        match cert_store.get_system_config_by_id(sc_id) {
-            Ok(Some(sc)) => {
-                if !sc.enabled {
-                    tracing::warn!(
-                        channel_id = %row.id,
-                        system_config_id = %sc_id,
-                        "System config is disabled, channel has no own config, skipping"
-                    );
-                    return None;
-                }
-                if let Some(cfg) = parse_config_json(&sc.config_json) {
-                    if is_meaningful_config(&cfg) {
-                        tracing::debug!(
-                            channel_id = %row.id,
-                            system_config_id = %sc_id,
-                            "Using system-level config (fallback)"
-                        );
-                        return Some(cfg);
-                    }
-                }
-                tracing::warn!(
-                    channel_id = %row.id,
-                    system_config_id = %sc_id,
-                    "System config exists but has empty config_json, skipping"
-                );
-                return None;
-            }
-            Ok(None) => {
-                tracing::warn!(
-                    channel_id = %row.id,
-                    system_config_id = %sc_id,
-                    "System config not found, channel has no own config, skipping"
-                );
-                return None;
-            }
-            Err(e) => {
-                tracing::error!(
-                    channel_id = %row.id,
-                    system_config_id = %sc_id,
-                    error = %e,
-                    "Failed to load system config, skipping channel"
-                );
-                return None;
-            }
-        }
-    }
-
-    // Step 3: No config_json, no system_config_id
+    // No config available
     tracing::warn!(
         channel_id = %row.id,
         channel_type = %row.channel_type,
         name = %row.name,
-        "Channel has no config and no system_config_id, skipping"
+        "Channel has no valid config_json, skipping"
     );
     None
 }

@@ -79,7 +79,6 @@ pub fn init_default_channels(cert_store: &CertStore) -> anyhow::Result<usize> {
             min_severity: def.min_severity.to_string(),
             enabled: false,
             config_json: "{}".to_string(),
-            system_config_id: None,
             created_at: now,
             updated_at: now,
         };
