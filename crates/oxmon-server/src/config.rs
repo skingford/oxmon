@@ -133,6 +133,18 @@ fn default_seed_severity() -> String {
 pub struct DictionariesSeedFile {
     #[serde(default)]
     pub dictionaries: Vec<SeedDictionary>,
+    #[serde(default)]
+    pub dictionary_types: Option<Vec<SeedDictionaryType>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeedDictionaryType {
+    pub dict_type: String,
+    pub dict_type_label: String,
+    #[serde(default)]
+    pub sort_order: Option<i32>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

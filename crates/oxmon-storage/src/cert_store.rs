@@ -1,7 +1,8 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use oxmon_common::types::{
-    CertCheckResult, CertDomain, CreateDomainRequest, DictionaryItem, DictionaryTypeSummary,
+    CertCheckResult, CertDomain, CreateDomainRequest, DictionaryItem, DictionaryType,
+    DictionaryTypeSummary,
 };
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
@@ -175,6 +176,17 @@ CREATE INDEX IF NOT EXISTS idx_dict_type ON system_dictionaries(dict_type);
 CREATE INDEX IF NOT EXISTS idx_dict_enabled ON system_dictionaries(enabled);
 ";
 
+const DICTIONARY_TYPES_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS dictionary_types (
+    dict_type TEXT PRIMARY KEY,
+    dict_type_label TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    description TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+";
+
 const USERS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -246,6 +258,7 @@ impl CertStore {
         conn.execute_batch(NOTIFICATION_RECIPIENTS_SCHEMA)?;
         conn.execute_batch(NOTIFICATION_SILENCE_WINDOWS_SCHEMA)?;
         conn.execute_batch(SYSTEM_DICTIONARIES_SCHEMA)?;
+        conn.execute_batch(DICTIONARY_TYPES_SCHEMA)?;
 
         // 迁移：为已有的 notification_channels 表添加 description 列
         let _ = conn.execute_batch("ALTER TABLE notification_channels ADD COLUMN description TEXT;");
@@ -1973,12 +1986,18 @@ impl CertStore {
     pub fn list_all_dict_types(&self) -> Result<Vec<DictionaryTypeSummary>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT dict_type, COUNT(*) FROM system_dictionaries GROUP BY dict_type ORDER BY dict_type ASC",
+            "SELECT sd.dict_type, COUNT(*) as cnt, dt.dict_type_label
+             FROM system_dictionaries sd
+             LEFT JOIN dictionary_types dt ON sd.dict_type = dt.dict_type
+             GROUP BY sd.dict_type
+             ORDER BY COALESCE(dt.sort_order, 0) ASC, sd.dict_type ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             let dict_type: String = row.get(0)?;
             let count: i64 = row.get(1)?;
+            let label: Option<String> = row.get(2)?;
             Ok(DictionaryTypeSummary {
+                dict_type_label: label.unwrap_or_else(|| dict_type.clone()),
                 dict_type,
                 count: count as u64,
             })
@@ -2076,6 +2095,159 @@ impl CertStore {
             |row| row.get(0),
         )?;
         Ok(count as u64)
+    }
+
+    // ---- Dictionary types CRUD ----
+
+    pub fn insert_dictionary_type(
+        &self,
+        req: &oxmon_common::types::CreateDictionaryTypeRequest,
+    ) -> Result<DictionaryType> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        let sort_order = req.sort_order.unwrap_or(0);
+        conn.execute(
+            "INSERT INTO dictionary_types (dict_type, dict_type_label, sort_order, description, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![req.dict_type, req.dict_type_label, sort_order, req.description, now, now],
+        )?;
+        drop(conn);
+        self.get_dictionary_type(&req.dict_type)
+            .and_then(|opt| opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted dictionary type")))
+    }
+
+    pub fn get_dictionary_type(&self, dict_type: &str) -> Result<Option<DictionaryType>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT dict_type, dict_type_label, sort_order, description, created_at, updated_at
+             FROM dictionary_types WHERE dict_type = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![dict_type], |row| {
+            Ok(Self::row_to_dictionary_type(row))
+        })?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(Some(r)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_dictionary_types(&self) -> Result<Vec<DictionaryType>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT dict_type, dict_type_label, sort_order, description, created_at, updated_at
+             FROM dictionary_types ORDER BY sort_order ASC, dict_type ASC",
+        )?;
+        let rows = stmt.query_map([], |row| Ok(Self::row_to_dictionary_type(row)))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row??);
+        }
+        Ok(results)
+    }
+
+    pub fn update_dictionary_type(
+        &self,
+        dict_type: &str,
+        update: &oxmon_common::types::UpdateDictionaryTypeRequest,
+    ) -> Result<Option<DictionaryType>> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        let mut sets = vec!["updated_at = ?1".to_string()];
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now)];
+        let mut idx = 2;
+
+        if let Some(ref label) = update.dict_type_label {
+            sets.push(format!("dict_type_label = ?{idx}"));
+            params.push(Box::new(label.clone()));
+            idx += 1;
+        }
+        if let Some(sort_order) = update.sort_order {
+            sets.push(format!("sort_order = ?{idx}"));
+            params.push(Box::new(sort_order));
+            idx += 1;
+        }
+        if let Some(ref description) = update.description {
+            sets.push(format!("description = ?{idx}"));
+            params.push(Box::new(description.clone()));
+            idx += 1;
+        }
+
+        let sql = format!(
+            "UPDATE dictionary_types SET {} WHERE dict_type = ?{idx}",
+            sets.join(", ")
+        );
+        params.push(Box::new(dict_type.to_string()));
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let updated = conn.execute(&sql, param_refs.as_slice())?;
+        drop(conn);
+
+        if updated == 0 {
+            return Ok(None);
+        }
+        self.get_dictionary_type(dict_type)
+    }
+
+    pub fn delete_dictionary_type(&self, dict_type: &str) -> Result<bool> {
+        let conn = self.lock_conn();
+        let deleted = conn.execute(
+            "DELETE FROM dictionary_types WHERE dict_type = ?1",
+            rusqlite::params![dict_type],
+        )?;
+        Ok(deleted > 0)
+    }
+
+    pub fn batch_insert_dictionary_types(&self, items: &[DictionaryType]) -> Result<usize> {
+        let conn = self.lock_conn();
+        let tx = conn.unchecked_transaction()?;
+        let mut count = 0usize;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO dictionary_types (dict_type, dict_type_label, sort_order, description, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )?;
+            for item in items {
+                let inserted = stmt.execute(rusqlite::params![
+                    item.dict_type,
+                    item.dict_type_label,
+                    item.sort_order,
+                    item.description,
+                    item.created_at.timestamp(),
+                    item.updated_at.timestamp(),
+                ])?;
+                count += inserted;
+            }
+        }
+        tx.commit()?;
+        Ok(count)
+    }
+
+    /// Ensure a dictionary type exists; if not, insert with label = dict_type.
+    pub fn ensure_dictionary_type(&self, dict_type: &str) -> Result<()> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        conn.execute(
+            "INSERT OR IGNORE INTO dictionary_types (dict_type, dict_type_label, sort_order, description, created_at, updated_at)
+             VALUES (?1, ?2, 0, NULL, ?3, ?4)",
+            rusqlite::params![dict_type, dict_type, now, now],
+        )?;
+        Ok(())
+    }
+
+    fn row_to_dictionary_type(row: &rusqlite::Row) -> Result<DictionaryType> {
+        let created: i64 = row.get(4)?;
+        let updated: i64 = row.get(5)?;
+        Ok(DictionaryType {
+            dict_type: row.get(0)?,
+            dict_type_label: row.get(1)?,
+            sort_order: row.get(2)?,
+            description: row.get(3)?,
+            created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+            updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+        })
     }
 
     fn row_to_dictionary(row: &rusqlite::Row) -> Result<DictionaryItem> {
@@ -2502,11 +2674,160 @@ mod tests {
         }
         let types = store.list_all_dict_types().unwrap();
         assert_eq!(types.len(), 2);
-        // Ordered alphabetically
+        // Ordered alphabetically (no dictionary_types records, fallback label = dict_type)
         assert_eq!(types[0].dict_type, "channel_type");
+        assert_eq!(types[0].dict_type_label, "channel_type");
         assert_eq!(types[0].count, 1);
         assert_eq!(types[1].dict_type, "severity");
+        assert_eq!(types[1].dict_type_label, "severity");
         assert_eq!(types[1].count, 2);
+    }
+
+    #[test]
+    fn test_dictionary_list_all_types_with_labels() {
+        let (_dir, store) = setup();
+        // Insert dictionary type with a label
+        store
+            .insert_dictionary_type(&oxmon_common::types::CreateDictionaryTypeRequest {
+                dict_type: "severity".to_string(),
+                dict_type_label: "告警级别".to_string(),
+                sort_order: Some(1),
+                description: None,
+            })
+            .unwrap();
+        // Insert dictionary items
+        store
+            .insert_dictionary(&oxmon_common::types::CreateDictionaryRequest {
+                dict_type: "severity".to_string(),
+                dict_key: "info".to_string(),
+                dict_label: "信息".to_string(),
+                dict_value: None,
+                sort_order: None,
+                enabled: None,
+                description: None,
+                extra_json: None,
+            })
+            .unwrap();
+        let types = store.list_all_dict_types().unwrap();
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0].dict_type, "severity");
+        assert_eq!(types[0].dict_type_label, "告警级别");
+        assert_eq!(types[0].count, 1);
+    }
+
+    #[test]
+    fn test_dictionary_type_crud() {
+        let (_dir, store) = setup();
+
+        // Insert
+        let dt = store
+            .insert_dictionary_type(&oxmon_common::types::CreateDictionaryTypeRequest {
+                dict_type: "channel_type".to_string(),
+                dict_type_label: "通知渠道类型".to_string(),
+                sort_order: Some(1),
+                description: Some("通知渠道分类".to_string()),
+            })
+            .unwrap();
+        assert_eq!(dt.dict_type, "channel_type");
+        assert_eq!(dt.dict_type_label, "通知渠道类型");
+        assert_eq!(dt.sort_order, 1);
+
+        // Get
+        let fetched = store.get_dictionary_type("channel_type").unwrap().unwrap();
+        assert_eq!(fetched.dict_type_label, "通知渠道类型");
+
+        // Update
+        let updated = store
+            .update_dictionary_type(
+                "channel_type",
+                &oxmon_common::types::UpdateDictionaryTypeRequest {
+                    dict_type_label: Some("渠道类型".to_string()),
+                    sort_order: Some(5),
+                    description: Some(None),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.dict_type_label, "渠道类型");
+        assert_eq!(updated.sort_order, 5);
+        assert_eq!(updated.description, None);
+
+        // Update non-existent
+        let none = store
+            .update_dictionary_type(
+                "nonexistent",
+                &oxmon_common::types::UpdateDictionaryTypeRequest {
+                    dict_type_label: Some("test".to_string()),
+                    sort_order: None,
+                    description: None,
+                },
+            )
+            .unwrap();
+        assert!(none.is_none());
+
+        // List
+        let list = store.list_dictionary_types().unwrap();
+        assert_eq!(list.len(), 1);
+
+        // Delete
+        assert!(store.delete_dictionary_type("channel_type").unwrap());
+        assert!(store.get_dictionary_type("channel_type").unwrap().is_none());
+        assert!(!store.delete_dictionary_type("channel_type").unwrap());
+    }
+
+    #[test]
+    fn test_dictionary_type_duplicate_rejected() {
+        let (_dir, store) = setup();
+        let req = oxmon_common::types::CreateDictionaryTypeRequest {
+            dict_type: "severity".to_string(),
+            dict_type_label: "告警级别".to_string(),
+            sort_order: None,
+            description: None,
+        };
+        store.insert_dictionary_type(&req).unwrap();
+        assert!(store.insert_dictionary_type(&req).is_err());
+    }
+
+    #[test]
+    fn test_dictionary_type_batch_insert() {
+        let (_dir, store) = setup();
+        let now = Utc::now();
+        let items = vec![
+            DictionaryType {
+                dict_type: "a_type".to_string(),
+                dict_type_label: "A".to_string(),
+                sort_order: 1,
+                description: None,
+                created_at: now,
+                updated_at: now,
+            },
+            DictionaryType {
+                dict_type: "b_type".to_string(),
+                dict_type_label: "B".to_string(),
+                sort_order: 2,
+                description: None,
+                created_at: now,
+                updated_at: now,
+            },
+        ];
+        let count = store.batch_insert_dictionary_types(&items).unwrap();
+        assert_eq!(count, 2);
+        // Insert again - should be ignored
+        let count2 = store.batch_insert_dictionary_types(&items).unwrap();
+        assert_eq!(count2, 0);
+        assert_eq!(store.list_dictionary_types().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_ensure_dictionary_type() {
+        let (_dir, store) = setup();
+        // ensure_dictionary_type should create if not exists
+        store.ensure_dictionary_type("new_type").unwrap();
+        let dt = store.get_dictionary_type("new_type").unwrap().unwrap();
+        assert_eq!(dt.dict_type_label, "new_type"); // label defaults to dict_type
+        // calling again should be a no-op
+        store.ensure_dictionary_type("new_type").unwrap();
+        assert_eq!(store.list_dictionary_types().unwrap().len(), 1);
     }
 
     #[test]

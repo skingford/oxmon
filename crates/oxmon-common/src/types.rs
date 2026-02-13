@@ -508,6 +508,49 @@ pub struct UpdateDictionaryRequest {
 pub struct DictionaryTypeSummary {
     /// 字典类型
     pub dict_type: String,
+    /// 字典类型显示标签（中文名称）
+    pub dict_type_label: String,
     /// 该类型下的条目数量
     pub count: u64,
+}
+
+/// 字典类型元数据
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DictionaryType {
+    /// 字典类型标识（主键）
+    pub dict_type: String,
+    /// 显示标签（中文名称）
+    pub dict_type_label: String,
+    /// 排序序号
+    pub sort_order: i32,
+    /// 描述信息
+    pub description: Option<String>,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 更新时间
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 创建字典类型请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct CreateDictionaryTypeRequest {
+    /// 字典类型标识（必填，如 channel_type）
+    pub dict_type: String,
+    /// 显示标签（必填，如 "通知渠道类型"）
+    pub dict_type_label: String,
+    /// 排序序号（可选，默认 0）
+    pub sort_order: Option<i32>,
+    /// 描述信息（可选）
+    pub description: Option<String>,
+}
+
+/// 更新字典类型请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct UpdateDictionaryTypeRequest {
+    /// 显示标签（可选）
+    pub dict_type_label: Option<String>,
+    /// 排序序号（可选）
+    pub sort_order: Option<i32>,
+    /// 描述信息（可选）
+    pub description: Option<Option<String>>,
 }

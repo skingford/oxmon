@@ -1,5 +1,5 @@
 use chrono::Utc;
-use oxmon_common::types::DictionaryItem;
+use oxmon_common::types::{DictionaryItem, DictionaryType};
 use oxmon_storage::cert_store::CertStore;
 
 /// Build the default dictionary seed items (all marked as `is_system = true`).
@@ -133,6 +133,38 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
     items
 }
 
+/// Build the default dictionary type seed items.
+pub fn default_type_seed_items() -> Vec<DictionaryType> {
+    let now = Utc::now();
+    let mut types = Vec::new();
+
+    for (i, (dict_type, label, desc)) in [
+        ("channel_type", "通知渠道类型", "通知渠道类型分类"),
+        ("severity", "告警级别", "告警严重程度级别"),
+        ("rule_type", "告警规则类型", "告警规则的触发类型"),
+        ("alert_status", "告警状态", "告警事件的处理状态"),
+        ("agent_status", "Agent 状态", "监控 Agent 的在线状态"),
+        ("compare_operator", "比较运算符", "告警规则中的比较运算符"),
+        ("metric_name", "系统指标名称", "可监控的系统指标"),
+        ("rule_source", "规则来源", "告警规则的创建来源"),
+        ("recipient_type", "接收人类型", "通知接收人的类型"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        types.push(DictionaryType {
+            dict_type: dict_type.to_string(),
+            dict_type_label: label.to_string(),
+            sort_order: (i + 1) as i32,
+            description: Some(desc.to_string()),
+            created_at: now,
+            updated_at: now,
+        });
+    }
+
+    types
+}
+
 fn make_system_item(
     dict_type: &str,
     key: &str,
@@ -161,6 +193,13 @@ fn make_system_item(
 /// Initialize default system dictionaries if the table is empty.
 /// Returns the number of items inserted, or 0 if table already has data.
 pub fn init_default_dictionaries(cert_store: &CertStore) -> anyhow::Result<usize> {
+    // Always seed dictionary types (INSERT OR IGNORE ensures idempotency)
+    let type_items = default_type_seed_items();
+    let types_inserted = cert_store.batch_insert_dictionary_types(&type_items)?;
+    if types_inserted > 0 {
+        tracing::info!(types_inserted, "Initialized default dictionary types");
+    }
+
     let count = cert_store.count_dictionaries()?;
     if count > 0 {
         tracing::info!(
@@ -185,6 +224,28 @@ pub fn init_from_seed_file(cert_store: &CertStore, seed_path: &str) -> anyhow::R
         .map_err(|e| anyhow::anyhow!("Failed to parse seed file '{}': {}", seed_path, e))?;
 
     let now = Utc::now();
+
+    // Insert dictionary types from seed file if present
+    if let Some(seed_types) = seed.dictionary_types {
+        let type_items: Vec<DictionaryType> = seed_types
+            .into_iter()
+            .map(|s| DictionaryType {
+                dict_type: s.dict_type,
+                dict_type_label: s.dict_type_label,
+                sort_order: s.sort_order.unwrap_or(0),
+                description: s.description,
+                created_at: now,
+                updated_at: now,
+            })
+            .collect();
+        let types_inserted = cert_store.batch_insert_dictionary_types(&type_items)?;
+        tracing::info!(
+            total = type_items.len(),
+            types_inserted,
+            "init-dictionaries: dictionary types processed"
+        );
+    }
+
     let items: Vec<DictionaryItem> = seed
         .dictionaries
         .into_iter()
