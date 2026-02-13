@@ -154,6 +154,7 @@ async fn test_channel(
     let test_event = oxmon_common::types::AlertEvent {
         id: format!("test-{}", chrono::Utc::now().timestamp_millis()),
         rule_id: "test-rule".to_string(),
+        rule_name: "Test Rule".to_string(),
         agent_id: "test-agent".to_string(),
         metric_name: "test.metric".to_string(),
         severity: oxmon_common::types::Severity::Info,
@@ -163,6 +164,8 @@ async fn test_channel(
         timestamp: chrono::Utc::now(),
         predicted_breach: None,
         status: 1,
+        labels: std::collections::HashMap::new(),
+        first_triggered_at: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };

@@ -80,6 +80,7 @@ pub fn build_rule_from_row(row: &AlertRuleRow) -> Result<Box<dyn AlertRule>> {
                 .map_err(|e: String| anyhow::anyhow!("{e}"))?;
             Ok(Box::new(ThresholdRule {
                 id: row.id.clone(),
+                name: row.name.clone(),
                 metric: row.metric.clone(),
                 agent_pattern: row.agent_pattern.clone(),
                 severity,
@@ -94,6 +95,7 @@ pub fn build_rule_from_row(row: &AlertRuleRow) -> Result<Box<dyn AlertRule>> {
                 .map_err(|e| anyhow::anyhow!("invalid rate_of_change config: {e}"))?;
             Ok(Box::new(RateOfChangeRule {
                 id: row.id.clone(),
+                name: row.name.clone(),
                 metric: row.metric.clone(),
                 agent_pattern: row.agent_pattern.clone(),
                 severity,
@@ -107,6 +109,7 @@ pub fn build_rule_from_row(row: &AlertRuleRow) -> Result<Box<dyn AlertRule>> {
                 .map_err(|e| anyhow::anyhow!("invalid trend_prediction config: {e}"))?;
             Ok(Box::new(TrendPredictionRule {
                 id: row.id.clone(),
+                name: row.name.clone(),
                 metric: row.metric.clone(),
                 agent_pattern: row.agent_pattern.clone(),
                 severity,
@@ -124,6 +127,7 @@ pub fn build_rule_from_row(row: &AlertRuleRow) -> Result<Box<dyn AlertRule>> {
                 });
             Ok(Box::new(CertExpirationRule::new(
                 row.id.clone(),
+                row.name.clone(),
                 cfg.warning_days,
                 cfg.critical_days,
                 row.silence_secs,

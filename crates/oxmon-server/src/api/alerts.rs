@@ -437,10 +437,15 @@ async fn active_alerts(
 }
 
 /// 告警统计摘要。
+///
+/// 可选查询参数 `hours`（默认 24）控制统计时间范围。
 #[utoipa::path(
     get,
     path = "/v1/alerts/summary",
     tag = "Alerts",
+    params(
+        ("hours" = Option<u64>, Query, description = "统计时间范围（小时），默认 24")
+    ),
     security(("bearer_auth" = [])),
     responses(
         (status = 200, description = "告警统计摘要"),
@@ -450,9 +455,14 @@ async fn active_alerts(
 async fn alert_summary(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
+    let hours: u64 = params
+        .get("hours")
+        .and_then(|h| h.parse().ok())
+        .unwrap_or(24);
     let to = Utc::now();
-    let from = to - chrono::Duration::days(1);
+    let from = to - chrono::Duration::hours(hours as i64);
     match state.storage.query_alert_summary(from, to) {
         Ok(summary) => success_response(StatusCode::OK, &trace_id, summary),
         Err(e) => {

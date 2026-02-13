@@ -1,9 +1,10 @@
 use crate::AlertRule;
 use chrono::{DateTime, Duration, Utc};
-use oxmon_common::types::{AlertEvent, MetricDataPoint, Severity};
+use oxmon_common::types::{format_labels, AlertEvent, MetricDataPoint, Severity};
 
 pub struct TrendPredictionRule {
     pub id: String,
+    pub name: String,
     pub metric: String,
     pub agent_pattern: String,
     pub severity: Severity,
@@ -16,6 +17,10 @@ pub struct TrendPredictionRule {
 impl AlertRule for TrendPredictionRule {
     fn id(&self) -> &str {
         &self.id
+    }
+
+    fn name(&self) -> &str {
+        &self.name
     }
 
     fn metric(&self) -> &str {
@@ -88,22 +93,31 @@ impl AlertRule for TrendPredictionRule {
         let breach_time = now + Duration::seconds(time_to_threshold as i64);
         let hours_remaining = time_to_threshold / 3600.0;
         let last = window.last()?;
+        let labels_str = format_labels(&last.labels);
+        let labels_display = if labels_str.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", labels_str)
+        };
 
         Some(AlertEvent {
             id: oxmon_common::id::next_id(),
             rule_id: self.id.clone(),
+            rule_name: self.name.clone(),
             agent_id: last.agent_id.clone(),
             metric_name: self.metric.clone(),
             severity: self.severity,
             message: format!(
-                "{} predicted to reach {:.1} in {:.1} hours on {}",
-                self.metric, self.predict_threshold, hours_remaining, last.agent_id,
+                "{}{} predicted to reach {:.1} in {:.1} hours on {}",
+                self.metric, labels_display, self.predict_threshold, hours_remaining, last.agent_id,
             ),
             value: last.value,
             threshold: self.predict_threshold,
             timestamp: now,
             predicted_breach: Some(breach_time),
             status: 1,
+            labels: last.labels.clone(),
+            first_triggered_at: None,
             created_at: now,
             updated_at: now,
         })

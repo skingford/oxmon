@@ -68,6 +68,8 @@ impl std::str::FromStr for Severity {
 pub struct AlertEvent {
     pub id: String,
     pub rule_id: String,
+    /// Human-readable rule name (e.g., "生产环境 CPU 过高")
+    pub rule_name: String,
     pub agent_id: String,
     pub metric_name: String,
     pub severity: Severity,
@@ -79,8 +81,40 @@ pub struct AlertEvent {
     pub predicted_breach: Option<DateTime<Utc>>,
     /// Status: 1=未处理, 2=已确认, 3=已处理
     pub status: u8,
+    /// Labels from the triggering metric data point (e.g., mount=/data, interface=eth0)
+    pub labels: HashMap<String, String>,
+    /// Timestamp when this alert was first triggered (for recovery tracking)
+    pub first_triggered_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Format labels map into a human-readable string.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::HashMap;
+/// use oxmon_common::types::format_labels;
+///
+/// let mut labels = HashMap::new();
+/// labels.insert("mount".to_string(), "/data".to_string());
+/// labels.insert("device".to_string(), "sda1".to_string());
+/// let s = format_labels(&labels);
+/// // Output contains both key=value pairs separated by ", "
+/// assert!(s.contains("mount=/data"));
+/// assert!(s.contains("device=sda1"));
+/// ```
+pub fn format_labels(labels: &HashMap<String, String>) -> String {
+    if labels.is_empty() {
+        return String::new();
+    }
+    let mut pairs: Vec<String> = labels
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
+    pairs.sort();
+    pairs.join(", ")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

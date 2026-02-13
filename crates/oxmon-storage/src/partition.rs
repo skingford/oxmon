@@ -28,6 +28,7 @@ const ALERTS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS alert_events (
     id TEXT PRIMARY KEY,
     rule_id TEXT NOT NULL,
+    rule_name TEXT NOT NULL,
     agent_id TEXT NOT NULL,
     metric_name TEXT NOT NULL,
     severity TEXT NOT NULL,
@@ -36,6 +37,8 @@ CREATE TABLE IF NOT EXISTS alert_events (
     threshold REAL NOT NULL,
     timestamp INTEGER NOT NULL,
     predicted_breach INTEGER,
+    labels TEXT NOT NULL,
+    first_triggered_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -256,10 +259,13 @@ fn migrate_partition(conn: &Connection) {
     let _ = conn.execute_batch("ALTER TABLE metrics ADD COLUMN id TEXT;");
     let _ = conn.execute_batch("ALTER TABLE metrics ADD COLUMN created_at INTEGER;");
     let _ = conn.execute_batch("ALTER TABLE metrics ADD COLUMN updated_at INTEGER;");
-    // alert_events table: add created_at, updated_at, status
+    // alert_events table: add created_at, updated_at, status, rule_name, labels, first_triggered_at
     let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN created_at INTEGER;");
     let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN updated_at INTEGER;");
     let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN status TEXT DEFAULT 'open';");
+    let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN rule_name TEXT NOT NULL DEFAULT '';");
+    let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN labels TEXT NOT NULL DEFAULT '{}';");
+    let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN first_triggered_at INTEGER;");
 }
 
 #[cfg(test)]

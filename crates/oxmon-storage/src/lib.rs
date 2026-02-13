@@ -165,6 +165,10 @@ pub struct AlertSummary {
     pub total: u64,
     pub by_severity: std::collections::HashMap<String, u64>,
     pub by_rule: std::collections::HashMap<String, u64>,
+    pub by_agent: std::collections::HashMap<String, u64>,
+    pub by_metric: std::collections::HashMap<String, u64>,
+    pub active_count: u64,
+    pub recovered_count: u64,
 }
 
 /// Information about a storage partition (daily SQLite database).

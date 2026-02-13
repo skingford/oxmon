@@ -95,9 +95,17 @@ pub struct SmsChannel {
 
 impl SmsChannel {
     fn format_message(alert: &AlertEvent) -> String {
+        let status_tag = if alert.status == 3 { "[RECOVERED]" } else { "" };
+        let rule_display = if alert.rule_name.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", alert.rule_name)
+        };
         format!(
-            "[oxmon][{severity}] {agent}: {message}",
+            "[oxmon][{severity}]{status_tag}{rule_display} {agent}: {message}",
             severity = alert.severity,
+            status_tag = status_tag,
+            rule_display = rule_display,
             agent = alert.agent_id,
             message = alert.message,
         )

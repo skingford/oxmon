@@ -15,6 +15,7 @@ enum Scenario {
     Rate,
     Trend,
     Cert,
+    Recovery,
     All,
 }
 
@@ -26,13 +27,14 @@ impl Scenario {
             "rate" => Ok(Self::Rate),
             "trend" => Ok(Self::Trend),
             "cert" => Ok(Self::Cert),
+            "recovery" => Ok(Self::Recovery),
             "all" => Ok(Self::All),
             _ => bail!("unknown scenario: {value}"),
         }
     }
 
     fn names() -> &'static [&'static str] {
-        &["all", "baseline", "threshold", "rate", "trend", "cert"]
+        &["all", "baseline", "threshold", "rate", "trend", "cert", "recovery"]
     }
 
     fn as_str(self) -> &'static str {
@@ -42,6 +44,7 @@ impl Scenario {
             Self::Rate => "rate",
             Self::Trend => "trend",
             Self::Cert => "cert",
+            Self::Recovery => "recovery",
             Self::All => "all",
         }
     }
@@ -114,7 +117,7 @@ impl TokenResolver {
 
 fn usage() {
     println!(
-        "Usage:\n  oxmon-mock-report [options]\n\nOptions:\n  --server-endpoint <host:port>  gRPC endpoint (default: 127.0.0.1:9090)\n  --scenario <name>              all|baseline|threshold|rate|trend|cert (default: all)\n  --agent-count <n>              baseline agent count (default: 5)\n  --agent-prefix <prefix>        agent prefix (default: mock)\n  --pause-ms <n>                 pause between batches (default: 120)\n  --auth-token <token>           one token for all agents\n  --auth-token-file <path>       agent token map file: agent_id=token\n  --print-payload                print each batch payload summary\n  --list-scenarios               print supported scenarios\n  -h, --help                     show this help"
+        "Usage:\n  oxmon-mock-report [options]\n\nOptions:\n  --server-endpoint <host:port>  gRPC endpoint (default: 127.0.0.1:9090)\n  --scenario <name>              all|baseline|threshold|rate|trend|cert|recovery (default: all)\n  --agent-count <n>              baseline agent count (default: 5)\n  --agent-prefix <prefix>        agent prefix (default: mock)\n  --pause-ms <n>                 pause between batches (default: 120)\n  --auth-token <token>           one token for all agents\n  --auth-token-file <path>       agent token map file: agent_id=token\n  --print-payload                print each batch payload summary\n  --list-scenarios               print supported scenarios\n  -h, --help                     show this help"
     );
 }
 
@@ -254,6 +257,16 @@ fn build_batch(agent_id: &str, data_points: Vec<MetricDataPointProto>) -> Metric
     }
 }
 
+/// Generates a realistic baseline batch matching real collector output.
+///
+/// Real agent collects:
+///   CPU:     cpu.usage (global), cpu.core_usage * N cores
+///   Memory:  memory.total, memory.used, memory.available, memory.used_percent,
+///            memory.swap_total, memory.swap_used, memory.swap_percent
+///   Load:    system.load_1, system.load_5, system.load_15, system.uptime
+///   Disk:    disk.total, disk.used, disk.available, disk.used_percent  (per mount)
+///   Network: network.bytes_recv, network.bytes_sent,
+///            network.packets_recv, network.packets_sent  (per interface)
 fn generate_baseline_batches(config: &Config, now_ms: i64) -> Vec<BatchPlan> {
     let width = config.agent_count.to_string().len().max(2);
     (1..=config.agent_count)
@@ -264,182 +277,239 @@ fn generate_baseline_batches(config: &Config, now_ms: i64) -> Vec<BatchPlan> {
                 width = width
             );
             let seed = index as f64;
-            let points = vec![
-                point(
-                    now_ms,
-                    &agent_id,
-                    "cpu.usage",
-                    28.0 + (seed * 11.0) % 30.0,
-                    HashMap::new(),
-                ),
-                point(
-                    now_ms,
-                    &agent_id,
-                    "memory.used_percent",
-                    42.0 + (seed * 7.0) % 25.0,
-                    HashMap::new(),
-                ),
-                point(
-                    now_ms,
-                    &agent_id,
-                    "disk.used_percent",
-                    50.0 + (seed * 5.0) % 20.0,
-                    HashMap::new(),
-                ),
-                point(
-                    now_ms,
-                    &agent_id,
-                    "system.load_1",
-                    0.4 + (seed * 0.21) % 1.2,
-                    HashMap::new(),
-                ),
-                point(
-                    now_ms,
-                    &agent_id,
-                    "network.bytes_recv",
-                    12_000.0 + seed * 350.0,
-                    labels(&[("interface", "eth0")]),
-                ),
-                point(
-                    now_ms,
-                    &agent_id,
-                    "network.bytes_sent",
-                    8_500.0 + seed * 280.0,
-                    labels(&[("interface", "eth0")]),
-                ),
-            ];
+            let mut points = Vec::new();
+
+            // ── CPU ──
+            let cpu_usage = 28.0 + (seed * 11.0) % 30.0;
+            points.push(point(now_ms, &agent_id, "cpu.usage", cpu_usage, HashMap::new()));
+            // 4 cores
+            for core in 0..4u32 {
+                let core_usage = cpu_usage + (core as f64 * 5.3 + seed * 3.7) % 20.0 - 10.0;
+                points.push(point(
+                    now_ms, &agent_id, "cpu.core_usage",
+                    core_usage.clamp(0.0, 100.0),
+                    labels(&[("core", &core.to_string())]),
+                ));
+            }
+
+            // ── Memory ──
+            let mem_total = 16_000_000_000.0; // 16 GB
+            let mem_used_pct = 42.0 + (seed * 7.0) % 25.0;
+            let mem_used = mem_total * mem_used_pct / 100.0;
+            let mem_available = mem_total - mem_used;
+            points.push(point(now_ms, &agent_id, "memory.total", mem_total, HashMap::new()));
+            points.push(point(now_ms, &agent_id, "memory.used", mem_used, HashMap::new()));
+            points.push(point(now_ms, &agent_id, "memory.available", mem_available, HashMap::new()));
+            points.push(point(now_ms, &agent_id, "memory.used_percent", mem_used_pct, HashMap::new()));
+            points.push(point(now_ms, &agent_id, "memory.swap_total", 4_000_000_000.0, HashMap::new()));
+            points.push(point(now_ms, &agent_id, "memory.swap_used", 200_000_000.0 + seed * 50_000_000.0, HashMap::new()));
+            points.push(point(now_ms, &agent_id, "memory.swap_percent", 5.0 + seed * 1.25, HashMap::new()));
+
+            // ── Load ──
+            points.push(point(now_ms, &agent_id, "system.load_1", 0.4 + (seed * 0.21) % 1.2, HashMap::new()));
+            points.push(point(now_ms, &agent_id, "system.load_5", 0.5 + (seed * 0.15) % 0.8, HashMap::new()));
+            points.push(point(now_ms, &agent_id, "system.load_15", 0.3 + (seed * 0.1) % 0.5, HashMap::new()));
+            points.push(point(now_ms, &agent_id, "system.uptime", 86400.0 * (10.0 + seed), HashMap::new()));
+
+            // ── Disk (two mounts: / and /data) ──
+            let root_labels = labels(&[("mount", "/")]);
+            let root_total = 100_000_000_000.0; // 100 GB
+            let root_used_pct = 35.0 + (seed * 3.0) % 15.0;
+            let root_used = root_total * root_used_pct / 100.0;
+            points.push(point(now_ms, &agent_id, "disk.total", root_total, root_labels.clone()));
+            points.push(point(now_ms, &agent_id, "disk.used", root_used, root_labels.clone()));
+            points.push(point(now_ms, &agent_id, "disk.available", root_total - root_used, root_labels.clone()));
+            points.push(point(now_ms, &agent_id, "disk.used_percent", root_used_pct, root_labels));
+
+            let data_labels = labels(&[("mount", "/data")]);
+            let data_total = 500_000_000_000.0; // 500 GB
+            let data_used_pct = 50.0 + (seed * 5.0) % 20.0;
+            let data_used = data_total * data_used_pct / 100.0;
+            points.push(point(now_ms, &agent_id, "disk.total", data_total, data_labels.clone()));
+            points.push(point(now_ms, &agent_id, "disk.used", data_used, data_labels.clone()));
+            points.push(point(now_ms, &agent_id, "disk.available", data_total - data_used, data_labels.clone()));
+            points.push(point(now_ms, &agent_id, "disk.used_percent", data_used_pct, data_labels));
+
+            // ── Network (eth0) ──
+            let eth0_labels = labels(&[("interface", "eth0")]);
+            points.push(point(now_ms, &agent_id, "network.bytes_recv", 12_000.0 + seed * 350.0, eth0_labels.clone()));
+            points.push(point(now_ms, &agent_id, "network.bytes_sent", 8_500.0 + seed * 280.0, eth0_labels.clone()));
+            points.push(point(now_ms, &agent_id, "network.packets_recv", 80.0 + seed * 12.0, eth0_labels.clone()));
+            points.push(point(now_ms, &agent_id, "network.packets_sent", 55.0 + seed * 9.0, eth0_labels));
 
             BatchPlan {
                 scenario: Scenario::Baseline,
-                description: "baseline metrics".to_string(),
+                description: format!("baseline metrics ({} points)", points.len()),
                 batch: build_batch(&agent_id, points),
             }
         })
         .collect()
 }
 
-fn generate_threshold_batch(config: &Config, now_ms: i64) -> BatchPlan {
+/// High CPU sustained above threshold.
+fn generate_threshold_batch(config: &Config, now_ms: i64) -> Vec<BatchPlan> {
     let agent_id = format!("{}-threshold", config.agent_prefix);
-    let points = vec![
-        point(
-            now_ms - 20_000,
-            &agent_id,
-            "cpu.usage",
-            96.0,
-            HashMap::new(),
-        ),
-        point(
-            now_ms - 10_000,
-            &agent_id,
-            "cpu.usage",
-            97.0,
-            HashMap::new(),
-        ),
-        point(
-            now_ms - 1_000,
-            &agent_id,
-            "cpu.usage",
-            95.0,
-            HashMap::new(),
-        ),
+
+    // CPU threshold (global)
+    let cpu_points = vec![
+        point(now_ms - 20_000, &agent_id, "cpu.usage", 96.0, HashMap::new()),
+        point(now_ms - 10_000, &agent_id, "cpu.usage", 97.0, HashMap::new()),
+        point(now_ms - 1_000, &agent_id, "cpu.usage", 95.0, HashMap::new()),
     ];
 
-    BatchPlan {
-        scenario: Scenario::Threshold,
-        description: "high cpu threshold sample".to_string(),
-        batch: build_batch(&agent_id, points),
-    }
+    // Disk threshold on /data mount
+    let mount_labels = labels(&[("mount", "/data")]);
+    let disk_points = vec![
+        point(now_ms - 20_000, &agent_id, "disk.used_percent", 92.0, mount_labels.clone()),
+        point(now_ms - 10_000, &agent_id, "disk.used_percent", 93.0, mount_labels.clone()),
+        point(now_ms - 1_000, &agent_id, "disk.used_percent", 94.0, mount_labels),
+    ];
+
+    vec![
+        BatchPlan {
+            scenario: Scenario::Threshold,
+            description: "high cpu threshold (sustained > 90%)".to_string(),
+            batch: build_batch(&agent_id, cpu_points),
+        },
+        BatchPlan {
+            scenario: Scenario::Threshold,
+            description: "high disk threshold on /data (sustained > 90%)".to_string(),
+            batch: build_batch(&agent_id, disk_points),
+        },
+    ]
 }
 
+/// Memory spike: sudden jump triggers rate-of-change alert.
 fn generate_rate_batch(config: &Config, now_ms: i64) -> BatchPlan {
     let agent_id = format!("{}-rate", config.agent_prefix);
     let points = vec![
-        point(
-            now_ms - 60_000,
-            &agent_id,
-            "memory.used_percent",
-            38.0,
-            HashMap::new(),
-        ),
-        point(
-            now_ms,
-            &agent_id,
-            "memory.used_percent",
-            82.0,
-            HashMap::new(),
-        ),
+        point(now_ms - 60_000, &agent_id, "memory.used_percent", 38.0, HashMap::new()),
+        point(now_ms, &agent_id, "memory.used_percent", 82.0, HashMap::new()),
     ];
 
     BatchPlan {
         scenario: Scenario::Rate,
-        description: "rate-of-change spike sample".to_string(),
+        description: "rate-of-change spike: memory 38% -> 82%".to_string(),
         batch: build_batch(&agent_id, points),
     }
 }
 
+/// Linearly increasing disk usage predicts breach.
 fn generate_trend_batch(config: &Config, now_ms: i64) -> BatchPlan {
     let agent_id = format!("{}-trend", config.agent_prefix);
+    let mount_labels = labels(&[("mount", "/data")]);
     let points: Vec<MetricDataPointProto> = (0..10)
         .map(|index| {
             let timestamp_ms = now_ms - 90_000 + (index as i64 * 10_000);
             let value = 68.0 + index as f64 * 1.8;
-            point(
-                timestamp_ms,
-                &agent_id,
-                "disk.used_percent",
-                value,
-                labels(&[("mount", "/")]),
-            )
+            point(timestamp_ms, &agent_id, "disk.used_percent", value, mount_labels.clone())
         })
         .collect();
 
     BatchPlan {
         scenario: Scenario::Trend,
-        description: "trend prediction sample".to_string(),
+        description: "trend prediction: /data disk 68% -> 84% over 90s".to_string(),
         batch: build_batch(&agent_id, points),
     }
 }
 
+/// Certificate expiration and invalid cert.
 fn generate_cert_batch(now_ms: i64) -> BatchPlan {
     let agent_id = "cert-checker".to_string();
     let points = vec![
         point(
-            now_ms,
-            &agent_id,
-            "certificate.days_until_expiry",
-            5.0,
+            now_ms, &agent_id,
+            "certificate.days_until_expiry", 5.0,
             labels(&[("domain", "expiring.example.com")]),
         ),
         point(
-            now_ms,
-            &agent_id,
-            "certificate.is_valid",
-            0.0,
+            now_ms, &agent_id,
+            "certificate.days_until_expiry", 25.0,
+            labels(&[("domain", "warning.example.com")]),
+        ),
+        point(
+            now_ms, &agent_id,
+            "certificate.days_until_expiry", -3.0,
+            labels(&[("domain", "expired.example.com")]),
+        ),
+        point(
+            now_ms, &agent_id,
+            "certificate.is_valid", 0.0,
             labels(&[("domain", "invalid.example.com")]),
         ),
     ];
 
     BatchPlan {
         scenario: Scenario::Cert,
-        description: "certificate expiration and invalid cert sample".to_string(),
+        description: "cert: expiring(5d) + warning(25d) + expired(-3d) + invalid".to_string(),
         batch: build_batch(&agent_id, points),
     }
+}
+
+/// Recovery scenario: first fires an alert, then sends normal data to trigger auto-recovery.
+///
+/// Batch 1: 3 consecutive high CPU points → triggers threshold alert
+/// Batch 2-4: 3 consecutive normal CPU points → triggers auto-recovery
+fn generate_recovery_batches(config: &Config, now_ms: i64) -> Vec<BatchPlan> {
+    let agent_id = format!("{}-recovery", config.agent_prefix);
+
+    // Batch 1: sustained high CPU → fires alert
+    let fire_points = vec![
+        point(now_ms - 30_000, &agent_id, "cpu.usage", 96.0, HashMap::new()),
+        point(now_ms - 20_000, &agent_id, "cpu.usage", 97.0, HashMap::new()),
+        point(now_ms - 10_000, &agent_id, "cpu.usage", 95.0, HashMap::new()),
+    ];
+
+    // Batch 2-4: normal CPU (3 consecutive OKs → triggers recovery)
+    let recovery_points: Vec<Vec<MetricDataPointProto>> = (1..=3)
+        .map(|i| {
+            vec![point(
+                now_ms + (i * 10_000),
+                &agent_id,
+                "cpu.usage",
+                35.0 + i as f64 * 2.0,
+                HashMap::new(),
+            )]
+        })
+        .collect();
+
+    let mut plans = vec![BatchPlan {
+        scenario: Scenario::Recovery,
+        description: "recovery step 1/4: high cpu fires alert".to_string(),
+        batch: build_batch(&agent_id, fire_points),
+    }];
+
+    for (i, pts) in recovery_points.into_iter().enumerate() {
+        plans.push(BatchPlan {
+            scenario: Scenario::Recovery,
+            description: format!(
+                "recovery step {}/4: normal cpu (consecutive ok {})",
+                i + 2,
+                i + 1
+            ),
+            batch: build_batch(&agent_id, pts),
+        });
+    }
+
+    plans
 }
 
 fn generate_plans(config: &Config) -> Vec<BatchPlan> {
     let now_ms = Utc::now().timestamp_millis();
     match config.scenario {
         Scenario::Baseline => generate_baseline_batches(config, now_ms),
-        Scenario::Threshold => vec![generate_threshold_batch(config, now_ms)],
+        Scenario::Threshold => generate_threshold_batch(config, now_ms),
         Scenario::Rate => vec![generate_rate_batch(config, now_ms)],
         Scenario::Trend => vec![generate_trend_batch(config, now_ms)],
         Scenario::Cert => vec![generate_cert_batch(now_ms)],
+        Scenario::Recovery => generate_recovery_batches(config, now_ms),
         Scenario::All => {
             let mut plans = generate_baseline_batches(config, now_ms);
-            plans.push(generate_threshold_batch(config, now_ms));
+            plans.extend(generate_threshold_batch(config, now_ms));
             plans.push(generate_rate_batch(config, now_ms));
             plans.push(generate_trend_batch(config, now_ms));
             plans.push(generate_cert_batch(now_ms));
+            plans.extend(generate_recovery_batches(config, now_ms));
             plans
         }
     }
@@ -549,11 +619,11 @@ async fn run(config: Config) -> Result<()> {
                 success_batches += 1;
                 success_points += point_count;
                 println!(
-                    "[mock-report][ok] scenario={} agent={} points={} message={}",
+                    "[mock-report][ok] scenario={} agent={} points={} desc=\"{}\"",
                     plan.scenario.as_str(),
                     agent_id,
                     point_count,
-                    report.message
+                    plan.description
                 );
             }
             Ok(report) => {

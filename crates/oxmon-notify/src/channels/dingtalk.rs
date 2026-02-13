@@ -48,23 +48,42 @@ impl DingTalkChannel {
     }
 
     fn format_markdown(alert: &AlertEvent) -> (String, String) {
+        let status_tag = if alert.status == 3 { "[RECOVERED]" } else { "" };
+        let rule_display = if alert.rule_name.is_empty() {
+            alert.metric_name.clone()
+        } else {
+            alert.rule_name.clone()
+        };
         let title = format!(
-            "[oxmon][{}] {} - {}",
-            alert.severity, alert.metric_name, alert.agent_id
+            "[oxmon][{}]{} {} - {}",
+            alert.severity, status_tag, rule_display, alert.agent_id
         );
+        let labels_str = oxmon_common::types::format_labels(&alert.labels);
+        let labels_line = if labels_str.is_empty() {
+            String::new()
+        } else {
+            format!("\n- **Labels**: {}", labels_str)
+        };
+        let rule_line = if alert.rule_name.is_empty() {
+            String::new()
+        } else {
+            format!("\n- **Rule**: {}", alert.rule_name)
+        };
         let text = format!(
             "### {title}\n\n\
-             - **Severity**: {severity}\n\
+             - **Severity**: {severity}{rule_line}\n\
              - **Agent**: {agent}\n\
-             - **Metric**: {metric}\n\
+             - **Metric**: {metric}{labels_line}\n\
              - **Value**: {value:.2}\n\
              - **Threshold**: {threshold:.2}\n\
              - **Time**: {time}\n\n\
              > {message}",
             title = title,
             severity = alert.severity,
+            rule_line = rule_line,
             agent = alert.agent_id,
             metric = alert.metric_name,
+            labels_line = labels_line,
             value = alert.value,
             threshold = alert.threshold,
             time = alert.timestamp.to_rfc3339(),

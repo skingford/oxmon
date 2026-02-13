@@ -23,18 +23,39 @@ impl WeixinChannel {
     }
 
     fn format_markdown(alert: &AlertEvent) -> String {
+        let status_tag = if alert.status == 3 { "[RECOVERED]" } else { "" };
+        let rule_display = if alert.rule_name.is_empty() {
+            alert.metric_name.clone()
+        } else {
+            alert.rule_name.clone()
+        };
+        let labels_str = oxmon_common::types::format_labels(&alert.labels);
+        let labels_line = if labels_str.is_empty() {
+            String::new()
+        } else {
+            format!("\n> **Labels**: {}", labels_str)
+        };
+        let rule_line = if alert.rule_name.is_empty() {
+            String::new()
+        } else {
+            format!("\n> **Rule**: {}", alert.rule_name)
+        };
         format!(
-            "### [oxmon][{severity}] {metric} - {agent}\n\
-             > **Severity**: {severity}\n\
+            "### [oxmon][{severity}]{status_tag} {rule_display} - {agent}\n\
+             > **Severity**: {severity}{rule_line}\n\
              > **Agent**: {agent}\n\
-             > **Metric**: {metric}\n\
+             > **Metric**: {metric}{labels_line}\n\
              > **Value**: {value:.2}\n\
              > **Threshold**: {threshold:.2}\n\
              > **Time**: {time}\n\n\
              {message}",
             severity = alert.severity,
+            status_tag = status_tag,
+            rule_display = rule_display,
+            rule_line = rule_line,
             agent = alert.agent_id,
             metric = alert.metric_name,
+            labels_line = labels_line,
             value = alert.value,
             threshold = alert.threshold,
             time = alert.timestamp.to_rfc3339(),

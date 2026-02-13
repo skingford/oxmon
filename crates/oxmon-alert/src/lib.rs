@@ -26,6 +26,9 @@ pub trait AlertRule: Send + Sync {
     /// Unique identifier for this rule instance (e.g., `"cpu-high-1"`).
     fn id(&self) -> &str;
 
+    /// Human-readable name for this rule (e.g., `"生产环境 CPU 过高"`).
+    fn name(&self) -> &str;
+
     /// The metric name this rule applies to (e.g., `"cpu.usage"`).
     fn metric(&self) -> &str;
 

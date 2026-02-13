@@ -32,10 +32,14 @@ impl WebhookChannel {
                 .replace("{{message}}", &alert.message)
                 .replace("{{threshold}}", &format!("{:.2}", alert.threshold))
                 .replace("{{timestamp}}", &alert.timestamp.to_rfc3339())
+                .replace("{{rule_name}}", &alert.rule_name)
+                .replace("{{labels}}", &oxmon_common::types::format_labels(&alert.labels))
+                .replace("{{status}}", if alert.status == 3 { "recovered" } else { "firing" })
         } else {
             serde_json::json!({
                 "alert_id": alert.id,
                 "rule_id": alert.rule_id,
+                "rule_name": alert.rule_name,
                 "agent_id": alert.agent_id,
                 "metric": alert.metric_name,
                 "severity": alert.severity.to_string(),
@@ -43,6 +47,8 @@ impl WebhookChannel {
                 "value": alert.value,
                 "threshold": alert.threshold,
                 "timestamp": alert.timestamp.to_rfc3339(),
+                "labels": alert.labels,
+                "status": if alert.status == 3 { "recovered" } else { "firing" },
             })
             .to_string()
         }

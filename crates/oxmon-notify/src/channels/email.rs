@@ -40,11 +40,26 @@ impl EmailChannel {
     }
 
     fn format_body(alert: &AlertEvent) -> String {
+        let labels_str = oxmon_common::types::format_labels(&alert.labels);
+        let labels_line = if labels_str.is_empty() {
+            String::new()
+        } else {
+            format!("\nLabels: {}", labels_str)
+        };
+        let rule_line = if alert.rule_name.is_empty() {
+            String::new()
+        } else {
+            format!("\nRule: {}", alert.rule_name)
+        };
+        let status_tag = if alert.status == 3 { " [RECOVERED]" } else { "" };
         format!(
-            "Alert: {severity}\nAgent: {agent}\nMetric: {metric}\nValue: {value:.2}\nThreshold: {threshold:.2}\nMessage: {message}\nTime: {time}",
+            "Alert: {severity}{status_tag}{rule_line}\nAgent: {agent}\nMetric: {metric}{labels_line}\nValue: {value:.2}\nThreshold: {threshold:.2}\nMessage: {message}\nTime: {time}",
             severity = alert.severity,
+            status_tag = status_tag,
+            rule_line = rule_line,
             agent = alert.agent_id,
             metric = alert.metric_name,
+            labels_line = labels_line,
             value = alert.value,
             threshold = alert.threshold,
             message = alert.message,
@@ -60,9 +75,15 @@ impl NotificationChannel for EmailChannel {
             return Ok(());
         }
 
+        let status_tag = if alert.status == 3 { "[RECOVERED]" } else { "" };
+        let rule_display = if alert.rule_name.is_empty() {
+            alert.metric_name.clone()
+        } else {
+            alert.rule_name.clone()
+        };
         let subject = format!(
-            "[oxmon][{}] {} - {}",
-            alert.severity, alert.metric_name, alert.agent_id
+            "[oxmon][{}]{} {} - {}",
+            alert.severity, status_tag, rule_display, alert.agent_id
         );
         let body = Self::format_body(alert);
 

@@ -172,6 +172,7 @@ impl NotificationManager {
                 let summary = AlertEvent {
                     id: format!("agg-{}-{}", events[0].rule_id, now.timestamp_millis()),
                     rule_id: events[0].rule_id.clone(),
+                    rule_name: events[0].rule_name.clone(),
                     agent_id: if events.iter().all(|e| e.agent_id == events[0].agent_id) {
                         events[0].agent_id.clone()
                     } else {
@@ -201,6 +202,8 @@ impl NotificationManager {
                     timestamp: now,
                     predicted_breach: None,
                     status: 1,
+                    labels: events[0].labels.clone(),
+                    first_triggered_at: None,
                     created_at: now,
                     updated_at: now,
                 };

@@ -78,6 +78,7 @@ fn write_and_query_alert_events() {
     let event = AlertEvent {
         id: "test-alert-1".to_string(),
         rule_id: "high-cpu".to_string(),
+        rule_name: "CPU 过高".to_string(),
         agent_id: "web-01".to_string(),
         metric_name: "cpu.usage".to_string(),
         severity: Severity::Critical,
@@ -87,6 +88,8 @@ fn write_and_query_alert_events() {
         timestamp: now,
         predicted_breach: None,
         status: 1,
+        labels: HashMap::new(),
+        first_triggered_at: None,
         created_at: now,
         updated_at: now,
     };
@@ -118,6 +121,7 @@ fn query_alert_history_filters() {
         let event = AlertEvent {
             id: format!("alert-{i}"),
             rule_id: "rule-1".to_string(),
+            rule_name: "Test Rule".to_string(),
             agent_id: if i < 2 { "web-01" } else { "db-01" }.to_string(),
             metric_name: "cpu.usage".to_string(),
             severity: if i == 0 {
@@ -131,6 +135,8 @@ fn query_alert_history_filters() {
             timestamp: ts,
             predicted_breach: None,
             status: 1,
+            labels: HashMap::new(),
+            first_triggered_at: None,
             created_at: ts,
             updated_at: ts,
         };
@@ -190,6 +196,7 @@ fn pagination() {
         let event = AlertEvent {
             id: format!("alert-{i}"),
             rule_id: "rule-1".to_string(),
+            rule_name: "Test Rule".to_string(),
             agent_id: "web-01".to_string(),
             metric_name: "cpu.usage".to_string(),
             severity: Severity::Warning,
@@ -199,6 +206,8 @@ fn pagination() {
             timestamp: ts,
             predicted_breach: None,
             status: 1,
+            labels: HashMap::new(),
+            first_triggered_at: None,
             created_at: ts,
             updated_at: ts,
         };

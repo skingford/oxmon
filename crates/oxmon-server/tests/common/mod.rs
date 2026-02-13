@@ -51,6 +51,7 @@ pub fn build_test_context() -> Result<TestContext> {
 
     let rules: Vec<Box<dyn oxmon_alert::AlertRule>> = vec![Box::new(ThresholdRule {
         id: "test-threshold".to_string(),
+        name: "Test Threshold".to_string(),
         metric: "cpu.usage".to_string(),
         agent_pattern: "*".to_string(),
         severity: "warning".parse().expect("warning should parse"),
