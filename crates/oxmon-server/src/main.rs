@@ -17,9 +17,11 @@ use tracing_subscriber::EnvFilter;
 
 use oxmon_server::app;
 use oxmon_server::cert::scheduler::CertCheckScheduler;
+use oxmon_server::channel_seed;
 use oxmon_server::config::{self, SeedFile};
 use oxmon_server::grpc;
 use oxmon_server::rule_builder;
+use oxmon_server::rule_seed;
 use oxmon_server::state::{AgentRegistry, AppState};
 
 fn print_usage() {
@@ -389,10 +391,20 @@ async fn run_server(config_path: &str) -> Result<()> {
         }
     }
 
+    // Seed default alert rules (only when DB has none)
+    if let Err(e) = rule_seed::init_default_rules(&cert_store) {
+        tracing::error!(error = %e, "Failed to initialize default alert rules");
+    }
+
     // Load alert engine from DB
     let alert_engine = Arc::new(Mutex::new(AlertEngine::new(vec![])));
     if let Err(e) = rule_builder::reload_alert_engine(&cert_store, &alert_engine) {
         tracing::error!(error = %e, "Failed to load alert rules from DB");
+    }
+
+    // Seed default notification channels (only when DB has none, all disabled)
+    if let Err(e) = channel_seed::init_default_channels(&cert_store) {
+        tracing::error!(error = %e, "Failed to initialize default notification channels");
     }
 
     // Build notification manager backed by DB
