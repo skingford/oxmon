@@ -10,4 +10,5 @@ pub mod logging;
 pub mod openapi;
 pub mod rule_builder;
 pub mod rule_seed;
+pub mod runtime_seed;
 pub mod state;

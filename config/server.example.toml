@@ -30,12 +30,11 @@ default_password = "changeme"   # Default admin password (created on first start
 
 # Alert Rules
 #
-# Rules are now managed via REST API or the `init-rules` CLI:
+# Rules are managed via REST API or the `init-rules` CLI:
 #
 #   oxmon-server init-rules config/server.toml config/rules.seed.json
 #
 # See config/rules.seed.example.json for a seed file template.
-# On first startup, any TOML [[alert.rules]] below will be auto-migrated to the database.
 #
 # REST API endpoints:
 #   POST   /v1/alerts/rules              Create a rule
@@ -49,7 +48,7 @@ default_password = "changeme"   # Default admin password (created on first start
 
 # Notification
 #
-# Channels and silence windows are managed via REST API or the `init-channels` CLI:
+# Channels, silence windows, and runtime settings are managed via REST API or CLI:
 #
 #   oxmon-server init-channels config/server.toml config/channels.seed.json
 #
@@ -67,12 +66,10 @@ default_password = "changeme"   # Default admin password (created on first start
 #   DELETE /v1/notifications/silence-windows/{id}    Delete silence window
 #
 # Built-in channel types: email, webhook, sms, dingtalk, weixin
-
-[notification]
-# Aggregation window for batching similar alerts (seconds)
-aggregation_window_secs = 60
-# How many days to retain notification send logs (default: 30)
-log_retention_days = 30
+#
+# Runtime settings (aggregation_window_secs, log_retention_days) are stored in the database.
+# They are auto-initialized with default values on first startup and can be updated via REST API:
+#   GET/PUT /v1/system/configs  (filter by config_type="runtime")
 
 # Certificate Check Configuration
 # Server periodically checks TLS certificates for monitored domains.

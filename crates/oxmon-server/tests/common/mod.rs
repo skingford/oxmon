@@ -74,8 +74,6 @@ pub fn build_test_context() -> Result<TestContext> {
         data_dir: temp_dir.path().to_string_lossy().to_string(),
         retention_days: 7,
         require_agent_auth: false,
-        alert: Default::default(),
-        notification: Default::default(),
         cert_check: Default::default(),
         auth: Default::default(),
     };

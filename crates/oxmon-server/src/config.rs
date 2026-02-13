@@ -14,68 +14,9 @@ pub struct ServerConfig {
     pub require_agent_auth: bool,
 
     #[serde(default)]
-    pub alert: AlertConfig,
-    #[serde(default)]
-    pub notification: NotificationConfig,
-    #[serde(default)]
     pub cert_check: CertCheckConfig,
     #[serde(default)]
     pub auth: AuthConfig,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AlertConfig {
-    #[serde(default)]
-    pub rules: Vec<AlertRuleConfig>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AlertRuleConfig {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub rule_type: String,
-    pub metric: String,
-    #[serde(default = "default_agent_pattern")]
-    pub agent_pattern: String,
-    pub severity: String,
-
-    // Threshold rule fields
-    pub operator: Option<String>,
-    pub value: Option<f64>,
-    pub duration_secs: Option<u64>,
-
-    // Rate-of-change fields
-    pub rate_threshold: Option<f64>,
-    pub window_secs: Option<u64>,
-
-    // Trend prediction fields
-    pub predict_threshold: Option<f64>,
-    pub horizon_secs: Option<u64>,
-    pub min_data_points: Option<usize>,
-
-    // Cert expiration fields
-    pub warning_days: Option<i64>,
-    pub critical_days: Option<i64>,
-
-    #[serde(default = "default_silence_secs")]
-    pub silence_secs: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NotificationConfig {
-    #[serde(default = "default_aggregation_window_secs")]
-    pub aggregation_window_secs: u64,
-    #[serde(default = "default_log_retention_days")]
-    pub log_retention_days: u32,
-}
-
-impl Default for NotificationConfig {
-    fn default() -> Self {
-        Self {
-            aggregation_window_secs: default_aggregation_window_secs(),
-            log_retention_days: default_log_retention_days(),
-        }
-    }
 }
 
 // ---- Seed file types (used by `init-channels` CLI subcommand) ----
@@ -275,14 +216,6 @@ fn default_seed_min_severity() -> String {
 
 fn default_seed_enabled() -> bool {
     true
-}
-
-fn default_aggregation_window_secs() -> u64 {
-    60
-}
-
-fn default_log_retention_days() -> u32 {
-    30
 }
 
 fn default_require_agent_auth() -> bool {

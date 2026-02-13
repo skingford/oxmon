@@ -177,33 +177,3 @@ pub fn reload_alert_engine(
     Ok(count)
 }
 
-// ---- TOML config -> config_json conversion (for migration) ----
-
-/// Convert a TOML `AlertRuleConfig` into the `config_json` string for DB storage.
-pub fn config_to_json(r: &crate::config::AlertRuleConfig) -> String {
-    match r.rule_type.as_str() {
-        "threshold" => serde_json::json!({
-            "operator": r.operator.as_deref().unwrap_or("greater_than"),
-            "value": r.value.unwrap_or(0.0),
-            "duration_secs": r.duration_secs.unwrap_or(0),
-        })
-        .to_string(),
-        "rate_of_change" => serde_json::json!({
-            "rate_threshold": r.rate_threshold.unwrap_or(0.0),
-            "window_secs": r.window_secs.unwrap_or(300),
-        })
-        .to_string(),
-        "trend_prediction" => serde_json::json!({
-            "predict_threshold": r.predict_threshold.unwrap_or(0.0),
-            "horizon_secs": r.horizon_secs.unwrap_or(86400),
-            "min_data_points": r.min_data_points.unwrap_or(3),
-        })
-        .to_string(),
-        "cert_expiration" => serde_json::json!({
-            "warning_days": r.warning_days.unwrap_or(30),
-            "critical_days": r.critical_days.unwrap_or(7),
-        })
-        .to_string(),
-        _ => "{}".to_string(),
-    }
-}

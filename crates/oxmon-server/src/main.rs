@@ -22,6 +22,7 @@ use oxmon_server::config::{self, SeedFile};
 use oxmon_server::grpc;
 use oxmon_server::rule_builder;
 use oxmon_server::rule_seed;
+use oxmon_server::runtime_seed;
 use oxmon_server::state::{AgentRegistry, AppState};
 
 fn print_usage() {
@@ -348,49 +349,6 @@ async fn run_server(config_path: &str) -> Result<()> {
     let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(30)));
     let cert_store = Arc::new(CertStore::new(Path::new(&config.data_dir))?);
 
-    // Migrate TOML alert rules to DB (one-time, only when DB is empty)
-    if !config.alert.rules.is_empty() {
-        match cert_store.count_alert_rules() {
-            Ok(0) => {
-                tracing::info!(
-                    count = config.alert.rules.len(),
-                    "Migrating TOML alert rules to database"
-                );
-                for r in &config.alert.rules {
-                    let row = AlertRuleRow {
-                        id: oxmon_common::id::next_id(),
-                        name: r.name.clone(),
-                        rule_type: r.rule_type.clone(),
-                        metric: r.metric.clone(),
-                        agent_pattern: r.agent_pattern.clone(),
-                        severity: r.severity.clone(),
-                        enabled: true,
-                        config_json: rule_builder::config_to_json(r),
-                        silence_secs: r.silence_secs,
-                        source: "toml".to_string(),
-                        created_at: Utc::now(),
-                        updated_at: Utc::now(),
-                    };
-                    match cert_store.insert_alert_rule(&row) {
-                        Ok(_) => tracing::info!(name = %r.name, "Migrated alert rule"),
-                        Err(e) => {
-                            tracing::warn!(name = %r.name, error = %e, "Failed to migrate alert rule")
-                        }
-                    }
-                }
-            }
-            Ok(_) => {
-                tracing::info!(
-                    "Alert rules already exist in DB, skipping TOML migration. \
-                     TOML [[alert.rules]] is deprecated; manage rules via REST API or init-rules CLI."
-                );
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to check alert rules count");
-            }
-        }
-    }
-
     // Seed default alert rules (only when DB has none)
     if let Err(e) = rule_seed::init_default_rules(&cert_store) {
         tracing::error!(error = %e, "Failed to initialize default alert rules");
@@ -407,12 +365,19 @@ async fn run_server(config_path: &str) -> Result<()> {
         tracing::error!(error = %e, "Failed to initialize default notification channels");
     }
 
+    // Seed default runtime settings (notification aggregation window, log retention days)
+    if let Err(e) = runtime_seed::init_default_runtime_settings(&cert_store) {
+        tracing::error!(error = %e, "Failed to initialize default runtime settings");
+    }
+
     // Build notification manager backed by DB
     let registry = ChannelRegistry::default();
+    let aggregation_window_secs =
+        cert_store.get_runtime_setting_u64("notification_aggregation_window", 60);
     let notifier = Arc::new(NotificationManager::new(
         registry,
         cert_store.clone(),
-        config.notification.aggregation_window_secs,
+        aggregation_window_secs,
     ));
 
     // Load channels from DB
@@ -493,7 +458,6 @@ async fn run_server(config_path: &str) -> Result<()> {
 
     // Periodic cleanup task
     let retention_days = config.retention_days;
-    let log_retention_days = config.notification.log_retention_days;
     let cleanup_storage = storage.clone();
     let cleanup_cert_store = cert_store.clone();
     let cleanup_handle = tokio::spawn(async move {
@@ -507,6 +471,9 @@ async fn run_server(config_path: &str) -> Result<()> {
                 Err(e) => tracing::error!(error = %e, "Cleanup failed"),
                 _ => {}
             }
+            // Read log_retention_days from DB each time to allow dynamic updates
+            let log_retention_days =
+                cleanup_cert_store.get_runtime_setting_u32("notification_log_retention", 30);
             match cleanup_cert_store.cleanup_notification_logs(log_retention_days) {
                 Ok(removed) if removed > 0 => {
                     tracing::info!(removed, "Cleaned up expired notification logs")

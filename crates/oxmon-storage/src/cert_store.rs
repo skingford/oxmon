@@ -1615,6 +1615,38 @@ impl CertStore {
         })
     }
 
+    // ---- Runtime settings (stored in system_configs with config_type="runtime") ----
+
+    /// Get a runtime setting value from system_configs table.
+    /// Returns the parsed value from config_json, or the default if not found or parsing fails.
+    pub fn get_runtime_setting_u64(&self, config_key: &str, default: u64) -> u64 {
+        match self.get_system_config_by_key(config_key) {
+            Ok(Some(row)) if row.enabled && row.config_type == "runtime" => {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&row.config_json) {
+                    if let Some(value) = json.get("value").and_then(|v| v.as_u64()) {
+                        return value;
+                    }
+                }
+                default
+            }
+            _ => default,
+        }
+    }
+
+    pub fn get_runtime_setting_u32(&self, config_key: &str, default: u32) -> u32 {
+        match self.get_system_config_by_key(config_key) {
+            Ok(Some(row)) if row.enabled && row.config_type == "runtime" => {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&row.config_json) {
+                    if let Some(value) = json.get("value").and_then(|v| v.as_u64()) {
+                        return value as u32;
+                    }
+                }
+                default
+            }
+            _ => default,
+        }
+    }
+
     // ---- Silence windows CRUD ----
 
     pub fn insert_silence_window(&self, sw: &SilenceWindowRow) -> Result<SilenceWindowRow> {
