@@ -71,8 +71,42 @@ impl NotificationManager {
 
         let mut new_instances = HashMap::new();
         for (row, recipients) in channels_with_recipients {
-            let config: serde_json::Value = serde_json::from_str(&row.config_json)
-                .unwrap_or_else(|_| serde_json::json!({}));
+            // 如果有 system_config_id，从系统配置获取发送方配置
+            let config: serde_json::Value = if let Some(ref sc_id) = row.system_config_id {
+                match self.cert_store.get_system_config_by_id(sc_id) {
+                    Ok(Some(sc)) => {
+                        if !sc.enabled {
+                            tracing::warn!(
+                                channel_id = %row.id,
+                                system_config_id = %sc_id,
+                                "System config is disabled, skipping channel"
+                            );
+                            continue;
+                        }
+                        serde_json::from_str(&sc.config_json)
+                            .unwrap_or_else(|_| serde_json::json!({}))
+                    }
+                    Ok(None) => {
+                        tracing::error!(
+                            channel_id = %row.id,
+                            system_config_id = %sc_id,
+                            "System config not found, skipping channel"
+                        );
+                        continue;
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            channel_id = %row.id,
+                            error = %e,
+                            "Failed to load system config, skipping channel"
+                        );
+                        continue;
+                    }
+                }
+            } else {
+                serde_json::from_str(&row.config_json)
+                    .unwrap_or_else(|_| serde_json::json!({}))
+            };
 
             match self.registry.create_channel(&row.channel_type, &row.id, &config) {
                 Ok(channel) => {

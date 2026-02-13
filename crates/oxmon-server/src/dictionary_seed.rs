@@ -130,6 +130,16 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         items.push(make_system_item("recipient_type", key, label, None, order, Some(desc), &now));
     }
 
+    // ---- system_config_type: 系统配置类型 ----
+    order = 0;
+    for (key, label, desc) in [
+        ("email", "邮件发送配置", "SMTP 邮件发送方配置"),
+        ("sms", "短信发送配置", "短信供应商发送方配置"),
+    ] {
+        order += 1;
+        items.push(make_system_item("system_config_type", key, label, None, order, Some(desc), &now));
+    }
+
     items
 }
 
@@ -148,6 +158,7 @@ pub fn default_type_seed_items() -> Vec<DictionaryType> {
         ("metric_name", "系统指标名称", "可监控的系统指标"),
         ("rule_source", "规则来源", "告警规则的创建来源"),
         ("recipient_type", "接收人类型", "通知接收人的类型"),
+        ("system_config_type", "系统配置类型", "系统级发送方配置的类型"),
     ]
     .into_iter()
     .enumerate()

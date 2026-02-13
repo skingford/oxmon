@@ -696,6 +696,196 @@ async fn dictionary_endpoints_should_cover_crud_paths() {
 }
 
 #[tokio::test]
+async fn system_config_endpoints_should_cover_crud_paths() {
+    let ctx = build_test_context().expect("test context should build");
+    let token = login_and_get_token(&ctx.app).await;
+
+    // List (initially empty)
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/system/configs",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    let items: Vec<serde_json::Value> = decode_data(&body);
+    assert!(items.is_empty());
+
+    // Create an email system config
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/system/configs",
+        Some(&token),
+        Some(json!({
+            "config_key": "email_default",
+            "config_type": "email",
+            "display_name": "默认邮件配置",
+            "description": "公司 SMTP 服务器",
+            "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":465,\"smtp_username\":\"noreply@example.com\",\"smtp_password\":\"secret123\",\"from\":\"noreply@example.com\"}"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_ok_envelope(&body);
+    let config_id = body["data"]["id"].as_str().expect("id should exist").to_string();
+    assert_eq!(body["data"]["config_key"], "email_default");
+    assert_eq!(body["data"]["config_type"], "email");
+    // Password should be redacted
+    assert_eq!(body["data"]["config_json"]["smtp_password"], "***");
+    // Other fields should be visible
+    assert_eq!(body["data"]["config_json"]["smtp_host"], "smtp.example.com");
+
+    // Create duplicate config_key should fail
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/system/configs",
+        Some(&token),
+        Some(json!({
+            "config_key": "email_default",
+            "config_type": "email",
+            "display_name": "重复",
+            "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":465,\"from\":\"a@b.com\"}"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_err_envelope(&body, 1005);
+
+    // Create with invalid JSON should fail
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/system/configs",
+        Some(&token),
+        Some(json!({
+            "config_key": "bad_json",
+            "config_type": "email",
+            "display_name": "Bad",
+            "config_json": "not-json"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_err_envelope(&body, 1001);
+
+    // Get by id
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        &format!("/v1/system/configs/{config_id}"),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["config_key"], "email_default");
+    assert_eq!(body["data"]["config_json"]["smtp_password"], "***");
+
+    // Get non-existent
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/system/configs/nonexistent",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_err_envelope(&body, 1004);
+
+    // Update
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "PUT",
+        &format!("/v1/system/configs/{config_id}"),
+        Some(&token),
+        Some(json!({
+            "display_name": "更新后的邮件配置",
+            "enabled": false
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["display_name"], "更新后的邮件配置");
+    assert_eq!(body["data"]["enabled"], false);
+
+    // Update non-existent
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "PUT",
+        "/v1/system/configs/nonexistent",
+        Some(&token),
+        Some(json!({"display_name": "test"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_err_envelope(&body, 1004);
+
+    // Create SMS config with provider
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/system/configs",
+        Some(&token),
+        Some(json!({
+            "config_key": "sms_aliyun",
+            "config_type": "sms",
+            "provider": "aliyun",
+            "display_name": "阿里云短信",
+            "config_json": "{\"provider\":\"aliyun\",\"access_key_id\":\"LTAI5t\",\"access_key_secret\":\"mySecret\",\"sign_name\":\"oxmon\",\"template_code\":\"SMS_123\"}"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_ok_envelope(&body);
+    let sms_id = body["data"]["id"].as_str().expect("id should exist").to_string();
+    assert_eq!(body["data"]["provider"], "aliyun");
+    // Secret should be redacted
+    assert_eq!(body["data"]["config_json"]["access_key_secret"], "***");
+    // Non-secret should be visible
+    assert_eq!(body["data"]["config_json"]["access_key_id"], "LTAI5t");
+
+    // Delete
+    let (status, _, _) = request_no_body(
+        &ctx.app,
+        "DELETE",
+        &format!("/v1/system/configs/{config_id}"),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Delete again should 404
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "DELETE",
+        &format!("/v1/system/configs/{config_id}"),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_err_envelope(&body, 1004);
+
+    // Delete SMS config too
+    let (status, _, _) = request_no_body(
+        &ctx.app,
+        "DELETE",
+        &format!("/v1/system/configs/{sms_id}"),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Auth required
+    let (status, _, _) = request_no_body(&ctx.app, "GET", "/v1/system/configs", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn openapi_endpoints_should_be_accessible() {
     let ctx = build_test_context().expect("test context should build");
 

@@ -21,6 +21,7 @@ struct ChannelOverview {
     min_severity: String,
     enabled: bool,
     recipient_type: Option<String>,
+    system_config_id: Option<String>,
     recipients: Vec<String>,
     created_at: String,
     updated_at: String,
@@ -70,6 +71,7 @@ async fn list_channels(
                     min_severity: ch.min_severity,
                     enabled: ch.enabled,
                     recipient_type,
+                    system_config_id: ch.system_config_id,
                     recipients,
                     created_at: ch.created_at.to_rfc3339(),
                     updated_at: ch.updated_at.to_rfc3339(),
@@ -123,8 +125,35 @@ async fn test_channel(
         }
     };
 
-    let config: serde_json::Value = serde_json::from_str(&ch.config_json)
-        .unwrap_or_else(|_| serde_json::json!({}));
+    // 解析渠道配置，如果有 system_config_id 则合并系统配置
+    let config: serde_json::Value = if let Some(ref sc_id) = ch.system_config_id {
+        match state.cert_store.get_system_config_by_id(sc_id) {
+            Ok(Some(sc)) => serde_json::from_str(&sc.config_json)
+                .unwrap_or_else(|_| serde_json::json!({})),
+            Ok(None) => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    &trace_id,
+                    "invalid_system_config",
+                    &format!("System config not found: {sc_id}"),
+                )
+                .into_response();
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to lookup system config");
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &trace_id,
+                    "storage_error",
+                    "Database error",
+                )
+                .into_response();
+            }
+        }
+    } else {
+        serde_json::from_str(&ch.config_json)
+            .unwrap_or_else(|_| serde_json::json!({}))
+    };
 
     let channel = match state
         .notifier
@@ -196,6 +225,8 @@ struct CreateChannelRequest {
     min_severity: String,
     #[serde(default)]
     config_json: String,
+    /// 系统配置 ID（email/sms 渠道必填，引用发送方配置）
+    system_config_id: Option<String>,
     #[serde(default)]
     recipients: Vec<String>,
 }
@@ -281,6 +312,42 @@ async fn create_channel_config(
         .into_response();
     }
 
+    // 如果提供了 system_config_id，验证引用的系统配置存在且启用
+    if let Some(ref sc_id) = req.system_config_id {
+        match state.cert_store.get_system_config_by_id(sc_id) {
+            Ok(Some(sc)) => {
+                if !sc.enabled {
+                    return error_response(
+                        StatusCode::BAD_REQUEST,
+                        &trace_id,
+                        "disabled_system_config",
+                        "Referenced system config is disabled",
+                    )
+                    .into_response();
+                }
+            }
+            Ok(None) => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    &trace_id,
+                    "invalid_system_config",
+                    &format!("System config not found: {sc_id}"),
+                )
+                .into_response();
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to lookup system config");
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &trace_id,
+                    "storage_error",
+                    "Database error",
+                )
+                .into_response();
+            }
+        }
+    }
+
     let row = NotificationChannelRow {
         id: oxmon_common::id::next_id(),
         name: req.name,
@@ -289,6 +356,7 @@ async fn create_channel_config(
         min_severity: req.min_severity,
         enabled: true,
         config_json: req.config_json,
+        system_config_id: req.system_config_id,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };

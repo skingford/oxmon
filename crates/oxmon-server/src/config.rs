@@ -123,6 +123,28 @@ pub struct SeedAlertRule {
     pub config: serde_json::Value,
 }
 
+// ---- System configs seed file types (used by `init-configs` CLI subcommand) ----
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemConfigsSeedFile {
+    #[serde(default)]
+    pub configs: Vec<SeedSystemConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeedSystemConfig {
+    pub config_key: String,
+    pub config_type: String,
+    #[serde(default)]
+    pub provider: Option<String>,
+    pub display_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub config: serde_json::Value,
+    #[serde(default = "default_seed_enabled")]
+    pub enabled: bool,
+}
+
 fn default_seed_severity() -> String {
     "info".to_string()
 }

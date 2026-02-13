@@ -28,6 +28,7 @@ fn print_usage() {
     eprintln!("  oxmon-server init-channels <config.toml> <seed.json>      Initialize channels from seed file");
     eprintln!("  oxmon-server init-rules <config.toml> <seed.json>         Initialize alert rules from seed file");
     eprintln!("  oxmon-server init-dictionaries <config.toml> <seed.json>  Initialize dictionaries from seed file");
+    eprintln!("  oxmon-server init-configs <config.toml> <seed.json>       Initialize system configs from seed file");
 }
 
 #[tokio::main]
@@ -80,6 +81,17 @@ async fn main() -> Result<()> {
             })?;
             run_init_dictionaries(config_path, seed_path)
         }
+        Some("init-configs") => {
+            let config_path = args.get(2).ok_or_else(|| {
+                print_usage();
+                anyhow::anyhow!("init-configs requires <config.toml> and <seed.json> arguments")
+            })?;
+            let seed_path = args.get(3).ok_or_else(|| {
+                print_usage();
+                anyhow::anyhow!("init-configs requires <seed.json> argument")
+            })?;
+            run_init_configs(config_path, seed_path)
+        }
         Some("--help" | "-h") => {
             print_usage();
             Ok(())
@@ -130,6 +142,7 @@ fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
             min_severity: ch.min_severity.clone(),
             enabled: ch.enabled,
             config_json: ch.config.to_string(),
+            system_config_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -260,6 +273,61 @@ fn run_init_dictionaries(config_path: &str, seed_path: &str) -> Result<()> {
     let config = config::ServerConfig::load(config_path)?;
     let _cert_store = CertStore::new(Path::new(&config.data_dir))?;
     oxmon_server::dictionary_seed::init_from_seed_file(&_cert_store, seed_path)?;
+    Ok(())
+}
+
+/// Initialize system configs from a JSON seed file.
+fn run_init_configs(config_path: &str, seed_path: &str) -> Result<()> {
+    use oxmon_storage::cert_store::SystemConfigRow;
+
+    let config = config::ServerConfig::load(config_path)?;
+    let cert_store = CertStore::new(Path::new(&config.data_dir))?;
+
+    let seed_content = std::fs::read_to_string(seed_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read seed file '{}': {}", seed_path, e))?;
+    let seed: config::SystemConfigsSeedFile = serde_json::from_str(&seed_content)
+        .map_err(|e| anyhow::anyhow!("Failed to parse seed file '{}': {}", seed_path, e))?;
+
+    // List existing config keys for dedup
+    let existing = cert_store.list_system_configs(10000, 0)?;
+    let existing_keys: std::collections::HashSet<String> =
+        existing.iter().map(|c| c.config_key.clone()).collect();
+
+    let mut created = 0u32;
+    let mut skipped = 0u32;
+
+    for sc in &seed.configs {
+        if existing_keys.contains(&sc.config_key) {
+            tracing::warn!(config_key = %sc.config_key, "System config already exists, skipping");
+            skipped += 1;
+            continue;
+        }
+
+        let row = SystemConfigRow {
+            id: oxmon_common::id::next_id(),
+            config_key: sc.config_key.clone(),
+            config_type: sc.config_type.clone(),
+            provider: sc.provider.clone(),
+            display_name: sc.display_name.clone(),
+            description: sc.description.clone(),
+            config_json: sc.config.to_string(),
+            enabled: sc.enabled,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        match cert_store.insert_system_config(&row) {
+            Ok(inserted) => {
+                tracing::info!(config_key = %sc.config_key, id = %inserted.id, "System config created");
+                created += 1;
+            }
+            Err(e) => {
+                tracing::error!(config_key = %sc.config_key, error = %e, "Failed to create system config");
+            }
+        }
+    }
+
+    tracing::info!(created, skipped, "init-configs completed");
     Ok(())
 }
 

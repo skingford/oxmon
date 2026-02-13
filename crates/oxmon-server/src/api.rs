@@ -4,6 +4,7 @@ pub mod dashboard;
 pub mod dictionaries;
 pub mod notifications;
 pub mod pagination;
+pub mod sys_configs;
 pub mod system;
 pub mod whitelist;
 
@@ -92,6 +93,8 @@ fn to_custom_error_code(code: &str) -> i32 {
         "invalid_port" => 1103,
         "empty_batch" => 1104,
         "no_results" => 1105,
+        "disabled_system_config" => 1106,
+        "invalid_system_config" => 1107,
         "storage_error" => 1501,
         "INTERNAL_ERROR" | "internal_error" => 1500,
         _ => 1999,
@@ -938,4 +941,5 @@ pub fn protected_routes() -> OpenApiRouter<AppState> {
         .merge(dashboard::dashboard_routes())
         .merge(system::system_routes())
         .merge(dictionaries::dictionary_routes())
+        .merge(sys_configs::sys_config_routes())
 }

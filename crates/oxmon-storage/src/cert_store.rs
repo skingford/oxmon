@@ -120,6 +120,21 @@ CREATE INDEX IF NOT EXISTS idx_alert_rules_name ON alert_rules(name);
 CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules(enabled);
 ";
 
+const SYSTEM_CONFIGS_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS system_configs (
+    id TEXT PRIMARY KEY,
+    config_key TEXT NOT NULL UNIQUE,
+    config_type TEXT NOT NULL,
+    provider TEXT,
+    display_name TEXT NOT NULL,
+    description TEXT,
+    config_json TEXT NOT NULL DEFAULT '{}',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+";
+
 const NOTIFICATION_CHANNELS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS notification_channels (
     id TEXT PRIMARY KEY,
@@ -129,6 +144,7 @@ CREATE TABLE IF NOT EXISTS notification_channels (
     min_severity TEXT NOT NULL DEFAULT 'info',
     enabled INTEGER NOT NULL DEFAULT 1,
     config_json TEXT NOT NULL DEFAULT '{}',
+    system_config_id TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -254,6 +270,7 @@ impl CertStore {
 
         conn.execute_batch(USERS_SCHEMA)?;
         conn.execute_batch(ALERT_RULES_SCHEMA)?;
+        conn.execute_batch(SYSTEM_CONFIGS_SCHEMA)?;
         conn.execute_batch(NOTIFICATION_CHANNELS_SCHEMA)?;
         conn.execute_batch(NOTIFICATION_RECIPIENTS_SCHEMA)?;
         conn.execute_batch(NOTIFICATION_SILENCE_WINDOWS_SCHEMA)?;
@@ -262,6 +279,10 @@ impl CertStore {
 
         // 迁移：为已有的 notification_channels 表添加 description 列
         let _ = conn.execute_batch("ALTER TABLE notification_channels ADD COLUMN description TEXT;");
+        // 迁移：为已有的 notification_channels 表添加 system_config_id 列
+        let _ = conn.execute_batch(
+            "ALTER TABLE notification_channels ADD COLUMN system_config_id TEXT;",
+        );
 
         // 迁移：为已有的 users 表添加 token_version 列
         let _ = conn.execute_batch(
@@ -1280,11 +1301,11 @@ impl CertStore {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
         conn.execute(
-            "INSERT INTO notification_channels (id, name, channel_type, description, min_severity, enabled, config_json, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO notification_channels (id, name, channel_type, description, min_severity, enabled, config_json, system_config_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
                 ch.id, ch.name, ch.channel_type, ch.description, ch.min_severity,
-                ch.enabled as i32, ch.config_json, now, now,
+                ch.enabled as i32, ch.config_json, ch.system_config_id, now, now,
             ],
         )?;
         drop(conn);
@@ -1295,7 +1316,7 @@ impl CertStore {
     pub fn get_notification_channel_by_id(&self, id: &str) -> Result<Option<NotificationChannelRow>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, name, channel_type, description, min_severity, enabled, config_json, created_at, updated_at
+            "SELECT id, name, channel_type, description, min_severity, enabled, config_json, system_config_id, created_at, updated_at
              FROM notification_channels WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_notification_channel(row)))?;
@@ -1310,7 +1331,7 @@ impl CertStore {
     pub fn list_notification_channels(&self, limit: usize, offset: usize) -> Result<Vec<NotificationChannelRow>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, name, channel_type, description, min_severity, enabled, config_json, created_at, updated_at
+            "SELECT id, name, channel_type, description, min_severity, enabled, config_json, system_config_id, created_at, updated_at
              FROM notification_channels ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
@@ -1361,6 +1382,11 @@ impl CertStore {
             params.push(Box::new(config_json.clone()));
             idx += 1;
         }
+        if let Some(ref system_config_id) = update.system_config_id {
+            sets.push(format!("system_config_id = ?{idx}"));
+            params.push(Box::new(system_config_id.clone()));
+            idx += 1;
+        }
 
         let sql = format!("UPDATE notification_channels SET {} WHERE id = ?{idx}", sets.join(", "));
         params.push(Box::new(id.to_string()));
@@ -1391,8 +1417,8 @@ impl CertStore {
 
     fn row_to_notification_channel(row: &rusqlite::Row) -> Result<NotificationChannelRow> {
         let enabled_int: i32 = row.get(5)?;
-        let created: i64 = row.get(7)?;
-        let updated: i64 = row.get(8)?;
+        let created: i64 = row.get(8)?;
+        let updated: i64 = row.get(9)?;
         Ok(NotificationChannelRow {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -1401,6 +1427,165 @@ impl CertStore {
             min_severity: row.get(4)?,
             enabled: enabled_int != 0,
             config_json: row.get(6)?,
+            system_config_id: row.get(7)?,
+            created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+            updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+        })
+    }
+
+    // ---- System configs CRUD ----
+
+    pub fn insert_system_config(&self, row: &SystemConfigRow) -> Result<SystemConfigRow> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO system_configs (id, config_key, config_type, provider, display_name, description, config_json, enabled, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            rusqlite::params![
+                row.id, row.config_key, row.config_type, row.provider, row.display_name,
+                row.description, row.config_json, row.enabled as i32, now, now,
+            ],
+        )?;
+        drop(conn);
+        self.get_system_config_by_id(&row.id)
+            .and_then(|opt| opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted system config")))
+    }
+
+    pub fn get_system_config_by_id(&self, id: &str) -> Result<Option<SystemConfigRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, config_key, config_type, provider, display_name, description, config_json, enabled, created_at, updated_at
+             FROM system_configs WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_system_config(row)))?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(Some(r)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_system_config_by_key(&self, config_key: &str) -> Result<Option<SystemConfigRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, config_key, config_type, provider, display_name, description, config_json, enabled, created_at, updated_at
+             FROM system_configs WHERE config_key = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![config_key], |row| Ok(Self::row_to_system_config(row)))?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(Some(r)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_system_configs(&self, limit: usize, offset: usize) -> Result<Vec<SystemConfigRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, config_key, config_type, provider, display_name, description, config_json, enabled, created_at, updated_at
+             FROM system_configs ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+            Ok(Self::row_to_system_config(row))
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row??);
+        }
+        Ok(results)
+    }
+
+    pub fn count_system_configs(&self) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM system_configs", [], |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
+    pub fn update_system_config(&self, id: &str, update: &SystemConfigUpdate) -> Result<Option<SystemConfigRow>> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        let mut sets = vec!["updated_at = ?1".to_string()];
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now)];
+        let mut idx = 2;
+
+        if let Some(ref display_name) = update.display_name {
+            sets.push(format!("display_name = ?{idx}"));
+            params.push(Box::new(display_name.clone()));
+            idx += 1;
+        }
+        if let Some(ref description) = update.description {
+            sets.push(format!("description = ?{idx}"));
+            params.push(Box::new(description.clone()));
+            idx += 1;
+        }
+        if let Some(ref config_json) = update.config_json {
+            sets.push(format!("config_json = ?{idx}"));
+            params.push(Box::new(config_json.clone()));
+            idx += 1;
+        }
+        if let Some(enabled) = update.enabled {
+            sets.push(format!("enabled = ?{idx}"));
+            params.push(Box::new(enabled as i32));
+            idx += 1;
+        }
+
+        let sql = format!("UPDATE system_configs SET {} WHERE id = ?{idx}", sets.join(", "));
+        params.push(Box::new(id.to_string()));
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let updated = conn.execute(&sql, param_refs.as_slice())?;
+        drop(conn);
+
+        if updated == 0 {
+            return Ok(None);
+        }
+        self.get_system_config_by_id(id)
+    }
+
+    pub fn delete_system_config(&self, id: &str) -> Result<bool> {
+        // 检查是否有 notification_channels 引用此系统配置
+        let conn = self.lock_conn();
+        let ref_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM notification_channels WHERE system_config_id = ?1",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )?;
+        if ref_count > 0 {
+            anyhow::bail!("Cannot delete: {ref_count} notification channel(s) reference this system config");
+        }
+        let deleted = conn.execute(
+            "DELETE FROM system_configs WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        Ok(deleted > 0)
+    }
+
+    /// 查询引用了指定 system_config_id 的渠道数量
+    pub fn count_channels_by_system_config(&self, system_config_id: &str) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM notification_channels WHERE system_config_id = ?1",
+            rusqlite::params![system_config_id],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
+    fn row_to_system_config(row: &rusqlite::Row) -> Result<SystemConfigRow> {
+        let enabled_int: i32 = row.get(7)?;
+        let created: i64 = row.get(8)?;
+        let updated: i64 = row.get(9)?;
+        Ok(SystemConfigRow {
+            id: row.get(0)?,
+            config_key: row.get(1)?,
+            config_type: row.get(2)?,
+            provider: row.get(3)?,
+            display_name: row.get(4)?,
+            description: row.get(5)?,
+            config_json: row.get(6)?,
+            enabled: enabled_int != 0,
             created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
             updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
         })
@@ -2371,6 +2556,7 @@ pub struct NotificationChannelRow {
     pub min_severity: String,
     pub enabled: bool,
     pub config_json: String,
+    pub system_config_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -2382,6 +2568,31 @@ pub struct NotificationChannelUpdate {
     pub min_severity: Option<String>,
     pub enabled: Option<bool>,
     pub config_json: Option<String>,
+    pub system_config_id: Option<Option<String>>,
+}
+
+/// 系统配置行（发送方配置：SMTP、短信供应商等）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SystemConfigRow {
+    pub id: String,
+    pub config_key: String,
+    pub config_type: String,
+    pub provider: Option<String>,
+    pub display_name: String,
+    pub description: Option<String>,
+    pub config_json: String,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 系统配置更新请求
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SystemConfigUpdate {
+    pub display_name: Option<String>,
+    pub description: Option<Option<String>>,
+    pub config_json: Option<String>,
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
