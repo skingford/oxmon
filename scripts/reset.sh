@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# oxmon 重置和初始化脚本
+# oxmon 重置和初始化脚本（直接操作数据库）
 # 使用方法:
 #   ./scripts/reset.sh config          # 只清理规则和渠道（保留监控数据）
 #   ./scripts/reset.sh full            # 完全重置（删除所有数据）
@@ -9,11 +9,9 @@
 set -e
 
 # 配置
-API_BASE="${API_BASE:-http://localhost:8080/v1}"
-USERNAME="${USERNAME:-admin}"
-PASSWORD="${PASSWORD:-changeme}"
 DATA_DIR="${DATA_DIR:-data}"
 CONFIG_FILE="${CONFIG_FILE:-config/server.toml}"
+CERT_DB="${DATA_DIR}/cert.db"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -40,7 +38,7 @@ print_error() {
 
 show_help() {
     cat << EOF
-oxmon 重置和初始化脚本
+oxmon 重置和初始化脚本（直接操作 SQLite 数据库）
 
 使用方法:
     ./scripts/reset.sh <mode> [options]
@@ -51,9 +49,6 @@ oxmon 重置和初始化脚本
     --help, -h      显示此帮助信息
 
 环境变量:
-    API_BASE        API 基础地址 (默认: http://localhost:8080/v1)
-    USERNAME        管理员用户名 (默认: admin)
-    PASSWORD        管理员密码 (默认: changeme)
     DATA_DIR        数据目录 (默认: data)
     CONFIG_FILE     配置文件 (默认: config/server.toml)
 
@@ -64,96 +59,97 @@ oxmon 重置和初始化脚本
     # 完全重置
     ./scripts/reset.sh full
 
-    # 使用自定义配置
-    CONFIG_FILE=config/prod.toml ./scripts/reset.sh config
+    # 使用自定义数据目录
+    DATA_DIR=/var/lib/oxmon ./scripts/reset.sh config
+
+优势:
+    ✓ 直接操作 SQLite 数据库，速度快
+    ✓ 不需要服务器运行
+    ✓ 不需要 API 认证
+    ✓ 不依赖 jq 等外部工具
 
 EOF
 }
 
-check_dependencies() {
-    if ! command -v jq &> /dev/null; then
-        print_error "需要 jq 工具。请安装: brew install jq"
+check_sqlite() {
+    if ! command -v sqlite3 &> /dev/null; then
+        print_error "需要 sqlite3 工具。请安装: brew install sqlite3"
         exit 1
     fi
 }
 
-cleanup_config_via_api() {
-    print_header "通过 REST API 清理配置"
-
-    # 1. 登录获取 Token
-    print_header "1. 登录获取 JWT Token"
-    TOKEN=$(curl -s -X POST "${API_BASE}/auth/login" \
-        -H "Content-Type: application/json" \
-        -d "{\"username\":\"${USERNAME}\",\"password\":\"${PASSWORD}\"}" | jq -r '.data.token')
-
-    if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
-        print_error "登录失败，请检查服务器是否运行，用户名和密码是否正确"
-        print_warning "服务器地址: ${API_BASE}"
-        print_warning "用户名: ${USERNAME}"
-        exit 1
+check_db_exists() {
+    if [ ! -f "$CERT_DB" ]; then
+        print_warning "数据库不存在: ${CERT_DB}"
+        return 1
     fi
-    print_success "登录成功"
+    return 0
+}
 
-    # 2. 删除告警规则
-    print_header "2. 删除现有告警规则"
-    RULES=$(curl -s -X GET "${API_BASE}/alerts/rules" \
-        -H "Authorization: Bearer ${TOKEN}")
+cleanup_config_db() {
+    print_header "直接操作数据库清理配置"
 
-    RULE_IDS=$(echo "$RULES" | jq -r '.data[]?.id // empty')
+    if ! check_db_exists; then
+        print_warning "跳过清理，数据库文件不存在"
+        return
+    fi
 
-    if [ -z "$RULE_IDS" ]; then
-        print_warning "没有找到现有的告警规则"
-    else
-        RULE_COUNT=$(echo "$RULE_IDS" | wc -l | tr -d ' ')
+    # 1. 删除告警规则
+    print_header "1. 删除现有告警规则"
+    RULE_COUNT=$(sqlite3 "$CERT_DB" "SELECT COUNT(*) FROM alert_rules;")
+    if [ "$RULE_COUNT" -gt 0 ]; then
         echo "找到 ${RULE_COUNT} 条告警规则"
-        for rule_id in $RULE_IDS; do
-            rule_name=$(echo "$RULES" | jq -r ".data[] | select(.id==\"$rule_id\") | .name")
-            echo "  删除: ${rule_name} (${rule_id})"
-            curl -s -X DELETE "${API_BASE}/alerts/rules/${rule_id}" \
-                -H "Authorization: Bearer ${TOKEN}" > /dev/null
+        sqlite3 "$CERT_DB" "SELECT id, name, rule_type FROM alert_rules;" | while IFS='|' read -r id name rule_type; do
+            echo "  删除: ${name} (${rule_type})"
         done
+        sqlite3 "$CERT_DB" "DELETE FROM alert_rules;"
         print_success "已删除 ${RULE_COUNT} 条告警规则"
+    else
+        print_warning "没有找到现有的告警规则"
     fi
 
-    # 3. 删除通知渠道
-    print_header "3. 删除现有通知渠道"
-    CHANNELS=$(curl -s -X GET "${API_BASE}/notifications/channels" \
-        -H "Authorization: Bearer ${TOKEN}")
-
-    CHANNEL_IDS=$(echo "$CHANNELS" | jq -r '.data[]?.id // empty')
-
-    if [ -z "$CHANNEL_IDS" ]; then
-        print_warning "没有找到现有的通知渠道"
-    else
-        CHANNEL_COUNT=$(echo "$CHANNEL_IDS" | wc -l | tr -d ' ')
+    # 2. 删除通知渠道（级联删除会自动删除 recipients）
+    print_header "2. 删除现有通知渠道"
+    CHANNEL_COUNT=$(sqlite3 "$CERT_DB" "SELECT COUNT(*) FROM notification_channels;")
+    if [ "$CHANNEL_COUNT" -gt 0 ]; then
         echo "找到 ${CHANNEL_COUNT} 个通知渠道"
-        for channel_id in $CHANNEL_IDS; do
-            channel_name=$(echo "$CHANNELS" | jq -r ".data[] | select(.id==\"$channel_id\") | .name")
-            echo "  删除: ${channel_name} (${channel_id})"
-            curl -s -X DELETE "${API_BASE}/notifications/channels/config/${channel_id}" \
-                -H "Authorization: Bearer ${TOKEN}" > /dev/null
+        sqlite3 "$CERT_DB" "SELECT id, name, channel_type FROM notification_channels;" | while IFS='|' read -r id name channel_type; do
+            echo "  删除: ${name} (${channel_type})"
         done
+        # 先删除 recipients（如果有外键约束）
+        sqlite3 "$CERT_DB" "DELETE FROM notification_recipients;"
+        sqlite3 "$CERT_DB" "DELETE FROM notification_channels;"
         print_success "已删除 ${CHANNEL_COUNT} 个通知渠道"
+    else
+        print_warning "没有找到现有的通知渠道"
     fi
 
-    # 4. 删除静默窗口
-    print_header "4. 删除静默窗口"
-    WINDOWS=$(curl -s -X GET "${API_BASE}/notifications/silence-windows" \
-        -H "Authorization: Bearer ${TOKEN}")
-
-    WINDOW_IDS=$(echo "$WINDOWS" | jq -r '.data[]?.id // empty')
-
-    if [ -z "$WINDOW_IDS" ]; then
-        print_warning "没有找到现有的静默窗口"
-    else
-        WINDOW_COUNT=$(echo "$WINDOW_IDS" | wc -l | tr -d ' ')
+    # 3. 删除静默窗口
+    print_header "3. 删除静默窗口"
+    WINDOW_COUNT=$(sqlite3 "$CERT_DB" "SELECT COUNT(*) FROM notification_silence_windows;" 2>/dev/null || echo "0")
+    if [ "$WINDOW_COUNT" -gt 0 ]; then
         echo "找到 ${WINDOW_COUNT} 个静默窗口"
-        for window_id in $WINDOW_IDS; do
-            echo "  删除静默窗口: ${window_id}"
-            curl -s -X DELETE "${API_BASE}/notifications/silence-windows/${window_id}" \
-                -H "Authorization: Bearer ${TOKEN}" > /dev/null
-        done
+        sqlite3 "$CERT_DB" "DELETE FROM notification_silence_windows;" 2>/dev/null || true
         print_success "已删除 ${WINDOW_COUNT} 个静默窗口"
+    else
+        print_warning "没有找到现有的静默窗口"
+    fi
+
+    # 4. 清理告警历史（可选）
+    print_header "4. 清理告警历史记录"
+    ALERT_COUNT=$(sqlite3 "$CERT_DB" "SELECT COUNT(*) FROM alerts;" 2>/dev/null || echo "0")
+    if [ "$ALERT_COUNT" -gt 0 ]; then
+        echo "找到 ${ALERT_COUNT} 条告警历史记录"
+        sqlite3 "$CERT_DB" "DELETE FROM alerts;" 2>/dev/null || true
+        print_success "已清理告警历史"
+    fi
+
+    # 5. 清理通知日志（可选）
+    NOTIF_COUNT=$(sqlite3 "$CERT_DB" "SELECT COUNT(*) FROM notification_logs;" 2>/dev/null || echo "0")
+    if [ "$NOTIF_COUNT" -gt 0 ]; then
+        echo "找到 ${NOTIF_COUNT} 条通知日志"
+        sqlite3 "$CERT_DB" "DELETE FROM notification_logs;" 2>/dev/null || true
+        print_success "已清理通知日志"
     fi
 }
 
@@ -185,13 +181,28 @@ reinit_from_cli() {
     fi
 }
 
+stop_server() {
+    print_header "停止 oxmon-server 服务"
+    if pkill -f oxmon-server; then
+        print_success "服务已停止"
+        sleep 2  # 等待进程完全退出和数据库连接关闭
+    else
+        print_warning "服务未运行"
+    fi
+}
+
 mode_config() {
     echo ""
     print_header "配置清理模式（保留监控数据）"
     echo ""
 
-    check_dependencies
-    cleanup_config_via_api
+    check_sqlite
+
+    # 停止服务器以释放数据库锁
+    stop_server
+
+    echo ""
+    cleanup_config_db
 
     echo ""
     reinit_from_cli
@@ -199,8 +210,7 @@ mode_config() {
     echo ""
     print_success "配置清理和重新初始化完成！"
     echo ""
-    echo "重启服务器以使更改生效:"
-    echo "  pkill -f oxmon-server"
+    echo "启动服务器:"
     echo "  ./target/release/oxmon-server ${CONFIG_FILE}"
     echo ""
 }
@@ -227,15 +237,9 @@ mode_full() {
     fi
 
     echo ""
-    print_header "1. 停止 oxmon-server 服务"
-    if pkill -f oxmon-server; then
-        print_success "服务已停止"
-        sleep 2  # 等待进程完全退出
-    else
-        print_warning "服务未运行"
-    fi
+    stop_server
 
-    print_header "2. 删除数据目录"
+    print_header "删除数据目录"
     if [ -d "$DATA_DIR" ]; then
         rm -rf "${DATA_DIR}"
         print_success "已删除: ${DATA_DIR}"
@@ -243,7 +247,7 @@ mode_full() {
         print_warning "数据目录不存在: ${DATA_DIR}"
     fi
 
-    print_header "3. 重新创建数据目录"
+    print_header "重新创建数据目录"
     mkdir -p "${DATA_DIR}"
     print_success "已创建: ${DATA_DIR}"
 
