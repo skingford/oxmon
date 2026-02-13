@@ -1739,7 +1739,7 @@ impl CertStore {
         let channels = {
             let conn = self.lock_conn();
             let mut stmt = conn.prepare(
-                "SELECT id, name, channel_type, description, min_severity, enabled, config_json, created_at, updated_at
+                "SELECT id, name, channel_type, description, min_severity, enabled, config_json, system_config_id, created_at, updated_at
                  FROM notification_channels WHERE enabled = 1 ORDER BY created_at ASC",
             )?;
             let rows = stmt.query_map([], |row| Ok(Self::row_to_notification_channel(row)))?;
