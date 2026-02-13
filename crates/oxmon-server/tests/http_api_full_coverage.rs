@@ -886,6 +886,163 @@ async fn system_config_endpoints_should_cover_crud_paths() {
 }
 
 #[tokio::test]
+async fn notification_log_endpoints_should_support_query_and_summary() {
+    let ctx = build_test_context().expect("test context should build");
+    let token = login_and_get_token(&ctx.app).await;
+
+    // Empty result
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/notifications/logs?limit=10&offset=0",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["total"], 0);
+    let items: Vec<serde_json::Value> = serde_json::from_value(body["data"]["items"].clone()).unwrap();
+    assert!(items.is_empty());
+
+    // Insert test logs directly via cert_store
+    let now = chrono::Utc::now();
+    let log1 = oxmon_storage::cert_store::NotificationLogRow {
+        id: oxmon_common::id::next_id(),
+        alert_event_id: "evt-1".to_string(),
+        rule_id: "rule-1".to_string(),
+        rule_name: "Test Rule".to_string(),
+        agent_id: "agent-1".to_string(),
+        channel_id: "ch-1".to_string(),
+        channel_name: "Email Channel".to_string(),
+        channel_type: "email".to_string(),
+        status: "success".to_string(),
+        error_message: None,
+        duration_ms: 120,
+        recipient_count: 2,
+        severity: "warning".to_string(),
+        created_at: now,
+    };
+    ctx.state.cert_store.insert_notification_log(&log1).unwrap();
+
+    let log2 = oxmon_storage::cert_store::NotificationLogRow {
+        id: oxmon_common::id::next_id(),
+        alert_event_id: "evt-2".to_string(),
+        rule_id: "rule-1".to_string(),
+        rule_name: "Test Rule".to_string(),
+        agent_id: "agent-1".to_string(),
+        channel_id: "ch-2".to_string(),
+        channel_name: "Webhook Channel".to_string(),
+        channel_type: "webhook".to_string(),
+        status: "failed".to_string(),
+        error_message: Some("connection timeout".to_string()),
+        duration_ms: 5000,
+        recipient_count: 1,
+        severity: "critical".to_string(),
+        created_at: now,
+    };
+    ctx.state.cert_store.insert_notification_log(&log2).unwrap();
+
+    // Query all
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/notifications/logs",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["total"], 2);
+
+    // Filter by channel_type
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/notifications/logs?channel_type=email",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["total"], 1);
+    let items: Vec<serde_json::Value> = serde_json::from_value(body["data"]["items"].clone()).unwrap();
+    assert_eq!(items[0]["channel_type"], "email");
+
+    // Filter by status
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/notifications/logs?status=failed",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["total"], 1);
+    let items: Vec<serde_json::Value> = serde_json::from_value(body["data"]["items"].clone()).unwrap();
+    assert_eq!(items[0]["status"], "failed");
+    assert_eq!(items[0]["error_message"], "connection timeout");
+
+    // Filter by channel_id
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/notifications/logs?channel_id=ch-1",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["total"], 1);
+
+    // Filter by time range
+    let ts = now.timestamp();
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        &format!("/v1/notifications/logs?start_time={}&end_time={}", ts - 60, ts + 60),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["total"], 2);
+
+    // Summary
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/notifications/logs/summary",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["total"], 2);
+    assert_eq!(body["data"]["success"], 1);
+    assert_eq!(body["data"]["failed"], 1);
+
+    // Summary filtered by channel_type
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/notifications/logs/summary?channel_type=email",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["total"], 1);
+    assert_eq!(body["data"]["success"], 1);
+    assert_eq!(body["data"]["failed"], 0);
+
+    // Auth required
+    let (status, _, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/notifications/logs",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn openapi_endpoints_should_be_accessible() {
     let ctx = build_test_context().expect("test context should build");
 

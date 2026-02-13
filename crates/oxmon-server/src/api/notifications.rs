@@ -1,4 +1,4 @@
-use crate::api::pagination::PaginationParams;
+use crate::api::pagination::{deserialize_optional_u64, PaginationParams};
 use crate::api::{error_response, success_empty_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
@@ -6,7 +6,7 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
-use oxmon_storage::cert_store::{NotificationChannelRow, NotificationChannelUpdate, SilenceWindowRow};
+use oxmon_storage::cert_store::{NotificationChannelRow, NotificationChannelUpdate, NotificationLogFilter, SilenceWindowRow};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -183,7 +183,27 @@ async fn test_channel(
         updated_at: chrono::Utc::now(),
     };
 
-    match channel.send(&test_event, &recipients).await {
+    let start = tokio::time::Instant::now();
+    let result = channel.send(&test_event, &recipients).await;
+    let duration_ms = start.elapsed().as_millis() as i64;
+
+    // 记录通知发送日志（测试通知也纳入日志记录）
+    let send_result = result.as_ref().map(|_| ()).map_err(|e| anyhow::anyhow!("{e}"));
+    let ctx = oxmon_notify::manager::SendLogContext {
+        channel_id: &ch.id,
+        channel_name: &ch.name,
+        channel_type: &ch.channel_type,
+        duration_ms,
+        recipient_count: recipients.len() as i32,
+    };
+    oxmon_notify::manager::NotificationManager::record_send_log(
+        state.notifier.cert_store(),
+        &test_event,
+        &ctx,
+        &send_result,
+    );
+
+    match result {
         Ok(()) => success_empty_response(StatusCode::OK, &trace_id, "Test notification sent"),
         Err(e) => {
             tracing::error!(error = %e, "Test notification failed");
@@ -697,6 +717,255 @@ async fn delete_silence_window(
     }
 }
 
+// ---- Notification logs ----
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct NotificationLogQuery {
+    /// 渠道 ID
+    #[param(required = false)]
+    channel_id: Option<String>,
+    /// 渠道类型
+    #[param(required = false)]
+    channel_type: Option<String>,
+    /// 状态（success / failed）
+    #[param(required = false)]
+    status: Option<String>,
+    /// 告警事件 ID
+    #[param(required = false)]
+    alert_event_id: Option<String>,
+    /// 规则 ID
+    #[param(required = false)]
+    rule_id: Option<String>,
+    /// Agent ID
+    #[param(required = false)]
+    agent_id: Option<String>,
+    /// 开始时间（Unix 秒级时间戳）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    start_time: Option<u64>,
+    /// 结束时间（Unix 秒级时间戳）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    end_time: Option<u64>,
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    offset: Option<u64>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct NotificationLogItem {
+    id: String,
+    alert_event_id: String,
+    rule_id: String,
+    rule_name: String,
+    agent_id: String,
+    channel_id: String,
+    channel_name: String,
+    channel_type: String,
+    status: String,
+    error_message: Option<String>,
+    duration_ms: i64,
+    recipient_count: i32,
+    severity: String,
+    created_at: String,
+}
+
+#[derive(Serialize, ToSchema)]
+struct NotificationLogListResponse {
+    items: Vec<NotificationLogItem>,
+    total: u64,
+}
+
+/// 分页查询通知发送日志。
+#[utoipa::path(
+    get,
+    path = "/v1/notifications/logs",
+    tag = "Notifications",
+    security(("bearer_auth" = [])),
+    params(NotificationLogQuery),
+    responses(
+        (status = 200, description = "通知日志列表", body = NotificationLogListResponse),
+        (status = 401, description = "未认证", body = crate::api::ApiError)
+    )
+)]
+async fn list_notification_logs(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Query(query): Query<NotificationLogQuery>,
+) -> impl IntoResponse {
+    let filter = NotificationLogFilter {
+        channel_id: query.channel_id,
+        channel_type: query.channel_type,
+        status: query.status,
+        alert_event_id: query.alert_event_id,
+        rule_id: query.rule_id,
+        agent_id: query.agent_id,
+        start_time: query.start_time.map(|v| v as i64),
+        end_time: query.end_time.map(|v| v as i64),
+    };
+
+    let limit = PaginationParams::resolve_limit(query.limit);
+    let offset = PaginationParams::resolve_offset(query.offset);
+
+    let total = match state.cert_store.count_notification_logs(&filter) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count notification logs");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
+    match state.cert_store.list_notification_logs(&filter, limit, offset) {
+        Ok(rows) => {
+            let items: Vec<NotificationLogItem> = rows
+                .into_iter()
+                .map(|r| NotificationLogItem {
+                    id: r.id,
+                    alert_event_id: r.alert_event_id,
+                    rule_id: r.rule_id,
+                    rule_name: r.rule_name,
+                    agent_id: r.agent_id,
+                    channel_id: r.channel_id,
+                    channel_name: r.channel_name,
+                    channel_type: r.channel_type,
+                    status: r.status,
+                    error_message: r.error_message,
+                    duration_ms: r.duration_ms,
+                    recipient_count: r.recipient_count,
+                    severity: r.severity,
+                    created_at: r.created_at.to_rfc3339(),
+                })
+                .collect();
+            success_response(
+                StatusCode::OK,
+                &trace_id,
+                NotificationLogListResponse { items, total },
+            )
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to list notification logs");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response()
+        }
+    }
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct NotificationLogSummaryQuery {
+    /// 渠道 ID
+    #[param(required = false)]
+    channel_id: Option<String>,
+    /// 渠道类型
+    #[param(required = false)]
+    channel_type: Option<String>,
+    /// 开始时间（Unix 秒级时间戳）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    start_time: Option<u64>,
+    /// 结束时间（Unix 秒级时间戳）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    end_time: Option<u64>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct NotificationLogSummaryResponse {
+    total: u64,
+    success: u64,
+    failed: u64,
+}
+
+/// 通知发送日志统计摘要。
+#[utoipa::path(
+    get,
+    path = "/v1/notifications/logs/summary",
+    tag = "Notifications",
+    security(("bearer_auth" = [])),
+    params(NotificationLogSummaryQuery),
+    responses(
+        (status = 200, description = "通知日志统计摘要", body = NotificationLogSummaryResponse),
+        (status = 401, description = "未认证", body = crate::api::ApiError)
+    )
+)]
+async fn notification_log_summary(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Query(query): Query<NotificationLogSummaryQuery>,
+) -> impl IntoResponse {
+    let base_filter = NotificationLogFilter {
+        channel_id: query.channel_id.clone(),
+        channel_type: query.channel_type.clone(),
+        status: None,
+        alert_event_id: None,
+        rule_id: None,
+        agent_id: None,
+        start_time: query.start_time.map(|v| v as i64),
+        end_time: query.end_time.map(|v| v as i64),
+    };
+
+    let total = match state.cert_store.count_notification_logs(&base_filter) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count notification logs");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
+    let success_filter = NotificationLogFilter {
+        status: Some("success".to_string()),
+        ..base_filter
+    };
+    let success = match state.cert_store.count_notification_logs(&success_filter) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count success notification logs");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
+    let failed = total.saturating_sub(success);
+
+    success_response(
+        StatusCode::OK,
+        &trace_id,
+        NotificationLogSummaryResponse {
+            total,
+            success,
+            failed,
+        },
+    )
+}
+
 pub fn notification_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_channels))
@@ -706,4 +975,6 @@ pub fn notification_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(set_recipients, get_recipients))
         .routes(routes!(list_silence_windows, create_silence_window))
         .routes(routes!(delete_silence_window))
+        .routes(routes!(list_notification_logs))
+        .routes(routes!(notification_log_summary))
 }

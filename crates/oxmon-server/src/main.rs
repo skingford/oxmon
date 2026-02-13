@@ -481,7 +481,9 @@ async fn run_server(config_path: &str) -> Result<()> {
 
     // Periodic cleanup task
     let retention_days = config.retention_days;
+    let log_retention_days = config.notification.log_retention_days;
     let cleanup_storage = storage.clone();
+    let cleanup_cert_store = cert_store.clone();
     let cleanup_handle = tokio::spawn(async move {
         let mut tick = interval(Duration::from_secs(3600)); // Every hour
         loop {
@@ -491,6 +493,13 @@ async fn run_server(config_path: &str) -> Result<()> {
                     tracing::info!(removed, "Cleaned up expired partitions")
                 }
                 Err(e) => tracing::error!(error = %e, "Cleanup failed"),
+                _ => {}
+            }
+            match cleanup_cert_store.cleanup_notification_logs(log_retention_days) {
+                Ok(removed) if removed > 0 => {
+                    tracing::info!(removed, "Cleaned up expired notification logs")
+                }
+                Err(e) => tracing::error!(error = %e, "Notification log cleanup failed"),
                 _ => {}
             }
         }

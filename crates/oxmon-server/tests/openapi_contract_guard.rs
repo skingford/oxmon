@@ -80,6 +80,9 @@ async fn openapi_paths_should_be_covered_by_test_matrix() {
         "GET /v1/notifications/silence-windows",
         "POST /v1/notifications/silence-windows",
         "DELETE /v1/notifications/silence-windows/{id}",
+        // Notification logs
+        "GET /v1/notifications/logs",
+        "GET /v1/notifications/logs/summary",
         // New endpoints: dashboard
         "GET /v1/dashboard/overview",
         // New endpoints: system
@@ -176,6 +179,25 @@ async fn openapi_list_query_params_should_be_optional() {
             &["enabled__eq", "domain__contains", "limit", "offset"],
         ),
         ("/v1/certs/status", &["limit", "offset"]),
+        (
+            "/v1/notifications/logs",
+            &[
+                "channel_id",
+                "channel_type",
+                "status",
+                "alert_event_id",
+                "rule_id",
+                "agent_id",
+                "start_time",
+                "end_time",
+                "limit",
+                "offset",
+            ],
+        ),
+        (
+            "/v1/notifications/logs/summary",
+            &["channel_id", "channel_type", "start_time", "end_time"],
+        ),
     ];
 
     for (path, names) in cases {

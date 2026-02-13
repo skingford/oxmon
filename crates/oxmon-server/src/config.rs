@@ -61,10 +61,21 @@ pub struct AlertRuleConfig {
     pub silence_secs: u64,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationConfig {
     #[serde(default = "default_aggregation_window_secs")]
     pub aggregation_window_secs: u64,
+    #[serde(default = "default_log_retention_days")]
+    pub log_retention_days: u32,
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            aggregation_window_secs: default_aggregation_window_secs(),
+            log_retention_days: default_log_retention_days(),
+        }
+    }
 }
 
 // ---- Seed file types (used by `init-channels` CLI subcommand) ----
@@ -268,6 +279,10 @@ fn default_seed_enabled() -> bool {
 
 fn default_aggregation_window_secs() -> u64 {
     60
+}
+
+fn default_log_retention_days() -> u32 {
+    30
 }
 
 fn default_require_agent_auth() -> bool {

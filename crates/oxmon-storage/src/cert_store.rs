@@ -214,6 +214,29 @@ CREATE TABLE IF NOT EXISTS users (
 );
 ";
 
+const NOTIFICATION_LOGS_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS notification_logs (
+    id TEXT PRIMARY KEY,
+    alert_event_id TEXT NOT NULL,
+    rule_id TEXT NOT NULL,
+    rule_name TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    channel_name TEXT NOT NULL,
+    channel_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error_message TEXT,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    recipient_count INTEGER NOT NULL DEFAULT 0,
+    severity TEXT NOT NULL DEFAULT 'info',
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notif_logs_created_at ON notification_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_notif_logs_channel_id ON notification_logs(channel_id);
+CREATE INDEX IF NOT EXISTS idx_notif_logs_status ON notification_logs(status);
+CREATE INDEX IF NOT EXISTS idx_notif_logs_alert_event ON notification_logs(alert_event_id);
+";
+
 pub struct CertStore {
     conn: Mutex<Connection>,
     _db_path: PathBuf,
@@ -276,6 +299,7 @@ impl CertStore {
         conn.execute_batch(NOTIFICATION_SILENCE_WINDOWS_SCHEMA)?;
         conn.execute_batch(SYSTEM_DICTIONARIES_SCHEMA)?;
         conn.execute_batch(DICTIONARY_TYPES_SCHEMA)?;
+        conn.execute_batch(NOTIFICATION_LOGS_SCHEMA)?;
 
         // 迁移：为已有的 notification_channels 表添加 description 列
         let _ = conn.execute_batch("ALTER TABLE notification_channels ADD COLUMN description TEXT;");
@@ -1659,6 +1683,154 @@ impl CertStore {
         })
     }
 
+    // ---- Notification logs CRUD ----
+
+    pub fn insert_notification_log(&self, log: &NotificationLogRow) -> Result<()> {
+        let conn = self.lock_conn();
+        conn.execute(
+            "INSERT INTO notification_logs (id, alert_event_id, rule_id, rule_name, agent_id, channel_id, channel_name, channel_type, status, error_message, duration_ms, recipient_count, severity, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            rusqlite::params![
+                log.id,
+                log.alert_event_id,
+                log.rule_id,
+                log.rule_name,
+                log.agent_id,
+                log.channel_id,
+                log.channel_name,
+                log.channel_type,
+                log.status,
+                log.error_message,
+                log.duration_ms,
+                log.recipient_count,
+                log.severity,
+                log.created_at.timestamp(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_notification_logs(
+        &self,
+        filter: &NotificationLogFilter,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<NotificationLogRow>> {
+        let conn = self.lock_conn();
+        let (where_clause, params) = Self::build_notification_log_where(filter);
+        let sql = format!(
+            "SELECT id, alert_event_id, rule_id, rule_name, agent_id, channel_id, channel_name, channel_type, status, error_message, duration_ms, recipient_count, severity, created_at
+             FROM notification_logs {where_clause} ORDER BY created_at DESC LIMIT ?{} OFFSET ?{}",
+            params.len() + 1,
+            params.len() + 2,
+        );
+        let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = params;
+        all_params.push(Box::new(limit as i64));
+        all_params.push(Box::new(offset as i64));
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| Ok(Self::row_to_notification_log(row)))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row??);
+        }
+        Ok(results)
+    }
+
+    pub fn count_notification_logs(&self, filter: &NotificationLogFilter) -> Result<u64> {
+        let conn = self.lock_conn();
+        let (where_clause, params) = Self::build_notification_log_where(filter);
+        let sql = format!("SELECT COUNT(*) FROM notification_logs {where_clause}");
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
+    pub fn cleanup_notification_logs(&self, retention_days: u32) -> Result<u64> {
+        let conn = self.lock_conn();
+        let cutoff = Utc::now().timestamp() - (retention_days as i64 * 86400);
+        let deleted = conn.execute(
+            "DELETE FROM notification_logs WHERE created_at < ?1",
+            rusqlite::params![cutoff],
+        )?;
+        Ok(deleted as u64)
+    }
+
+    fn build_notification_log_where(filter: &NotificationLogFilter) -> (String, Vec<Box<dyn rusqlite::types::ToSql>>) {
+        let mut conditions = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
+
+        if let Some(ref v) = filter.channel_id {
+            conditions.push(format!("channel_id = ?{idx}"));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = filter.channel_type {
+            conditions.push(format!("channel_type = ?{idx}"));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = filter.status {
+            conditions.push(format!("status = ?{idx}"));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = filter.alert_event_id {
+            conditions.push(format!("alert_event_id = ?{idx}"));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = filter.rule_id {
+            conditions.push(format!("rule_id = ?{idx}"));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = filter.agent_id {
+            conditions.push(format!("agent_id = ?{idx}"));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(start) = filter.start_time {
+            conditions.push(format!("created_at >= ?{idx}"));
+            params.push(Box::new(start));
+            idx += 1;
+        }
+        if let Some(end) = filter.end_time {
+            conditions.push(format!("created_at <= ?{idx}"));
+            params.push(Box::new(end));
+            #[allow(unused_assignments)]
+            { idx += 1; }
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        (where_clause, params)
+    }
+
+    fn row_to_notification_log(row: &rusqlite::Row) -> Result<NotificationLogRow> {
+        let created: i64 = row.get(13)?;
+        Ok(NotificationLogRow {
+            id: row.get(0)?,
+            alert_event_id: row.get(1)?,
+            rule_id: row.get(2)?,
+            rule_name: row.get(3)?,
+            agent_id: row.get(4)?,
+            channel_id: row.get(5)?,
+            channel_name: row.get(6)?,
+            channel_type: row.get(7)?,
+            status: row.get(8)?,
+            error_message: row.get(9)?,
+            duration_ms: row.get(10)?,
+            recipient_count: row.get(11)?,
+            severity: row.get(12)?,
+            created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+        })
+    }
+
     // ---- Notification recipients CRUD ----
 
     pub fn insert_recipient(&self, channel_id: &str, value: &str) -> Result<NotificationRecipientRow> {
@@ -2810,6 +2982,36 @@ pub struct SilenceWindowRow {
     pub recurrence: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NotificationLogRow {
+    pub id: String,
+    pub alert_event_id: String,
+    pub rule_id: String,
+    pub rule_name: String,
+    pub agent_id: String,
+    pub channel_id: String,
+    pub channel_name: String,
+    pub channel_type: String,
+    pub status: String,
+    pub error_message: Option<String>,
+    pub duration_ms: i64,
+    pub recipient_count: i32,
+    pub severity: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct NotificationLogFilter {
+    pub channel_id: Option<String>,
+    pub channel_type: Option<String>,
+    pub status: Option<String>,
+    pub alert_event_id: Option<String>,
+    pub rule_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub start_time: Option<i64>,
+    pub end_time: Option<i64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

@@ -2,10 +2,11 @@ use crate::plugin::ChannelRegistry;
 use crate::NotificationChannel;
 use chrono::{DateTime, Duration, NaiveTime, Utc};
 use oxmon_common::types::AlertEvent;
-use oxmon_storage::cert_store::{CertStore, NotificationChannelRow};
+use oxmon_storage::cert_store::{CertStore, NotificationChannelRow, NotificationLogRow};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
+use tokio::time::Instant;
 use tracing;
 
 pub struct SilenceWindow {
@@ -31,11 +32,22 @@ struct ChannelInstance {
     channel: Box<dyn NotificationChannel>,
     recipients: Vec<String>,
     min_severity: oxmon_common::types::Severity,
+    name: String,
+    channel_type: String,
 }
 
 struct AggregationEntry {
     events: Vec<AlertEvent>,
     first_seen: DateTime<Utc>,
+}
+
+/// 通知发送结果上下文，用于记录日志。
+pub struct SendLogContext<'a> {
+    pub channel_id: &'a str,
+    pub channel_name: &'a str,
+    pub channel_type: &'a str,
+    pub duration_ms: i64,
+    pub recipient_count: i32,
 }
 
 pub struct NotificationManager {
@@ -183,6 +195,8 @@ impl NotificationManager {
                         channel,
                         recipients,
                         min_severity: severity,
+                        name: row.name.clone(),
+                        channel_type: row.channel_type.clone(),
                     });
                     tracing::info!(
                         channel_id = %row.id,
@@ -321,14 +335,68 @@ impl NotificationManager {
                 continue;
             }
 
-            if let Err(e) = instance.channel.send(event, &instance.recipients).await {
+            let start = Instant::now();
+            let result = instance.channel.send(event, &instance.recipients).await;
+            let duration_ms = start.elapsed().as_millis() as i64;
+
+            if let Err(ref e) = result {
                 tracing::error!(
                     channel_id = %channel_id,
-                    channel_type = instance.channel.channel_type(),
+                    channel_type = %instance.channel_type,
                     error = %e,
                     "Failed to send notification"
                 );
             }
+
+            let ctx = SendLogContext {
+                channel_id,
+                channel_name: &instance.name,
+                channel_type: &instance.channel_type,
+                duration_ms,
+                recipient_count: instance.recipients.len() as i32,
+            };
+            let send_result = result.map(|_| ()).map_err(|e| anyhow::anyhow!("{e}"));
+            Self::record_send_log(&self.cert_store, event, &ctx, &send_result);
+        }
+    }
+
+    /// 记录一条通知发送日志。
+    /// 供内部 `send_to_channels` 及外部 API（如测试通知）统一调用。
+    /// 写入失败仅 warn，不影响调用方逻辑。
+    pub fn record_send_log(
+        cert_store: &CertStore,
+        event: &AlertEvent,
+        ctx: &SendLogContext<'_>,
+        send_result: &Result<(), anyhow::Error>,
+    ) {
+        let (status, error_message) = match send_result {
+            Ok(()) => ("success", None),
+            Err(e) => ("failed", Some(e.to_string())),
+        };
+
+        let log = NotificationLogRow {
+            id: oxmon_common::id::next_id(),
+            alert_event_id: event.id.clone(),
+            rule_id: event.rule_id.clone(),
+            rule_name: event.rule_name.clone(),
+            agent_id: event.agent_id.clone(),
+            channel_id: ctx.channel_id.to_string(),
+            channel_name: ctx.channel_name.to_string(),
+            channel_type: ctx.channel_type.to_string(),
+            status: status.to_string(),
+            error_message,
+            duration_ms: ctx.duration_ms,
+            recipient_count: ctx.recipient_count,
+            severity: event.severity.to_string(),
+            created_at: Utc::now(),
+        };
+
+        if let Err(e) = cert_store.insert_notification_log(&log) {
+            tracing::warn!(
+                channel_id = %ctx.channel_id,
+                error = %e,
+                "Failed to write notification log"
+            );
         }
     }
 
@@ -340,5 +408,10 @@ impl NotificationManager {
     /// 获取 channel registry 引用。
     pub fn registry(&self) -> &ChannelRegistry {
         &self.registry
+    }
+
+    /// 获取 cert_store 引用（供 API 层记录通知日志使用）。
+    pub fn cert_store(&self) -> &Arc<CertStore> {
+        &self.cert_store
     }
 }

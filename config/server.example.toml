@@ -71,6 +71,8 @@ default_password = "changeme"   # Default admin password (created on first start
 [notification]
 # Aggregation window for batching similar alerts (seconds)
 aggregation_window_secs = 60
+# How many days to retain notification send logs (default: 30)
+log_retention_days = 30
 
 # Certificate Check Configuration
 # Server periodically checks TLS certificates for monitored domains.
