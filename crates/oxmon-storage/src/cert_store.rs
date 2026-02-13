@@ -2410,6 +2410,193 @@ impl CertStore {
         Ok(count)
     }
 
+    /// Upsert system dictionary types: insert if missing, update label/description/sort_order if changed.
+    /// Returns (inserted, updated) counts.
+    pub fn upsert_system_dictionary_types(&self, items: &[DictionaryType]) -> Result<(usize, usize)> {
+        let conn = self.lock_conn();
+        let tx = conn.unchecked_transaction()?;
+        let mut inserted = 0usize;
+        let mut updated = 0usize;
+        {
+            let mut exists_stmt = tx.prepare(
+                "SELECT 1 FROM dictionary_types WHERE dict_type = ?1",
+            )?;
+            let mut update_stmt = tx.prepare(
+                "UPDATE dictionary_types SET
+                   dict_type_label = ?1, sort_order = ?2, description = ?3, updated_at = ?4
+                 WHERE dict_type = ?5
+                   AND (dict_type_label != ?1
+                     OR sort_order != ?2
+                     OR COALESCE(description, '') != COALESCE(?3, ''))",
+            )?;
+            let mut insert_stmt = tx.prepare(
+                "INSERT INTO dictionary_types (dict_type, dict_type_label, sort_order, description, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )?;
+            for item in items {
+                let exists: bool = exists_stmt
+                    .query_row(rusqlite::params![item.dict_type], |_| Ok(true))
+                    .unwrap_or(false);
+                if exists {
+                    let rows = update_stmt.execute(rusqlite::params![
+                        item.dict_type_label,
+                        item.sort_order,
+                        item.description,
+                        item.updated_at.timestamp(),
+                        item.dict_type,
+                    ])?;
+                    if rows > 0 {
+                        updated += 1;
+                    }
+                } else {
+                    insert_stmt.execute(rusqlite::params![
+                        item.dict_type,
+                        item.dict_type_label,
+                        item.sort_order,
+                        item.description,
+                        item.created_at.timestamp(),
+                        item.updated_at.timestamp(),
+                    ])?;
+                    inserted += 1;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok((inserted, updated))
+    }
+
+    /// Upsert system dictionary items (is_system = true): insert if missing, update label/value/description/sort_order if changed.
+    /// Uses (dict_type, dict_key) unique constraint for conflict detection.
+    /// Returns (inserted, updated) counts.
+    pub fn upsert_system_dictionaries(&self, items: &[DictionaryItem]) -> Result<(usize, usize)> {
+        let conn = self.lock_conn();
+        let tx = conn.unchecked_transaction()?;
+        let mut inserted = 0usize;
+        let mut updated = 0usize;
+        {
+            // First try to update existing rows (only system items)
+            let mut update_stmt = tx.prepare(
+                "UPDATE system_dictionaries SET
+                   dict_label = ?1,
+                   dict_value = ?2,
+                   sort_order = ?3,
+                   description = ?4,
+                   updated_at = ?5
+                 WHERE dict_type = ?6 AND dict_key = ?7 AND is_system = 1
+                   AND (dict_label != ?1
+                     OR COALESCE(dict_value, '') != COALESCE(?2, '')
+                     OR sort_order != ?3
+                     OR COALESCE(description, '') != COALESCE(?4, ''))",
+            )?;
+            let mut insert_stmt = tx.prepare(
+                "INSERT OR IGNORE INTO system_dictionaries (id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            )?;
+            for item in items {
+                // Try update first
+                let rows_updated = update_stmt.execute(rusqlite::params![
+                    item.dict_label,
+                    item.dict_value,
+                    item.sort_order,
+                    item.description,
+                    item.updated_at.timestamp(),
+                    item.dict_type,
+                    item.dict_key,
+                ])?;
+                if rows_updated > 0 {
+                    updated += 1;
+                } else {
+                    // Try insert (OR IGNORE handles existing but unchanged rows)
+                    let rows_inserted = insert_stmt.execute(rusqlite::params![
+                        item.id,
+                        item.dict_type,
+                        item.dict_key,
+                        item.dict_label,
+                        item.dict_value,
+                        item.sort_order,
+                        item.enabled as i32,
+                        item.is_system as i32,
+                        item.description,
+                        item.extra_json,
+                        item.created_at.timestamp(),
+                        item.updated_at.timestamp(),
+                    ])?;
+                    if rows_inserted > 0 {
+                        inserted += 1;
+                    }
+                }
+            }
+        }
+        tx.commit()?;
+        Ok((inserted, updated))
+    }
+
+    /// Disable system dictionary items whose (dict_type, dict_key) is NOT in the given set.
+    /// Only affects rows where is_system = 1 and enabled = 1.
+    /// Returns the number of rows disabled.
+    pub fn disable_stale_system_dictionaries(
+        &self,
+        active_keys: &[(String, String)],
+    ) -> Result<usize> {
+        if active_keys.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+
+        // Build a set of placeholders for the IN clause
+        // SQLite doesn't support tuple IN, so use a temp table approach
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS _active_keys (dict_type TEXT, dict_key TEXT)",
+        )?;
+        tx.execute_batch("DELETE FROM _active_keys")?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO _active_keys (dict_type, dict_key) VALUES (?1, ?2)",
+            )?;
+            for (dt, dk) in active_keys {
+                stmt.execute(rusqlite::params![dt, dk])?;
+            }
+        }
+        let disabled = tx.execute(
+            "UPDATE system_dictionaries SET enabled = 0, updated_at = ?1
+             WHERE is_system = 1 AND enabled = 1
+               AND NOT EXISTS (
+                 SELECT 1 FROM _active_keys ak
+                 WHERE ak.dict_type = system_dictionaries.dict_type
+                   AND ak.dict_key = system_dictionaries.dict_key
+               )",
+            rusqlite::params![now],
+        )?;
+        tx.execute_batch("DROP TABLE IF EXISTS _active_keys")?;
+        tx.commit()?;
+        Ok(disabled)
+    }
+
+    /// Delete dictionary types that are NOT in the given set of active type names.
+    /// Returns the number of rows deleted.
+    pub fn delete_stale_dictionary_types(&self, active_types: &[String]) -> Result<usize> {
+        if active_types.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.lock_conn();
+        // Build placeholders: (?1, ?2, ..., ?N)
+        let placeholders: Vec<String> = (1..=active_types.len())
+            .map(|i| format!("?{i}"))
+            .collect();
+        let sql = format!(
+            "DELETE FROM dictionary_types WHERE dict_type NOT IN ({})",
+            placeholders.join(", ")
+        );
+        let params: Vec<&dyn rusqlite::types::ToSql> = active_types
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let deleted = conn.execute(&sql, params.as_slice())?;
+        Ok(deleted)
+    }
+
     /// Ensure a dictionary type exists; if not, insert with label = dict_type.
     pub fn ensure_dictionary_type(&self, dict_type: &str) -> Result<()> {
         let conn = self.lock_conn();
@@ -3284,5 +3471,361 @@ mod tests {
         let by_domain = store.query_result_by_domain("cert.com").unwrap().unwrap();
         assert_eq!(by_domain.issuer, Some("Let's Encrypt".to_string()));
         assert_eq!(by_domain.resolved_ips.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_upsert_system_dictionary_types() {
+        let (_dir, store) = setup();
+        let now = Utc::now();
+        let items = vec![
+            DictionaryType {
+                dict_type: "severity".to_string(),
+                dict_type_label: "告警级别".to_string(),
+                sort_order: 1,
+                description: Some("告警严重程度".to_string()),
+                created_at: now,
+                updated_at: now,
+            },
+            DictionaryType {
+                dict_type: "channel_type".to_string(),
+                dict_type_label: "渠道类型".to_string(),
+                sort_order: 2,
+                description: None,
+                created_at: now,
+                updated_at: now,
+            },
+        ];
+
+        // First call: both inserted
+        let (ins, upd) = store.upsert_system_dictionary_types(&items).unwrap();
+        assert_eq!(ins, 2);
+        assert_eq!(upd, 0);
+
+        // Same data again: no changes
+        let (ins, upd) = store.upsert_system_dictionary_types(&items).unwrap();
+        assert_eq!(ins, 0);
+        assert_eq!(upd, 0);
+
+        // Update label of severity
+        let updated_items = vec![DictionaryType {
+            dict_type: "severity".to_string(),
+            dict_type_label: "告警级别(更新)".to_string(),
+            sort_order: 1,
+            description: Some("告警严重程度".to_string()),
+            created_at: now,
+            updated_at: now,
+        }];
+        let (ins, upd) = store.upsert_system_dictionary_types(&updated_items).unwrap();
+        assert_eq!(ins, 0);
+        assert_eq!(upd, 1);
+
+        // Verify updated
+        let dt = store.get_dictionary_type("severity").unwrap().unwrap();
+        assert_eq!(dt.dict_type_label, "告警级别(更新)");
+
+        // channel_type unchanged
+        let dt2 = store.get_dictionary_type("channel_type").unwrap().unwrap();
+        assert_eq!(dt2.dict_type_label, "渠道类型");
+    }
+
+    #[test]
+    fn test_upsert_system_dictionaries() {
+        let (_dir, store) = setup();
+        let now = Utc::now();
+
+        // Setup dictionary type first
+        store
+            .batch_insert_dictionary_types(&[DictionaryType {
+                dict_type: "severity".to_string(),
+                dict_type_label: "告警级别".to_string(),
+                sort_order: 1,
+                description: None,
+                created_at: now,
+                updated_at: now,
+            }])
+            .unwrap();
+
+        let items = vec![
+            DictionaryItem {
+                id: "id-1".to_string(),
+                dict_type: "severity".to_string(),
+                dict_key: "info".to_string(),
+                dict_label: "信息".to_string(),
+                dict_value: Some("1".to_string()),
+                sort_order: 1,
+                enabled: true,
+                is_system: true,
+                description: Some("低级别提示".to_string()),
+                extra_json: None,
+                created_at: now,
+                updated_at: now,
+            },
+            DictionaryItem {
+                id: "id-2".to_string(),
+                dict_type: "severity".to_string(),
+                dict_key: "warning".to_string(),
+                dict_label: "警告".to_string(),
+                dict_value: Some("2".to_string()),
+                sort_order: 2,
+                enabled: true,
+                is_system: true,
+                description: Some("需要关注".to_string()),
+                extra_json: None,
+                created_at: now,
+                updated_at: now,
+            },
+        ];
+
+        // First call: both inserted
+        let (ins, upd) = store.upsert_system_dictionaries(&items).unwrap();
+        assert_eq!(ins, 2);
+        assert_eq!(upd, 0);
+
+        // Same data again: no changes
+        let (ins, upd) = store.upsert_system_dictionaries(&items).unwrap();
+        assert_eq!(ins, 0);
+        assert_eq!(upd, 0);
+
+        // Update label of "info"
+        let updated = vec![DictionaryItem {
+            id: "id-new".to_string(), // id doesn't matter for upsert, matched by type+key
+            dict_type: "severity".to_string(),
+            dict_key: "info".to_string(),
+            dict_label: "信息(更新)".to_string(),
+            dict_value: Some("1".to_string()),
+            sort_order: 1,
+            enabled: true,
+            is_system: true,
+            description: Some("低级别提示".to_string()),
+            extra_json: None,
+            created_at: now,
+            updated_at: now,
+        }];
+        let (ins, upd) = store.upsert_system_dictionaries(&updated).unwrap();
+        assert_eq!(ins, 0);
+        assert_eq!(upd, 1);
+
+        // Verify updated — original id preserved
+        let all = store.list_dictionaries_by_type("severity", false).unwrap();
+        let info_item = all.iter().find(|i| i.dict_key == "info").unwrap();
+        assert_eq!(info_item.dict_label, "信息(更新)");
+        assert_eq!(info_item.id, "id-1"); // original id preserved
+
+        // Add new item via upsert
+        let new_item = vec![DictionaryItem {
+            id: "id-3".to_string(),
+            dict_type: "severity".to_string(),
+            dict_key: "critical".to_string(),
+            dict_label: "严重".to_string(),
+            dict_value: Some("3".to_string()),
+            sort_order: 3,
+            enabled: true,
+            is_system: true,
+            description: Some("需要立即处理".to_string()),
+            extra_json: None,
+            created_at: now,
+            updated_at: now,
+        }];
+        let (ins, upd) = store.upsert_system_dictionaries(&new_item).unwrap();
+        assert_eq!(ins, 1);
+        assert_eq!(upd, 0);
+        assert_eq!(store.list_dictionaries_by_type("severity", false).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_upsert_system_dictionaries_skips_non_system() {
+        let (_dir, store) = setup();
+        let now = Utc::now();
+
+        store
+            .batch_insert_dictionary_types(&[DictionaryType {
+                dict_type: "custom".to_string(),
+                dict_type_label: "Custom".to_string(),
+                sort_order: 1,
+                description: None,
+                created_at: now,
+                updated_at: now,
+            }])
+            .unwrap();
+
+        // Insert a non-system item manually
+        let non_system = DictionaryItem {
+            id: "user-1".to_string(),
+            dict_type: "custom".to_string(),
+            dict_key: "my_key".to_string(),
+            dict_label: "User Label".to_string(),
+            dict_value: None,
+            sort_order: 1,
+            enabled: true,
+            is_system: false,
+            description: None,
+            extra_json: None,
+            created_at: now,
+            updated_at: now,
+        };
+        store.batch_insert_dictionaries(&[non_system]).unwrap();
+
+        // Upsert with same type+key but is_system=true — should NOT update the non-system row
+        // (the UPDATE WHERE clause requires is_system = 1)
+        // INSERT OR IGNORE will also skip since unique constraint matches
+        let system_override = vec![DictionaryItem {
+            id: "sys-1".to_string(),
+            dict_type: "custom".to_string(),
+            dict_key: "my_key".to_string(),
+            dict_label: "System Override".to_string(),
+            dict_value: None,
+            sort_order: 1,
+            enabled: true,
+            is_system: true,
+            description: None,
+            extra_json: None,
+            created_at: now,
+            updated_at: now,
+        }];
+        let (ins, upd) = store.upsert_system_dictionaries(&system_override).unwrap();
+        assert_eq!(ins, 0); // blocked by unique constraint
+        assert_eq!(upd, 0); // blocked by is_system = 1 check
+
+        // Original non-system item unchanged
+        let item = store.get_dictionary_by_id("user-1").unwrap().unwrap();
+        assert_eq!(item.dict_label, "User Label");
+        assert!(!item.is_system);
+    }
+
+    #[test]
+    fn test_disable_stale_system_dictionaries() {
+        let (_dir, store) = setup();
+        let now = Utc::now();
+
+        store
+            .batch_insert_dictionary_types(&[DictionaryType {
+                dict_type: "severity".to_string(),
+                dict_type_label: "告警级别".to_string(),
+                sort_order: 1,
+                description: None,
+                created_at: now,
+                updated_at: now,
+            }])
+            .unwrap();
+
+        // Insert 3 system items
+        let items = vec![
+            DictionaryItem {
+                id: "s1".into(), dict_type: "severity".into(), dict_key: "info".into(),
+                dict_label: "信息".into(), dict_value: Some("1".into()), sort_order: 1,
+                enabled: true, is_system: true, description: None, extra_json: None,
+                created_at: now, updated_at: now,
+            },
+            DictionaryItem {
+                id: "s2".into(), dict_type: "severity".into(), dict_key: "warning".into(),
+                dict_label: "警告".into(), dict_value: Some("2".into()), sort_order: 2,
+                enabled: true, is_system: true, description: None, extra_json: None,
+                created_at: now, updated_at: now,
+            },
+            DictionaryItem {
+                id: "s3".into(), dict_type: "severity".into(), dict_key: "critical".into(),
+                dict_label: "严重".into(), dict_value: Some("3".into()), sort_order: 3,
+                enabled: true, is_system: true, description: None, extra_json: None,
+                created_at: now, updated_at: now,
+            },
+        ];
+        store.batch_insert_dictionaries(&items).unwrap();
+
+        // Now "critical" is removed from seed — only info and warning are active
+        let active_keys = vec![
+            ("severity".to_string(), "info".to_string()),
+            ("severity".to_string(), "warning".to_string()),
+        ];
+        let disabled = store.disable_stale_system_dictionaries(&active_keys).unwrap();
+        assert_eq!(disabled, 1);
+
+        // Verify: critical is disabled
+        let critical = store.get_dictionary_by_id("s3").unwrap().unwrap();
+        assert!(!critical.enabled);
+
+        // info and warning still enabled
+        let info = store.get_dictionary_by_id("s1").unwrap().unwrap();
+        assert!(info.enabled);
+        let warning = store.get_dictionary_by_id("s2").unwrap().unwrap();
+        assert!(warning.enabled);
+
+        // Calling again should disable 0 (already disabled)
+        let disabled2 = store.disable_stale_system_dictionaries(&active_keys).unwrap();
+        assert_eq!(disabled2, 0);
+    }
+
+    #[test]
+    fn test_disable_stale_skips_non_system_items() {
+        let (_dir, store) = setup();
+        let now = Utc::now();
+
+        store
+            .batch_insert_dictionary_types(&[DictionaryType {
+                dict_type: "custom".to_string(),
+                dict_type_label: "Custom".to_string(),
+                sort_order: 1,
+                description: None,
+                created_at: now,
+                updated_at: now,
+            }])
+            .unwrap();
+
+        // Insert a non-system item
+        store
+            .batch_insert_dictionaries(&[DictionaryItem {
+                id: "u1".into(), dict_type: "custom".into(), dict_key: "user_key".into(),
+                dict_label: "User".into(), dict_value: None, sort_order: 1,
+                enabled: true, is_system: false, description: None, extra_json: None,
+                created_at: now, updated_at: now,
+            }])
+            .unwrap();
+
+        // Disable stale with empty active set — should NOT affect non-system items
+        // (empty active_keys returns early with 0)
+        let disabled = store
+            .disable_stale_system_dictionaries(&[("other".to_string(), "x".to_string())])
+            .unwrap();
+        assert_eq!(disabled, 0); // non-system items are untouched
+
+        let item = store.get_dictionary_by_id("u1").unwrap().unwrap();
+        assert!(item.enabled);
+    }
+
+    #[test]
+    fn test_delete_stale_dictionary_types() {
+        let (_dir, store) = setup();
+        let now = Utc::now();
+
+        store
+            .batch_insert_dictionary_types(&[
+                DictionaryType {
+                    dict_type: "severity".to_string(),
+                    dict_type_label: "告警级别".to_string(),
+                    sort_order: 1, description: None, created_at: now, updated_at: now,
+                },
+                DictionaryType {
+                    dict_type: "old_type".to_string(),
+                    dict_type_label: "旧类型".to_string(),
+                    sort_order: 2, description: None, created_at: now, updated_at: now,
+                },
+                DictionaryType {
+                    dict_type: "channel_type".to_string(),
+                    dict_type_label: "渠道类型".to_string(),
+                    sort_order: 3, description: None, created_at: now, updated_at: now,
+                },
+            ])
+            .unwrap();
+        assert_eq!(store.list_dictionary_types().unwrap().len(), 3);
+
+        // Only severity and channel_type remain in seed
+        let active = vec!["severity".to_string(), "channel_type".to_string()];
+        let deleted = store.delete_stale_dictionary_types(&active).unwrap();
+        assert_eq!(deleted, 1);
+        assert_eq!(store.list_dictionary_types().unwrap().len(), 2);
+        assert!(store.get_dictionary_type("old_type").unwrap().is_none());
+
+        // Calling again — no more deletions
+        let deleted2 = store.delete_stale_dictionary_types(&active).unwrap();
+        assert_eq!(deleted2, 0);
     }
 }

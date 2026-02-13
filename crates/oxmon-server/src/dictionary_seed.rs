@@ -201,29 +201,57 @@ fn make_system_item(
     }
 }
 
-/// Initialize default system dictionaries if the table is empty.
-/// Returns the number of items inserted, or 0 if table already has data.
+/// Sync default system dictionaries on every startup.
+///
+/// - Dictionary types: upsert all, delete stale types no longer in seed
+/// - Dictionary items (is_system=true): upsert all, disable stale items no longer in seed
+///
+/// This ensures code-level changes to system dictionaries are always reflected in the DB.
 pub fn init_default_dictionaries(cert_store: &CertStore) -> anyhow::Result<usize> {
-    // Always seed dictionary types (INSERT OR IGNORE ensures idempotency)
+    // 1. Sync dictionary types
     let type_items = default_type_seed_items();
-    let types_inserted = cert_store.batch_insert_dictionary_types(&type_items)?;
-    if types_inserted > 0 {
-        tracing::info!(types_inserted, "Initialized default dictionary types");
-    }
-
-    let count = cert_store.count_dictionaries()?;
-    if count > 0 {
+    let (types_inserted, types_updated) =
+        cert_store.upsert_system_dictionary_types(&type_items)?;
+    if types_inserted > 0 || types_updated > 0 {
         tracing::info!(
-            count,
-            "System dictionaries already exist, skipping seed initialization"
+            types_inserted,
+            types_updated,
+            "Synced system dictionary types"
         );
-        return Ok(0);
     }
 
+    // 2. Sync system dictionary items
     let items = default_seed_items();
-    let inserted = cert_store.batch_insert_dictionaries(&items)?;
-    tracing::info!(inserted, "Initialized default system dictionaries");
-    Ok(inserted)
+    let (items_inserted, items_updated) = cert_store.upsert_system_dictionaries(&items)?;
+    if items_inserted > 0 || items_updated > 0 {
+        tracing::info!(
+            items_inserted,
+            items_updated,
+            "Synced system dictionary items"
+        );
+    }
+
+    // 3. Disable system items that no longer exist in seed data
+    let active_keys: Vec<(String, String)> = items
+        .iter()
+        .map(|i| (i.dict_type.clone(), i.dict_key.clone()))
+        .collect();
+    let disabled = cert_store.disable_stale_system_dictionaries(&active_keys)?;
+    if disabled > 0 {
+        tracing::info!(disabled, "Disabled stale system dictionary items");
+    }
+
+    // 4. Delete dictionary types that no longer exist in seed data
+    let active_types: Vec<String> = type_items
+        .iter()
+        .map(|t| t.dict_type.clone())
+        .collect();
+    let types_deleted = cert_store.delete_stale_dictionary_types(&active_types)?;
+    if types_deleted > 0 {
+        tracing::info!(types_deleted, "Deleted stale dictionary types");
+    }
+
+    Ok(items_inserted + items_updated + disabled)
 }
 
 /// Initialize dictionaries from a JSON seed file.

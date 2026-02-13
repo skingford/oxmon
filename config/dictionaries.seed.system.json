@@ -1,0 +1,503 @@
+{
+  "dictionary_types": [
+    {
+      "dict_type": "channel_type",
+      "dict_type_label": "通知渠道类型",
+      "sort_order": 1,
+      "description": "通知渠道类型分类"
+    },
+    {
+      "dict_type": "severity",
+      "dict_type_label": "告警级别",
+      "sort_order": 2,
+      "description": "告警严重程度级别"
+    },
+    {
+      "dict_type": "rule_type",
+      "dict_type_label": "告警规则类型",
+      "sort_order": 3,
+      "description": "告警规则的触发类型"
+    },
+    {
+      "dict_type": "alert_status",
+      "dict_type_label": "告警状态",
+      "sort_order": 4,
+      "description": "告警事件的处理状态"
+    },
+    {
+      "dict_type": "agent_status",
+      "dict_type_label": "Agent 状态",
+      "sort_order": 5,
+      "description": "监控 Agent 的在线状态"
+    },
+    {
+      "dict_type": "compare_operator",
+      "dict_type_label": "比较运算符",
+      "sort_order": 6,
+      "description": "告警规则中的比较运算符"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_type_label": "系统指标名称",
+      "sort_order": 7,
+      "description": "可监控的系统指标"
+    },
+    {
+      "dict_type": "rule_source",
+      "dict_type_label": "规则来源",
+      "sort_order": 8,
+      "description": "告警规则的创建来源"
+    },
+    {
+      "dict_type": "recipient_type",
+      "dict_type_label": "接收人类型",
+      "sort_order": 9,
+      "description": "通知接收人的类型"
+    },
+    {
+      "dict_type": "system_config_type",
+      "dict_type_label": "系统配置类型",
+      "sort_order": 10,
+      "description": "系统级发送方配置的类型"
+    }
+  ],
+  "dictionaries": [
+    {
+      "dict_type": "channel_type",
+      "dict_key": "email",
+      "dict_label": "邮件",
+      "sort_order": 1,
+      "is_system": true,
+      "description": "SMTP 邮件通知"
+    },
+    {
+      "dict_type": "channel_type",
+      "dict_key": "webhook",
+      "dict_label": "Webhook",
+      "sort_order": 2,
+      "is_system": true,
+      "description": "HTTP Webhook 回调"
+    },
+    {
+      "dict_type": "channel_type",
+      "dict_key": "sms_aliyun",
+      "dict_label": "阿里云短信",
+      "sort_order": 3,
+      "is_system": true,
+      "description": "阿里云短信服务"
+    },
+    {
+      "dict_type": "channel_type",
+      "dict_key": "sms_tencent",
+      "dict_label": "腾讯云短信",
+      "sort_order": 4,
+      "is_system": true,
+      "description": "腾讯云短信服务"
+    },
+    {
+      "dict_type": "channel_type",
+      "dict_key": "sms_generic",
+      "dict_label": "通用短信",
+      "sort_order": 5,
+      "is_system": true,
+      "description": "通用 HTTP 短信网关"
+    },
+    {
+      "dict_type": "channel_type",
+      "dict_key": "dingtalk",
+      "dict_label": "钉钉",
+      "sort_order": 6,
+      "is_system": true,
+      "description": "钉钉机器人通知"
+    },
+    {
+      "dict_type": "channel_type",
+      "dict_key": "weixin",
+      "dict_label": "企业微信",
+      "sort_order": 7,
+      "is_system": true,
+      "description": "企业微信机器人通知"
+    },
+
+    {
+      "dict_type": "severity",
+      "dict_key": "info",
+      "dict_label": "信息",
+      "dict_value": "1",
+      "sort_order": 1,
+      "is_system": true,
+      "description": "低级别提示"
+    },
+    {
+      "dict_type": "severity",
+      "dict_key": "warning",
+      "dict_label": "警告",
+      "dict_value": "2",
+      "sort_order": 2,
+      "is_system": true,
+      "description": "需要关注的告警"
+    },
+    {
+      "dict_type": "severity",
+      "dict_key": "critical",
+      "dict_label": "严重",
+      "dict_value": "3",
+      "sort_order": 3,
+      "is_system": true,
+      "description": "需要立即处理的告警"
+    },
+
+    {
+      "dict_type": "rule_type",
+      "dict_key": "threshold",
+      "dict_label": "阈值规则",
+      "sort_order": 1,
+      "is_system": true,
+      "description": "当指标值超过设定阈值时触发"
+    },
+    {
+      "dict_type": "rule_type",
+      "dict_key": "rate_of_change",
+      "dict_label": "变化率规则",
+      "sort_order": 2,
+      "is_system": true,
+      "description": "当指标变化速率超过阈值时触发"
+    },
+    {
+      "dict_type": "rule_type",
+      "dict_key": "trend",
+      "dict_label": "趋势预测规则",
+      "sort_order": 3,
+      "is_system": true,
+      "description": "根据趋势预测指标将在未来超过阈值"
+    },
+    {
+      "dict_type": "rule_type",
+      "dict_key": "cert_expiration",
+      "dict_label": "证书过期规则",
+      "sort_order": 4,
+      "is_system": true,
+      "description": "证书即将过期时触发"
+    },
+
+    {
+      "dict_type": "alert_status",
+      "dict_key": "pending",
+      "dict_label": "未处理",
+      "dict_value": "1",
+      "sort_order": 1,
+      "is_system": true,
+      "description": "告警已触发，等待处理"
+    },
+    {
+      "dict_type": "alert_status",
+      "dict_key": "acknowledged",
+      "dict_label": "已确认",
+      "dict_value": "2",
+      "sort_order": 2,
+      "is_system": true,
+      "description": "告警已被确认"
+    },
+    {
+      "dict_type": "alert_status",
+      "dict_key": "resolved",
+      "dict_label": "已处理",
+      "dict_value": "3",
+      "sort_order": 3,
+      "is_system": true,
+      "description": "告警已被处理/关闭"
+    },
+
+    {
+      "dict_type": "agent_status",
+      "dict_key": "active",
+      "dict_label": "在线",
+      "sort_order": 1,
+      "is_system": true,
+      "description": "Agent 正在正常上报数据"
+    },
+    {
+      "dict_type": "agent_status",
+      "dict_key": "inactive",
+      "dict_label": "离线",
+      "sort_order": 2,
+      "is_system": true,
+      "description": "Agent 已超时未上报"
+    },
+    {
+      "dict_type": "agent_status",
+      "dict_key": "unknown",
+      "dict_label": "未知",
+      "sort_order": 3,
+      "is_system": true,
+      "description": "Agent 状态未确定"
+    },
+
+    {
+      "dict_type": "compare_operator",
+      "dict_key": "gt",
+      "dict_label": "大于",
+      "dict_value": ">",
+      "sort_order": 1,
+      "is_system": true,
+      "description": "值大于阈值"
+    },
+    {
+      "dict_type": "compare_operator",
+      "dict_key": "gte",
+      "dict_label": "大于等于",
+      "dict_value": ">=",
+      "sort_order": 2,
+      "is_system": true,
+      "description": "值大于等于阈值"
+    },
+    {
+      "dict_type": "compare_operator",
+      "dict_key": "lt",
+      "dict_label": "小于",
+      "dict_value": "<",
+      "sort_order": 3,
+      "is_system": true,
+      "description": "值小于阈值"
+    },
+    {
+      "dict_type": "compare_operator",
+      "dict_key": "lte",
+      "dict_label": "小于等于",
+      "dict_value": "<=",
+      "sort_order": 4,
+      "is_system": true,
+      "description": "值小于等于阈值"
+    },
+    {
+      "dict_type": "compare_operator",
+      "dict_key": "eq",
+      "dict_label": "等于",
+      "dict_value": "==",
+      "sort_order": 5,
+      "is_system": true,
+      "description": "值等于阈值"
+    },
+    {
+      "dict_type": "compare_operator",
+      "dict_key": "ne",
+      "dict_label": "不等于",
+      "dict_value": "!=",
+      "sort_order": 6,
+      "is_system": true,
+      "description": "值不等于阈值"
+    },
+
+    {
+      "dict_type": "metric_name",
+      "dict_key": "cpu.usage",
+      "dict_label": "CPU 使用率",
+      "sort_order": 1,
+      "is_system": true,
+      "description": "CPU 整体使用百分比"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "cpu.user",
+      "dict_label": "CPU 用户态",
+      "sort_order": 2,
+      "is_system": true,
+      "description": "CPU 用户态使用百分比"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "cpu.system",
+      "dict_label": "CPU 系统态",
+      "sort_order": 3,
+      "is_system": true,
+      "description": "CPU 系统态使用百分比"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "memory.usage",
+      "dict_label": "内存使用率",
+      "sort_order": 4,
+      "is_system": true,
+      "description": "内存使用百分比"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "memory.used_bytes",
+      "dict_label": "已用内存",
+      "sort_order": 5,
+      "is_system": true,
+      "description": "已使用内存字节数"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "memory.total_bytes",
+      "dict_label": "总内存",
+      "sort_order": 6,
+      "is_system": true,
+      "description": "总内存字节数"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "memory.available_bytes",
+      "dict_label": "可用内存",
+      "sort_order": 7,
+      "is_system": true,
+      "description": "可用内存字节数"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "disk.usage",
+      "dict_label": "磁盘使用率",
+      "sort_order": 8,
+      "is_system": true,
+      "description": "磁盘使用百分比"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "disk.used_bytes",
+      "dict_label": "已用磁盘",
+      "sort_order": 9,
+      "is_system": true,
+      "description": "已使用磁盘字节数"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "disk.total_bytes",
+      "dict_label": "磁盘总量",
+      "sort_order": 10,
+      "is_system": true,
+      "description": "磁盘总容量字节数"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "disk.available_bytes",
+      "dict_label": "可用磁盘",
+      "sort_order": 11,
+      "is_system": true,
+      "description": "可用磁盘字节数"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "disk.read_bytes_per_sec",
+      "dict_label": "磁盘读速率",
+      "sort_order": 12,
+      "is_system": true,
+      "description": "磁盘每秒读取字节数"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "disk.write_bytes_per_sec",
+      "dict_label": "磁盘写速率",
+      "sort_order": 13,
+      "is_system": true,
+      "description": "磁盘每秒写入字节数"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "network.rx_bytes_per_sec",
+      "dict_label": "网络接收速率",
+      "sort_order": 14,
+      "is_system": true,
+      "description": "网络每秒接收字节数"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "network.tx_bytes_per_sec",
+      "dict_label": "网络发送速率",
+      "sort_order": 15,
+      "is_system": true,
+      "description": "网络每秒发送字节数"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "load.load1",
+      "dict_label": "1分钟负载",
+      "sort_order": 16,
+      "is_system": true,
+      "description": "系统1分钟平均负载"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "load.load5",
+      "dict_label": "5分钟负载",
+      "sort_order": 17,
+      "is_system": true,
+      "description": "系统5分钟平均负载"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "load.load15",
+      "dict_label": "15分钟负载",
+      "sort_order": 18,
+      "is_system": true,
+      "description": "系统15分钟平均负载"
+    },
+
+    {
+      "dict_type": "rule_source",
+      "dict_key": "api",
+      "dict_label": "API 创建",
+      "sort_order": 1,
+      "is_system": true,
+      "description": "通过 REST API 创建"
+    },
+    {
+      "dict_type": "rule_source",
+      "dict_key": "seed",
+      "dict_label": "种子数据",
+      "sort_order": 2,
+      "is_system": true,
+      "description": "通过 init-rules 命令导入"
+    },
+    {
+      "dict_type": "rule_source",
+      "dict_key": "toml",
+      "dict_label": "TOML 迁移",
+      "sort_order": 3,
+      "is_system": true,
+      "description": "从 TOML 配置文件迁移"
+    },
+
+    {
+      "dict_type": "recipient_type",
+      "dict_key": "email_address",
+      "dict_label": "邮箱地址",
+      "sort_order": 1,
+      "is_system": true,
+      "description": "用于邮件通知"
+    },
+    {
+      "dict_type": "recipient_type",
+      "dict_key": "phone_number",
+      "dict_label": "手机号码",
+      "sort_order": 2,
+      "is_system": true,
+      "description": "用于短信通知"
+    },
+    {
+      "dict_type": "recipient_type",
+      "dict_key": "webhook_url",
+      "dict_label": "Webhook URL",
+      "sort_order": 3,
+      "is_system": true,
+      "description": "用于 HTTP 回调通知"
+    },
+
+    {
+      "dict_type": "system_config_type",
+      "dict_key": "email",
+      "dict_label": "邮件发送配置",
+      "sort_order": 1,
+      "is_system": true,
+      "description": "SMTP 邮件发送方配置"
+    },
+    {
+      "dict_type": "system_config_type",
+      "dict_key": "sms",
+      "dict_label": "短信发送配置",
+      "sort_order": 2,
+      "is_system": true,
+      "description": "短信供应商发送方配置"
+    }
+  ]
+}
