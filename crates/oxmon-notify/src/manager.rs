@@ -2,7 +2,7 @@ use crate::plugin::ChannelRegistry;
 use crate::NotificationChannel;
 use chrono::{DateTime, Duration, NaiveTime, Utc};
 use oxmon_common::types::AlertEvent;
-use oxmon_storage::cert_store::CertStore;
+use oxmon_storage::cert_store::{CertStore, NotificationChannelRow};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -47,6 +47,105 @@ pub struct NotificationManager {
     pending: Mutex<HashMap<String, AggregationEntry>>,
 }
 
+/// Check whether a JSON value represents a meaningful (non-empty) configuration.
+/// An empty object `{}` or null is not considered meaningful.
+pub fn is_meaningful_config(config: &serde_json::Value) -> bool {
+    match config {
+        serde_json::Value::Object(map) => !map.is_empty(),
+        _ => false,
+    }
+}
+
+/// Parse a config_json string into a serde_json::Value.
+/// Returns None if parsing fails or the input is empty.
+pub fn parse_config_json(raw: &str) -> Option<serde_json::Value> {
+    if raw.trim().is_empty() {
+        return None;
+    }
+    serde_json::from_str(raw).ok()
+}
+
+/// Resolve the effective configuration for a notification channel.
+///
+/// Priority:
+/// 1. Channel's own `config_json` (if non-empty and not `{}`)
+/// 2. Global system config via `system_config_id` (if present and enabled)
+/// 3. None (channel should be skipped)
+pub fn resolve_config(
+    cert_store: &CertStore,
+    row: &NotificationChannelRow,
+) -> Option<serde_json::Value> {
+    // Step 1: Try channel's own config_json
+    if let Some(cfg) = parse_config_json(&row.config_json) {
+        if is_meaningful_config(&cfg) {
+            tracing::debug!(
+                channel_id = %row.id,
+                name = %row.name,
+                "Using channel-level config"
+            );
+            return Some(cfg);
+        }
+    }
+
+    // Step 2: Fallback to system_config_id
+    if let Some(ref sc_id) = row.system_config_id {
+        match cert_store.get_system_config_by_id(sc_id) {
+            Ok(Some(sc)) => {
+                if !sc.enabled {
+                    tracing::warn!(
+                        channel_id = %row.id,
+                        system_config_id = %sc_id,
+                        "System config is disabled, channel has no own config, skipping"
+                    );
+                    return None;
+                }
+                if let Some(cfg) = parse_config_json(&sc.config_json) {
+                    if is_meaningful_config(&cfg) {
+                        tracing::debug!(
+                            channel_id = %row.id,
+                            system_config_id = %sc_id,
+                            "Using system-level config (fallback)"
+                        );
+                        return Some(cfg);
+                    }
+                }
+                tracing::warn!(
+                    channel_id = %row.id,
+                    system_config_id = %sc_id,
+                    "System config exists but has empty config_json, skipping"
+                );
+                return None;
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    channel_id = %row.id,
+                    system_config_id = %sc_id,
+                    "System config not found, channel has no own config, skipping"
+                );
+                return None;
+            }
+            Err(e) => {
+                tracing::error!(
+                    channel_id = %row.id,
+                    system_config_id = %sc_id,
+                    error = %e,
+                    "Failed to load system config, skipping channel"
+                );
+                return None;
+            }
+        }
+    }
+
+    // Step 3: No config_json, no system_config_id
+    tracing::warn!(
+        channel_id = %row.id,
+        channel_type = %row.channel_type,
+        name = %row.name,
+        "Channel has no config and no system_config_id, skipping"
+    );
+    None
+}
+
 impl NotificationManager {
     pub fn new(
         registry: ChannelRegistry,
@@ -71,41 +170,10 @@ impl NotificationManager {
 
         let mut new_instances = HashMap::new();
         for (row, recipients) in channels_with_recipients {
-            // 如果有 system_config_id，从系统配置获取发送方配置
-            let config: serde_json::Value = if let Some(ref sc_id) = row.system_config_id {
-                match self.cert_store.get_system_config_by_id(sc_id) {
-                    Ok(Some(sc)) => {
-                        if !sc.enabled {
-                            tracing::warn!(
-                                channel_id = %row.id,
-                                system_config_id = %sc_id,
-                                "System config is disabled, skipping channel"
-                            );
-                            continue;
-                        }
-                        serde_json::from_str(&sc.config_json)
-                            .unwrap_or_else(|_| serde_json::json!({}))
-                    }
-                    Ok(None) => {
-                        tracing::error!(
-                            channel_id = %row.id,
-                            system_config_id = %sc_id,
-                            "System config not found, skipping channel"
-                        );
-                        continue;
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            channel_id = %row.id,
-                            error = %e,
-                            "Failed to load system config, skipping channel"
-                        );
-                        continue;
-                    }
-                }
-            } else {
-                serde_json::from_str(&row.config_json)
-                    .unwrap_or_else(|_| serde_json::json!({}))
+            // 配置优先级: 渠道自身 config_json > 全局 system_config > 跳过
+            let config = match resolve_config(&self.cert_store, &row) {
+                Some(cfg) => cfg,
+                None => continue,
             };
 
             match self.registry.create_channel(&row.channel_type, &row.id, &config) {

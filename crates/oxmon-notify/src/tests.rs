@@ -1,4 +1,4 @@
-use crate::manager::SilenceWindow;
+use crate::manager::{is_meaningful_config, parse_config_json, SilenceWindow};
 use crate::plugin::ChannelRegistry;
 use crate::routing::ChannelRoute;
 use chrono::NaiveTime;
@@ -356,4 +356,55 @@ fn sms_redact_config_covers_all_providers() {
     let redacted = plugin.redact_config(&tencent);
     assert_eq!(redacted["secret_key"], "***");
     assert_eq!(redacted["secret_id"], "visible");
+}
+
+// ── Config resolution helper tests ──
+
+#[test]
+fn is_meaningful_config_empty_object() {
+    assert!(!is_meaningful_config(&serde_json::json!({})));
+}
+
+#[test]
+fn is_meaningful_config_null() {
+    assert!(!is_meaningful_config(&serde_json::Value::Null));
+}
+
+#[test]
+fn is_meaningful_config_with_fields() {
+    assert!(is_meaningful_config(&serde_json::json!({"smtp_host": "mail.example.com"})));
+}
+
+#[test]
+fn is_meaningful_config_array_not_meaningful() {
+    assert!(!is_meaningful_config(&serde_json::json!([1, 2, 3])));
+}
+
+#[test]
+fn parse_config_json_valid() {
+    let result = parse_config_json(r#"{"key": "value"}"#);
+    assert!(result.is_some());
+    assert!(is_meaningful_config(&result.unwrap()));
+}
+
+#[test]
+fn parse_config_json_empty_string() {
+    assert!(parse_config_json("").is_none());
+}
+
+#[test]
+fn parse_config_json_whitespace_only() {
+    assert!(parse_config_json("   ").is_none());
+}
+
+#[test]
+fn parse_config_json_invalid_json() {
+    assert!(parse_config_json("{invalid}").is_none());
+}
+
+#[test]
+fn parse_config_json_empty_object() {
+    let result = parse_config_json("{}");
+    assert!(result.is_some());
+    assert!(!is_meaningful_config(&result.unwrap()));
 }

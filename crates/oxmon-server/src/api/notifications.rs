@@ -125,34 +125,18 @@ async fn test_channel(
         }
     };
 
-    // 解析渠道配置，如果有 system_config_id 则合并系统配置
-    let config: serde_json::Value = if let Some(ref sc_id) = ch.system_config_id {
-        match state.cert_store.get_system_config_by_id(sc_id) {
-            Ok(Some(sc)) => serde_json::from_str(&sc.config_json)
-                .unwrap_or_else(|_| serde_json::json!({})),
-            Ok(None) => {
-                return error_response(
-                    StatusCode::BAD_REQUEST,
-                    &trace_id,
-                    "invalid_system_config",
-                    &format!("System config not found: {sc_id}"),
-                )
-                .into_response();
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to lookup system config");
-                return error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &trace_id,
-                    "storage_error",
-                    "Database error",
-                )
-                .into_response();
-            }
+    // 配置优先级: 渠道自身 config_json > 全局 system_config > 跳过
+    let config = match oxmon_notify::manager::resolve_config(&state.cert_store, &ch) {
+        Some(cfg) => cfg,
+        None => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "no_config",
+                "Channel has no valid config and no system config fallback",
+            )
+            .into_response();
         }
-    } else {
-        serde_json::from_str(&ch.config_json)
-            .unwrap_or_else(|_| serde_json::json!({}))
     };
 
     let channel = match state
@@ -287,27 +271,43 @@ async fn create_channel_config(
     State(state): State<AppState>,
     Json(req): Json<CreateChannelRequest>,
 ) -> impl IntoResponse {
-    // 校验 config_json 是否可被对应 plugin 解析
-    let config_value: serde_json::Value = match serde_json::from_str(&req.config_json) {
-        Ok(v) => v,
-        Err(_) => serde_json::json!({}),
-    };
-    if let Some(plugin) = state.notifier.registry().get_plugin(&req.channel_type) {
-        if let Err(e) = plugin.validate_config(&config_value) {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                &trace_id,
-                "invalid_config",
-                &format!("Config validation failed: {e}"),
-            )
-            .into_response();
-        }
-    } else {
+    // 校验渠道类型是否已注册
+    if !state.notifier.registry().has_plugin(&req.channel_type) {
         return error_response(
             StatusCode::BAD_REQUEST,
             &trace_id,
             "unknown_channel_type",
             &format!("Unknown channel type: {}", req.channel_type),
+        )
+        .into_response();
+    }
+
+    // 校验 config_json：如果有实际配置内容则校验，为空时允许走 system_config_id 回退
+    let config_value: serde_json::Value = match serde_json::from_str(&req.config_json) {
+        Ok(v) => v,
+        Err(_) => serde_json::json!({}),
+    };
+    let has_own_config = oxmon_notify::manager::is_meaningful_config(&config_value);
+
+    if has_own_config {
+        if let Some(plugin) = state.notifier.registry().get_plugin(&req.channel_type) {
+            if let Err(e) = plugin.validate_config(&config_value) {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    &trace_id,
+                    "invalid_config",
+                    &format!("Config validation failed: {e}"),
+                )
+                .into_response();
+            }
+        }
+    } else if req.system_config_id.is_none() {
+        // 无自身配置也无全局配置引用 — 创建后将无法发送通知
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &trace_id,
+            "missing_config",
+            "Channel has no config_json and no system_config_id",
         )
         .into_response();
     }
