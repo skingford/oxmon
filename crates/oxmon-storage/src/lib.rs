@@ -89,6 +89,8 @@ pub trait StorageEngine: Send + Sync {
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
+        limit: usize,
+        offset: usize,
     ) -> Result<Vec<String>>;
 
     /// Returns distinct agent IDs observed in the given time range.
@@ -96,6 +98,8 @@ pub trait StorageEngine: Send + Sync {
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
+        limit: usize,
+        offset: usize,
     ) -> Result<Vec<String>>;
 
     /// Returns aggregated metric statistics (min, max, avg, count) for the

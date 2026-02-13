@@ -1,3 +1,4 @@
+use crate::api::pagination::PaginationParams;
 use crate::api::{error_response, success_empty_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
@@ -26,6 +27,7 @@ struct ListByTypeQuery {
     path = "/v1/dictionaries/types",
     tag = "Dictionaries",
     security(("bearer_auth" = [])),
+    params(PaginationParams),
     responses(
         (status = 200, description = "字典类型列表", body = Vec<DictionaryTypeSummary>),
         (status = 401, description = "未认证", body = crate::api::ApiError)
@@ -34,8 +36,9 @@ struct ListByTypeQuery {
 async fn list_dict_types(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
+    Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
-    match state.cert_store.list_all_dict_types() {
+    match state.cert_store.list_all_dict_types(pagination.limit(), pagination.offset()) {
         Ok(types) => success_response(StatusCode::OK, &trace_id, types),
         Err(e) => {
             tracing::error!(error = %e, "Failed to list dictionary types");
@@ -58,7 +61,8 @@ async fn list_dict_types(
     security(("bearer_auth" = [])),
     params(
         ("dict_type" = String, Path, description = "字典类型"),
-        ListByTypeQuery
+        ListByTypeQuery,
+        PaginationParams
     ),
     responses(
         (status = 200, description = "字典条目列表", body = Vec<DictionaryItem>),
@@ -70,10 +74,11 @@ async fn list_by_type(
     State(state): State<AppState>,
     Path(dict_type): Path<String>,
     Query(query): Query<ListByTypeQuery>,
+    Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
     match state
         .cert_store
-        .list_dictionaries_by_type(&dict_type, query.enabled_only)
+        .list_dictionaries_by_type(&dict_type, query.enabled_only, pagination.limit(), pagination.offset())
     {
         Ok(items) => success_response(StatusCode::OK, &trace_id, items),
         Err(e) => {

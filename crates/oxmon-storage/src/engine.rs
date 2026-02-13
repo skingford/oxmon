@@ -253,7 +253,7 @@ impl StorageEngine for SqliteStorageEngine {
                     params.push(Box::new(aid.to_string()));
                 }
 
-                sql.push_str(" ORDER BY timestamp DESC");
+                sql.push_str(" ORDER BY created_at DESC");
 
                 let mut stmt = conn.prepare(&sql)?;
                 let param_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -327,7 +327,7 @@ impl StorageEngine for SqliteStorageEngine {
             })?;
         }
 
-        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         let results = results.into_iter().skip(offset).take(limit).collect();
         Ok(results)
     }
@@ -336,6 +336,8 @@ impl StorageEngine for SqliteStorageEngine {
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
+        limit: usize,
+        offset: usize,
     ) -> Result<Vec<String>> {
         let keys = self.partitions.partitions_in_range(from, to)?;
         let from_ms = from.timestamp_millis();
@@ -359,6 +361,7 @@ impl StorageEngine for SqliteStorageEngine {
 
         let mut result: Vec<String> = names.into_iter().collect();
         result.sort();
+        let result = result.into_iter().skip(offset).take(limit).collect();
         Ok(result)
     }
 
@@ -366,6 +369,8 @@ impl StorageEngine for SqliteStorageEngine {
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
+        limit: usize,
+        offset: usize,
     ) -> Result<Vec<String>> {
         let keys = self.partitions.partitions_in_range(from, to)?;
         let from_ms = from.timestamp_millis();
@@ -389,6 +394,7 @@ impl StorageEngine for SqliteStorageEngine {
 
         let mut result: Vec<String> = ids.into_iter().collect();
         result.sort();
+        let result = result.into_iter().skip(offset).take(limit).collect();
         Ok(result)
     }
 
@@ -548,7 +554,7 @@ impl StorageEngine for SqliteStorageEngine {
                      FROM alert_events
                      WHERE timestamp >= ?1 AND timestamp <= ?2
                        AND (status IS NULL OR status NOT IN ('resolved'))
-                     ORDER BY timestamp DESC",
+                     ORDER BY created_at DESC",
                 )?;
                 let rows = stmt.query_map(rusqlite::params![from_ms, to_ms], |row| {
                     let ts_ms: i64 = row.get(8)?;
@@ -605,7 +611,7 @@ impl StorageEngine for SqliteStorageEngine {
             })?;
         }
 
-        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         let results = results.into_iter().skip(offset).take(limit).collect();
         Ok(results)
     }

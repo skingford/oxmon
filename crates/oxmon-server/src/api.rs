@@ -678,7 +678,7 @@ struct MetricDiscoveryParams {
     path = "/v1/metrics/names",
     tag = "Metrics",
     security(("bearer_auth" = [])),
-    params(MetricDiscoveryParams),
+    params(MetricDiscoveryParams, PaginationParams),
     responses(
         (status = 200, description = "指标名称列表", body = Vec<String>),
         (status = 401, description = "未认证", body = ApiError)
@@ -688,12 +688,13 @@ async fn metric_names(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(params): Query<MetricDiscoveryParams>,
+    Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
     let to = params.timestamp_lte.unwrap_or_else(Utc::now);
     let from = params
         .timestamp_gte
         .unwrap_or_else(|| to - chrono::Duration::days(1));
-    match state.storage.query_distinct_metric_names(from, to) {
+    match state.storage.query_distinct_metric_names(from, to, pagination.limit(), pagination.offset()) {
         Ok(names) => success_response(StatusCode::OK, &trace_id, names),
         Err(e) => {
             tracing::error!(error = %e, "Failed to query metric names");
@@ -714,7 +715,7 @@ async fn metric_names(
     path = "/v1/metrics/agents",
     tag = "Metrics",
     security(("bearer_auth" = [])),
-    params(MetricDiscoveryParams),
+    params(MetricDiscoveryParams, PaginationParams),
     responses(
         (status = 200, description = "Agent ID 列表", body = Vec<String>),
         (status = 401, description = "未认证", body = ApiError)
@@ -724,12 +725,13 @@ async fn metric_agents(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Query(params): Query<MetricDiscoveryParams>,
+    Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
     let to = params.timestamp_lte.unwrap_or_else(Utc::now);
     let from = params
         .timestamp_gte
         .unwrap_or_else(|| to - chrono::Duration::days(1));
-    match state.storage.query_distinct_agent_ids(from, to) {
+    match state.storage.query_distinct_agent_ids(from, to, pagination.limit(), pagination.offset()) {
         Ok(ids) => success_response(StatusCode::OK, &trace_id, ids),
         Err(e) => {
             tracing::error!(error = %e, "Failed to query agent ids");

@@ -543,7 +543,7 @@ async fn set_recipients(
     path = "/v1/notifications/channels/{id}/recipients",
     tag = "Notifications",
     security(("bearer_auth" = [])),
-    params(("id" = String, Path, description = "渠道 ID")),
+    params(("id" = String, Path, description = "渠道 ID"), PaginationParams),
     responses(
         (status = 200, description = "收件人列表", body = Vec<String>),
         (status = 401, description = "未认证", body = crate::api::ApiError)
@@ -553,8 +553,9 @@ async fn get_recipients(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
-    match state.cert_store.list_recipients_by_channel(&id) {
+    match state.cert_store.list_recipients_by_channel_paged(&id, pagination.limit(), pagination.offset()) {
         Ok(rows) => {
             let values: Vec<String> = rows.into_iter().map(|r| r.value).collect();
             success_response(StatusCode::OK, &trace_id, values)

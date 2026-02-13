@@ -764,7 +764,7 @@ impl CertStore {
                  GROUP BY domain_id
              ) latest ON r.id = latest.max_id
              INNER JOIN cert_domains d ON d.id = r.domain_id AND d.enabled = 1
-             ORDER BY r.checked_at DESC
+             ORDER BY r.created_at DESC
              LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
@@ -1050,7 +1050,7 @@ impl CertStore {
             "SELECT id, domain_id, domain, is_valid, chain_valid, not_before, not_after, days_until_expiry, issuer, subject, san_list, resolved_ips, error, checked_at, created_at, updated_at
              FROM cert_check_results
              WHERE domain_id = ?1
-             ORDER BY checked_at DESC
+             ORDER BY created_at DESC
              LIMIT ?2 OFFSET ?3",
         )?;
         let rows = stmt.query_map(
@@ -1679,11 +1679,20 @@ impl CertStore {
     }
 
     pub fn list_recipients_by_channel(&self, channel_id: &str) -> Result<Vec<NotificationRecipientRow>> {
+        self.list_recipients_by_channel_paged(channel_id, 10000, 0)
+    }
+
+    pub fn list_recipients_by_channel_paged(
+        &self,
+        channel_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<NotificationRecipientRow>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, channel_id, value, created_at FROM notification_recipients WHERE channel_id = ?1 ORDER BY created_at ASC",
+            "SELECT id, channel_id, value, created_at FROM notification_recipients WHERE channel_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
         )?;
-        let rows = stmt.query_map(rusqlite::params![channel_id], |row| {
+        let rows = stmt.query_map(rusqlite::params![channel_id, limit as i64, offset as i64], |row| {
             let created: i64 = row.get(3)?;
             Ok(NotificationRecipientRow {
                 id: row.get(0)?,
@@ -2148,17 +2157,19 @@ impl CertStore {
         &self,
         dict_type: &str,
         enabled_only: bool,
+        limit: usize,
+        offset: usize,
     ) -> Result<Vec<DictionaryItem>> {
         let conn = self.lock_conn();
         let sql = if enabled_only {
             "SELECT id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at
-             FROM system_dictionaries WHERE dict_type = ?1 AND enabled = 1 ORDER BY sort_order ASC, created_at ASC"
+             FROM system_dictionaries WHERE dict_type = ?1 AND enabled = 1 ORDER BY sort_order ASC, created_at ASC LIMIT ?2 OFFSET ?3"
         } else {
             "SELECT id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at
-             FROM system_dictionaries WHERE dict_type = ?1 ORDER BY sort_order ASC, created_at ASC"
+             FROM system_dictionaries WHERE dict_type = ?1 ORDER BY sort_order ASC, created_at ASC LIMIT ?2 OFFSET ?3"
         };
         let mut stmt = conn.prepare(sql)?;
-        let rows = stmt.query_map(rusqlite::params![dict_type], |row| {
+        let rows = stmt.query_map(rusqlite::params![dict_type, limit as i64, offset as i64], |row| {
             Ok(Self::row_to_dictionary(row))
         })?;
         let mut results = Vec::new();
@@ -2168,16 +2179,17 @@ impl CertStore {
         Ok(results)
     }
 
-    pub fn list_all_dict_types(&self) -> Result<Vec<DictionaryTypeSummary>> {
+    pub fn list_all_dict_types(&self, limit: usize, offset: usize) -> Result<Vec<DictionaryTypeSummary>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT sd.dict_type, COUNT(*) as cnt, dt.dict_type_label
              FROM system_dictionaries sd
              LEFT JOIN dictionary_types dt ON sd.dict_type = dt.dict_type
              GROUP BY sd.dict_type
-             ORDER BY COALESCE(dt.sort_order, 0) ASC, sd.dict_type ASC",
+             ORDER BY COALESCE(dt.sort_order, 0) ASC, sd.dict_type ASC
+             LIMIT ?1 OFFSET ?2",
         )?;
-        let rows = stmt.query_map([], |row| {
+        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
             let dict_type: String = row.get(0)?;
             let count: i64 = row.get(1)?;
             let label: Option<String> = row.get(2)?;
@@ -3039,13 +3051,13 @@ mod tests {
             })
             .unwrap();
 
-        let severity_items = store.list_dictionaries_by_type("severity", false).unwrap();
+        let severity_items = store.list_dictionaries_by_type("severity", false, 1000, 0).unwrap();
         assert_eq!(severity_items.len(), 3);
         // Should be ordered by sort_order
         assert_eq!(severity_items[0].dict_key, "info");
         assert_eq!(severity_items[2].dict_key, "critical");
 
-        let channel_items = store.list_dictionaries_by_type("channel_type", false).unwrap();
+        let channel_items = store.list_dictionaries_by_type("channel_type", false, 1000, 0).unwrap();
         assert_eq!(channel_items.len(), 1);
     }
 
@@ -3070,7 +3082,7 @@ mod tests {
                 })
                 .unwrap();
         }
-        let types = store.list_all_dict_types().unwrap();
+        let types = store.list_all_dict_types(1000, 0).unwrap();
         assert_eq!(types.len(), 2);
         // Ordered alphabetically (no dictionary_types records, fallback label = dict_type)
         assert_eq!(types[0].dict_type, "channel_type");
@@ -3106,7 +3118,7 @@ mod tests {
                 extra_json: None,
             })
             .unwrap();
-        let types = store.list_all_dict_types().unwrap();
+        let types = store.list_all_dict_types(1000, 0).unwrap();
         assert_eq!(types.len(), 1);
         assert_eq!(types[0].dict_type, "severity");
         assert_eq!(types[0].dict_type_label, "告警级别");
@@ -3402,10 +3414,10 @@ mod tests {
             })
             .unwrap();
 
-        let all = store.list_dictionaries_by_type("test", false).unwrap();
+        let all = store.list_dictionaries_by_type("test", false, 1000, 0).unwrap();
         assert_eq!(all.len(), 2);
 
-        let enabled = store.list_dictionaries_by_type("test", true).unwrap();
+        let enabled = store.list_dictionaries_by_type("test", true, 1000, 0).unwrap();
         assert_eq!(enabled.len(), 1);
         assert_ne!(enabled[0].id, disabled.id);
     }
@@ -3606,7 +3618,7 @@ mod tests {
         assert_eq!(upd, 1);
 
         // Verify updated — original id preserved
-        let all = store.list_dictionaries_by_type("severity", false).unwrap();
+        let all = store.list_dictionaries_by_type("severity", false, 1000, 0).unwrap();
         let info_item = all.iter().find(|i| i.dict_key == "info").unwrap();
         assert_eq!(info_item.dict_label, "信息(更新)");
         assert_eq!(info_item.id, "id-1"); // original id preserved
@@ -3629,7 +3641,7 @@ mod tests {
         let (ins, upd) = store.upsert_system_dictionaries(&new_item).unwrap();
         assert_eq!(ins, 1);
         assert_eq!(upd, 0);
-        assert_eq!(store.list_dictionaries_by_type("severity", false).unwrap().len(), 3);
+        assert_eq!(store.list_dictionaries_by_type("severity", false, 1000, 0).unwrap().len(), 3);
     }
 
     #[test]
