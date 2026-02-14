@@ -69,10 +69,7 @@ impl DingTalkChannel {
         format!("{}&timestamp={}&sign={}", base_url, timestamp, sign_encoded)
     }
 
-    fn format_markdown(
-        &self,
-        alert: &AlertEvent,
-    ) -> (String, String) {
+    fn format_markdown(&self, alert: &AlertEvent) -> (String, String) {
         let status_tag = if alert.status == 3 { "[RECOVERED]" } else { "" };
         let rule_display = if alert.rule_name.is_empty() {
             alert.metric_name.clone()

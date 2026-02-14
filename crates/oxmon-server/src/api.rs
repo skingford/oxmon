@@ -15,8 +15,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::{DateTime, Utc};
-use oxmon_common::types::MetricDataPoint;
-use oxmon_storage::{MetricQuery, StorageEngine};
+use oxmon_storage::StorageEngine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -163,12 +162,45 @@ async fn health(
 /// Agent 信息
 #[derive(Serialize, ToSchema)]
 struct AgentResponse {
+    /// 白名单条目 ID（仅白名单 agent 有值）
+    id: Option<String>,
     /// Agent 唯一标识
     agent_id: String,
     /// 最后上报时间
     last_seen: Option<DateTime<Utc>>,
     /// 状态（active / inactive / unknown）
     status: String,
+    /// 创建时间（仅白名单 agent 有值）
+    created_at: Option<DateTime<Utc>>,
+    /// 采集间隔（秒），仅白名单 agent 且配置了才有值
+    collection_interval_secs: Option<u64>,
+}
+
+/// Agent 详细信息
+#[derive(Serialize, ToSchema)]
+struct AgentDetail {
+    /// 数据库 ID
+    id: String,
+    /// Agent 唯一标识
+    agent_id: String,
+    /// 首次上报时间
+    first_seen: DateTime<Utc>,
+    /// 最后上报时间
+    last_seen: DateTime<Utc>,
+    /// 状态（active / inactive）
+    status: String,
+    /// 采集间隔（秒）
+    collection_interval_secs: Option<u64>,
+    /// 描述
+    description: Option<String>,
+    /// 创建时间
+    created_at: DateTime<Utc>,
+    /// 更新时间
+    updated_at: DateTime<Utc>,
+    /// 是否在白名单中
+    in_whitelist: bool,
+    /// 白名单条目 ID（如果在白名单中）
+    whitelist_id: Option<String>,
 }
 
 /// 分页查询 Agent 列表。
@@ -192,8 +224,9 @@ async fn list_agents(
     let limit = pagination.limit();
     let offset = pagination.offset();
 
-    let agents = match state.cert_store.list_agents(limit, offset).map_err(|e| {
-        tracing::error!(error = %e, "Failed to list agents");
+    // 从数据库查询 agent 列表
+    let agents = match state.cert_store.list_agents_from_db(limit, offset).map_err(|e| {
+        tracing::error!(error = %e, "Failed to list agents from database");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             &trace_id,
@@ -205,27 +238,121 @@ async fn list_agents(
         Err(resp) => return resp,
     };
 
-    let registry = state
-        .agent_registry
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-
-    let resp: Vec<AgentResponse> = agents
+    let paginated_agents: Vec<AgentResponse> = agents
         .into_iter()
-        .map(|entry| {
-            let agent_info = registry.get_agent(&entry.agent_id);
+        .map(|agent_info| {
+            // 尝试从白名单获取白名单特有的信息（id, created_at）
+            let whitelist_entry = state
+                .cert_store
+                .get_agent_by_agent_id(&agent_info.agent_id)
+                .ok()
+                .flatten();
+
+            // 计算 active 状态（collection_interval_secs 现在来自 agent_info）
+            let collection_interval = agent_info
+                .collection_interval_secs
+                .unwrap_or(state.config.agent_collection_interval_secs);
+            let timeout = chrono::Duration::seconds((collection_interval * 3) as i64);
+            let now = Utc::now();
+            let active = now - agent_info.last_seen < timeout;
+
             AgentResponse {
-                agent_id: entry.agent_id,
-                last_seen: agent_info.as_ref().map(|a| a.last_seen),
-                status: match &agent_info {
-                    Some(a) if a.active => "active".to_string(),
-                    Some(_) => "inactive".to_string(),
-                    None => "unknown".to_string(),
+                id: whitelist_entry.as_ref().map(|e| e.id.clone()),
+                agent_id: agent_info.agent_id,
+                last_seen: Some(agent_info.last_seen),
+                status: if active {
+                    "active".to_string()
+                } else {
+                    "inactive".to_string()
                 },
+                created_at: whitelist_entry.as_ref().map(|e| e.created_at),
+                collection_interval_secs: agent_info.collection_interval_secs,
             }
         })
         .collect();
-    success_response(StatusCode::OK, &trace_id, resp)
+
+    success_response(StatusCode::OK, &trace_id, paginated_agents)
+}
+
+/// 获取指定 Agent 的详细信息。
+/// 支持通过 agent_id 或数据库 id 查询。
+#[utoipa::path(
+    get,
+    path = "/v1/agents/{id}",
+    tag = "Agents",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Agent ID 或数据库 ID")
+    ),
+    responses(
+        (status = 200, description = "Agent 详细信息", body = AgentDetail),
+        (status = 401, description = "未认证", body = ApiError),
+        (status = 404, description = "Agent 不存在", body = ApiError)
+    )
+)]
+async fn get_agent(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    // 先尝试按 agent_id 查询
+    let agent_entry = match state.cert_store.get_agent_by_id_or_agent_id(&id).map_err(|e| {
+        tracing::error!(error = %e, "Failed to query agent");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
+            "INTERNAL_ERROR",
+            "Database error",
+        )
+    }) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "NOT_FOUND",
+                &format!("Agent '{}' not found", id),
+            )
+        }
+        Err(resp) => return resp,
+    };
+
+    // 检查是否在白名单中
+    let whitelist_entry = state
+        .cert_store
+        .get_agent_by_agent_id(&agent_entry.agent_id)
+        .ok()
+        .flatten();
+
+    // 计算 active 状态
+    let collection_interval = agent_entry
+        .collection_interval_secs
+        .unwrap_or(state.config.agent_collection_interval_secs);
+    let timeout = chrono::Duration::seconds((collection_interval * 3) as i64);
+    let now = Utc::now();
+    let active = now - agent_entry.last_seen < timeout;
+
+    success_response(
+        StatusCode::OK,
+        &trace_id,
+        AgentDetail {
+            id: agent_entry.id,
+            agent_id: agent_entry.agent_id,
+            first_seen: agent_entry.first_seen,
+            last_seen: agent_entry.last_seen,
+            status: if active {
+                "active".to_string()
+            } else {
+                "inactive".to_string()
+            },
+            collection_interval_secs: agent_entry.collection_interval_secs,
+            description: agent_entry.description,
+            created_at: agent_entry.created_at,
+            updated_at: agent_entry.updated_at,
+            in_whitelist: whitelist_entry.is_some(),
+            whitelist_id: whitelist_entry.map(|e| e.id),
+        },
+    )
 }
 
 /// 最新指标数据
@@ -249,7 +376,7 @@ struct LatestMetric {
     tag = "Agents",
     security(("bearer_auth" = [])),
     params(
-        ("id" = String, Path, description = "白名单条目 ID（路径参数）")
+        ("id" = String, Path, description = "Agent ID（agent.id）")
     ),
     responses(
         (status = 200, description = "Agent 最新指标数据", body = Vec<LatestMetric>),
@@ -262,114 +389,46 @@ async fn agent_latest(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let agent_entry = match state.cert_store.get_agent_by_id(&id) {
-        Ok(Some(entry)) => entry,
-        Ok(None) => {
-            return error_response(
-                StatusCode::NOT_FOUND,
-                &trace_id,
-                "not_found",
-                "Agent not found",
-            )
-            .into_response();
-        }
-        Err(e) => {
-            tracing::error!(error = %e, id = %id, "Failed to resolve agent by id");
+    // 直接按 agent.id 查询最新一条指标，不区分是否在白名单。
+    let from = DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_default();
+    let to = Utc::now();
+    let rows = match state
+        .storage
+        .query_metrics_paginated(from, to, Some(&id), None, 1, 0)
+    {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::error!(id = %id, error = %err, "failed to query latest metric");
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
-                "Database error",
+                "storage_error",
+                "Failed to query latest metric",
             )
             .into_response();
         }
     };
-    let agent_id = agent_entry.agent_id;
 
-    // 根据 agent 的采集间隔动态计算查询时间范围
-    // 使用 collection_interval * 3 作为查询窗口，确保能查到数据
-    let collection_interval = agent_entry
-        .collection_interval_secs
-        .unwrap_or(state.config.agent_collection_interval_secs);
-    let query_window_secs = (collection_interval * 3).max(300); // 最小 5 分钟
-
-    let to = Utc::now();
-    let from = to - chrono::Duration::seconds(query_window_secs as i64);
-
-    // All metric names collected by agent
-    let metric_names = [
-        // CPU
-        "cpu.usage",      // CPU 总使用率 (%)
-        "cpu.core_usage", // 每核 CPU 使用率 (%, label: core)
-        // Memory
-        "memory.total",        // 总物理内存 (bytes)
-        "memory.used",         // 已用内存 (bytes)
-        "memory.available",    // 可用内存 (bytes)
-        "memory.used_percent", // 内存使用率 (%)
-        "memory.swap_total",   // 交换区总量 (bytes)
-        "memory.swap_used",    // 交换区已用 (bytes)
-        "memory.swap_percent", // 交换区使用率 (%)
-        // Disk (per mount point, label: mount)
-        "disk.total",        // 磁盘总空间 (bytes)
-        "disk.used",         // 磁盘已用 (bytes)
-        "disk.available",    // 磁盘可用 (bytes)
-        "disk.used_percent", // 磁盘使用率 (%)
-        // Network (per interface, label: interface)
-        "network.bytes_recv",   // 接收字节增量
-        "network.bytes_sent",   // 发送字节增量
-        "network.packets_recv", // 接收包增量
-        "network.packets_sent", // 发送包增量
-        // System load
-        "system.load_1",  // 1 分钟负载
-        "system.load_5",  // 5 分钟负载
-        "system.load_15", // 15 分钟负载
-        "system.uptime",  // 运行时间 (秒)
-    ];
-
-    let mut latest: Vec<LatestMetric> = Vec::new();
-    for metric_name in &metric_names {
-        let query = MetricQuery {
-            agent_id: agent_id.clone(),
-            metric_name: metric_name.to_string(),
-            from,
-            to,
-        };
-        if let Ok(points) = state.storage.query(&query) {
-            // Group by labels to return latest value per (metric_name, labels) combination
-            // e.g. disk.used_percent for mount=/ and mount=/data separately
-            let mut seen: HashMap<String, &MetricDataPoint> = HashMap::new();
-            for point in &points {
-                let label_key = format!("{:?}", point.labels);
-                seen.entry(label_key)
-                    .and_modify(|existing| {
-                        if point.timestamp > existing.timestamp {
-                            *existing = point;
-                        }
-                    })
-                    .or_insert(point);
-            }
-            for point in seen.values() {
-                latest.push(LatestMetric {
-                    metric_name: point.metric_name.clone(),
-                    value: point.value,
-                    labels: point.labels.clone(),
-                    timestamp: point.timestamp,
-                });
-            }
-        }
-    }
-
-    if latest.is_empty() {
-        tracing::info!(
-            id = %id,
-            agent_id = %agent_id,
-            from = %from,
-            to = %to,
-            "No latest metrics found in last 5 minutes"
+    if let Some(point) = rows.first() {
+        return success_response(
+            StatusCode::OK,
+            &trace_id,
+            vec![LatestMetric {
+                metric_name: point.metric_name.clone(),
+                value: point.value,
+                labels: point.labels.clone(),
+                timestamp: point.timestamp,
+            }],
         );
     }
 
-    success_response(StatusCode::OK, &trace_id, latest)
+    error_response(
+        StatusCode::NOT_FOUND,
+        &trace_id,
+        "not_found",
+        "Agent not found",
+    )
+    .into_response()
 }
 
 // GET /v1/metrics
@@ -952,6 +1011,7 @@ pub fn protected_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(crate::auth::change_password))
         .routes(routes!(list_agents))
+        .routes(routes!(get_agent))
         .routes(routes!(agent_latest))
         .routes(routes!(query_all_metrics))
         .routes(routes!(alert_history))

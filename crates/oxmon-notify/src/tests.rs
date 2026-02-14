@@ -188,21 +188,27 @@ fn dingtalk_plugin_validates_at_config() {
         "secret": "SEC_test",
         "is_at_all": true
     });
-    assert!(registry.create_channel("dingtalk", "dt-1", &at_all_config).is_ok());
+    assert!(registry
+        .create_channel("dingtalk", "dt-1", &at_all_config)
+        .is_ok());
 
     // 测试 @ 手机号配置
     let at_mobiles_config = serde_json::json!({
         "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test",
         "at_mobiles": ["13800138000", "13900139000"]
     });
-    assert!(registry.create_channel("dingtalk", "dt-2", &at_mobiles_config).is_ok());
+    assert!(registry
+        .create_channel("dingtalk", "dt-2", &at_mobiles_config)
+        .is_ok());
 
     // 测试 @ 用户ID配置
     let at_user_ids_config = serde_json::json!({
         "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test",
         "at_user_ids": ["user001", "user002"]
     });
-    assert!(registry.create_channel("dingtalk", "dt-3", &at_user_ids_config).is_ok());
+    assert!(registry
+        .create_channel("dingtalk", "dt-3", &at_user_ids_config)
+        .is_ok());
 
     // 测试混合配置
     let mixed_config = serde_json::json!({
@@ -212,13 +218,17 @@ fn dingtalk_plugin_validates_at_config() {
         "at_mobiles": ["13800138000"],
         "at_user_ids": ["user001"]
     });
-    assert!(registry.create_channel("dingtalk", "dt-4", &mixed_config).is_ok());
+    assert!(registry
+        .create_channel("dingtalk", "dt-4", &mixed_config)
+        .is_ok());
 
     // 测试默认配置(不包含 @ 字段)
     let default_config = serde_json::json!({
         "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test"
     });
-    assert!(registry.create_channel("dingtalk", "dt-5", &default_config).is_ok());
+    assert!(registry
+        .create_channel("dingtalk", "dt-5", &default_config)
+        .is_ok());
 }
 
 #[test]

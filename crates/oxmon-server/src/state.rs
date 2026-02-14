@@ -47,6 +47,8 @@ impl AgentRegistry {
                     agent_id: id.clone(),
                     last_seen: *last_seen,
                     active: now - *last_seen < timeout,
+                    collection_interval_secs: None, // 从数据库查询
+                    description: None,               // 从数据库查询
                 }
             })
             .collect()
@@ -64,6 +66,8 @@ impl AgentRegistry {
             agent_id: agent_id.to_string(),
             last_seen: *last_seen,
             active: now - *last_seen < timeout,
+            collection_interval_secs: None, // 从数据库查询
+            description: None,               // 从数据库查询
         })
     }
 }

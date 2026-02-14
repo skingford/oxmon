@@ -161,12 +161,18 @@ impl MetricService for MetricServiceImpl {
             }));
         }
 
-        // Register/update agent
+        // Register/update agent in memory
         self.state
             .agent_registry
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .update_agent(&proto.agent_id);
+
+        // Update agent in database
+        if let Err(e) = self.state.cert_store.upsert_agent(&proto.agent_id) {
+            tracing::error!(error = %e, agent_id = %proto.agent_id, "Failed to upsert agent to database");
+            // 不返回错误，因为指标已经成功写入
+        }
 
         // Feed metrics to alert engine
         {

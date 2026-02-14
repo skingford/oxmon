@@ -301,7 +301,10 @@ fn trend_prediction_does_not_fire_when_too_soon() {
 
     // 应该返回 None，因为预测时间小于 5 分钟
     let event = rule.evaluate(&window, now);
-    assert!(event.is_none(), "Should not fire when prediction time is less than 5 minutes");
+    assert!(
+        event.is_none(),
+        "Should not fire when prediction time is less than 5 minutes"
+    );
 }
 
 #[test]

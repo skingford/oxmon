@@ -55,10 +55,24 @@ CREATE TABLE IF NOT EXISTS agent_whitelist (
     token_hash TEXT NOT NULL,
     encrypted_token TEXT,
     description TEXT,
-    collection_interval_secs INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
+";
+
+const AGENTS_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL UNIQUE,
+    first_seen INTEGER NOT NULL,
+    last_seen INTEGER NOT NULL,
+    collection_interval_secs INTEGER,
+    description TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agents_agent_id ON agents(agent_id);
+CREATE INDEX IF NOT EXISTS idx_agents_last_seen ON agents(last_seen DESC);
 ";
 
 const CERTIFICATE_DETAILS_SCHEMA: &str = "
@@ -259,12 +273,11 @@ impl CertStore {
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         conn.execute_batch(CERT_DOMAINS_SCHEMA)?;
         conn.execute_batch(CERT_CHECK_RESULTS_SCHEMA)?;
+        conn.execute_batch(AGENTS_SCHEMA)?;
+        conn.execute_batch(AGENT_WHITELIST_SCHEMA)?;
 
-        // 迁移 agent_whitelist：如果旧表缺少 id 列（以 agent_id 为主键），则重建
-        Self::migrate_agent_whitelist(&conn)?;
-
-        // 迁移 agent_whitelist：添加 collection_interval_secs 列
-        Self::migrate_agent_whitelist_collection_interval(&conn)?;
+        // 迁移 agents：添加 collection_interval_secs 和 description 列
+        Self::migrate_agents_add_columns(&conn)?;
 
         // 迁移 certificate_details：如果旧表缺少 id 列（以 domain 为主键），则重建
         Self::migrate_certificate_details(&conn)?;
@@ -322,9 +335,7 @@ impl CertStore {
             "api_message_id TEXT",
             "api_error_code TEXT",
         ] {
-            let _ = conn.execute_batch(&format!(
-                "ALTER TABLE notification_logs ADD COLUMN {col};"
-            ));
+            let _ = conn.execute_batch(&format!("ALTER TABLE notification_logs ADD COLUMN {col};"));
         }
 
         // 迁移：为已有的 notification_channels 表添加 description 列
@@ -348,85 +359,11 @@ impl CertStore {
         })
     }
 
-    /// 迁移 agent_whitelist 表：从 agent_id 主键迁移到 UUID id 主键
-    fn migrate_agent_whitelist(conn: &Connection) -> Result<()> {
-        // 检查旧表是否存在
-        let table_exists: bool = conn.query_row(
-            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='agent_whitelist'",
-            [],
-            |row| row.get(0),
-        )?;
-
-        if !table_exists {
-            // 新建表
-            conn.execute_batch(AGENT_WHITELIST_SCHEMA)?;
-            return Ok(());
-        }
-
-        // 检查是否已有 id 列（新 schema）
-        let has_id_col = Self::table_has_column(conn, "agent_whitelist", "id")?;
-        let has_updated_at_col = Self::table_has_column(conn, "agent_whitelist", "updated_at")?;
-
-        if has_id_col && has_updated_at_col {
-            // 已经是新 schema，无需迁移
-            return Ok(());
-        }
-
-        tracing::info!("Migrating agent_whitelist table to new schema with Snowflake id");
-
-        // 重建表
-        conn.execute_batch(
-            "
-            CREATE TABLE agent_whitelist_new (
-                id TEXT PRIMARY KEY,
-                agent_id TEXT NOT NULL UNIQUE,
-                token_hash TEXT NOT NULL,
-                encrypted_token TEXT,
-                description TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            );
-        ",
-        )?;
-
-        // 检查旧表是否有 encrypted_token 列
-        let has_encrypted_token =
-            Self::table_has_column(conn, "agent_whitelist", "encrypted_token")?;
-
-        if has_encrypted_token {
-            // 包含 encrypted_token 列的旧表
-            conn.execute_batch("
-                INSERT INTO agent_whitelist_new (id, agent_id, token_hash, encrypted_token, description, created_at, updated_at)
-                SELECT CAST(abs(random()) AS TEXT),
-                       agent_id, token_hash, encrypted_token, description, created_at, created_at
-                FROM agent_whitelist;
-            ")?;
-        } else {
-            // 没有 encrypted_token 列的旧表
-            conn.execute_batch("
-                INSERT INTO agent_whitelist_new (id, agent_id, token_hash, description, created_at, updated_at)
-                SELECT CAST(abs(random()) AS TEXT),
-                       agent_id, token_hash, description, created_at, created_at
-                FROM agent_whitelist;
-            ")?;
-        }
-
-        conn.execute_batch(
-            "
-            DROP TABLE agent_whitelist;
-            ALTER TABLE agent_whitelist_new RENAME TO agent_whitelist;
-        ",
-        )?;
-
-        tracing::info!("agent_whitelist migration completed");
-        Ok(())
-    }
-
-    /// 迁移 agent_whitelist 表：添加 collection_interval_secs 列
-    fn migrate_agent_whitelist_collection_interval(conn: &Connection) -> Result<()> {
+    /// 迁移 agents 表：添加 collection_interval_secs 和 description 列
+    fn migrate_agents_add_columns(conn: &Connection) -> Result<()> {
         // 检查表是否存在
         let table_exists: bool = conn.query_row(
-            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='agent_whitelist'",
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='agents'",
             [],
             |row| row.get(0),
         )?;
@@ -436,21 +373,22 @@ impl CertStore {
         }
 
         // 检查是否已有 collection_interval_secs 列
-        let has_col = Self::table_has_column(conn, "agent_whitelist", "collection_interval_secs")?;
+        let has_interval_col = Self::table_has_column(conn, "agents", "collection_interval_secs")?;
 
-        if has_col {
-            // 已经存在，无需迁移
-            return Ok(());
+        if !has_interval_col {
+            tracing::info!("Adding collection_interval_secs column to agents table");
+            conn.execute_batch("ALTER TABLE agents ADD COLUMN collection_interval_secs INTEGER;")?;
         }
 
-        tracing::info!("Adding collection_interval_secs column to agent_whitelist table");
+        // 检查是否已有 description 列
+        let has_desc_col = Self::table_has_column(conn, "agents", "description")?;
 
-        // 添加列
-        conn.execute_batch(
-            "ALTER TABLE agent_whitelist ADD COLUMN collection_interval_secs INTEGER;",
-        )?;
+        if !has_desc_col {
+            tracing::info!("Adding description column to agents table");
+            conn.execute_batch("ALTER TABLE agents ADD COLUMN description TEXT;")?;
+        }
 
-        tracing::info!("agent_whitelist collection_interval_secs column added");
+        tracing::info!("agents table columns migration completed");
         Ok(())
     }
 
@@ -944,15 +882,14 @@ impl CertStore {
         token: &str,
         token_hash: &str,
         description: Option<&str>,
-        collection_interval_secs: Option<u64>,
     ) -> Result<String> {
         let conn = self.lock_conn();
         let id = oxmon_common::id::next_id();
         let now = Utc::now().timestamp();
         let encrypted_token = self.token_encryptor.encrypt(token)?;
         conn.execute(
-            "INSERT INTO agent_whitelist (id, agent_id, token_hash, created_at, updated_at, description, encrypted_token, collection_interval_secs) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            rusqlite::params![id, agent_id, token_hash, now, now, description, encrypted_token, collection_interval_secs.map(|v| v as i64)],
+            "INSERT INTO agent_whitelist (id, agent_id, token_hash, created_at, updated_at, description, encrypted_token) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![id, agent_id, token_hash, now, now, description, encrypted_token],
         )?;
         Ok(id)
     }
@@ -996,7 +933,10 @@ impl CertStore {
     ) -> Result<Vec<oxmon_common::types::AgentWhitelistEntry>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, agent_id, created_at, updated_at, description, encrypted_token, collection_interval_secs FROM agent_whitelist ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+            "SELECT w.id, w.agent_id, w.created_at, w.updated_at, w.description, w.encrypted_token, a.collection_interval_secs
+             FROM agent_whitelist w
+             LEFT JOIN agents a ON w.agent_id = a.agent_id
+             ORDER BY w.created_at DESC LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
             let created: i64 = row.get(2)?;
@@ -1015,7 +955,15 @@ impl CertStore {
         })?;
         let mut agents = Vec::new();
         for row in rows {
-            let (id, agent_id, created, updated, description, encrypted_token, collection_interval_secs) = row?;
+            let (
+                id,
+                agent_id,
+                created,
+                updated,
+                description,
+                encrypted_token,
+                collection_interval_secs,
+            ) = row?;
             let token = encrypted_token.and_then(|e| self.token_encryptor.decrypt(&e).ok());
             agents.push(oxmon_common::types::AgentWhitelistEntry {
                 id,
@@ -1063,12 +1011,12 @@ impl CertStore {
         Ok(exists)
     }
 
-    pub fn update_agent_whitelist(&self, id: &str, description: Option<&str>, collection_interval_secs: Option<u64>) -> Result<bool> {
+    pub fn update_agent_whitelist(&self, id: &str, description: Option<&str>) -> Result<bool> {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
         let updated = conn.execute(
-            "UPDATE agent_whitelist SET description = ?2, collection_interval_secs = ?3, updated_at = ?4 WHERE id = ?1",
-            rusqlite::params![id, description, collection_interval_secs.map(|v| v as i64), now],
+            "UPDATE agent_whitelist SET description = ?2, updated_at = ?3 WHERE id = ?1",
+            rusqlite::params![id, description, now],
         )?;
         Ok(updated > 0)
     }
@@ -1091,7 +1039,10 @@ impl CertStore {
     ) -> Result<Option<oxmon_common::types::AgentWhitelistEntry>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, agent_id, created_at, updated_at, description, encrypted_token, collection_interval_secs FROM agent_whitelist WHERE id = ?1",
+            "SELECT w.id, w.agent_id, w.created_at, w.updated_at, w.description, w.encrypted_token, a.collection_interval_secs
+             FROM agent_whitelist w
+             LEFT JOIN agents a ON w.agent_id = a.agent_id
+             WHERE w.id = ?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![id], |row| {
             let created: i64 = row.get(2)?;
@@ -1109,7 +1060,15 @@ impl CertStore {
             ))
         })?;
         match rows.next() {
-            Some(Ok((id, agent_id, created, updated, description, encrypted_token, collection_interval_secs))) => {
+            Some(Ok((
+                id,
+                agent_id,
+                created,
+                updated,
+                description,
+                encrypted_token,
+                collection_interval_secs,
+            ))) => {
                 let token = encrypted_token.and_then(|e| self.token_encryptor.decrypt(&e).ok());
                 Ok(Some(oxmon_common::types::AgentWhitelistEntry {
                     id,
@@ -2115,18 +2074,206 @@ impl CertStore {
         Ok(count as u64)
     }
 
-    /// 获取 agent 的采集间隔配置
+    /// 获取 agent 的采集间隔配置（从 agents 表）
     pub fn get_agent_collection_interval(&self, agent_id: &str) -> Result<Option<u64>> {
         let conn = self.lock_conn();
-        let mut stmt = conn.prepare(
-            "SELECT collection_interval_secs FROM agent_whitelist WHERE agent_id = ?1",
-        )?;
+        let mut stmt = conn
+            .prepare("SELECT collection_interval_secs FROM agents WHERE agent_id = ?1")?;
         let mut rows = stmt.query_map(rusqlite::params![agent_id], |row| {
             let interval: Option<i64> = row.get(0)?;
             Ok(interval.map(|v| v as u64))
         })?;
         match rows.next() {
             Some(Ok(interval)) => Ok(interval),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    /// 根据 agent_id 获取白名单条目
+    pub fn get_agent_by_agent_id(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<oxmon_common::types::AgentWhitelistEntry>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT w.id, w.agent_id, w.created_at, w.updated_at, w.description, w.encrypted_token, a.collection_interval_secs
+             FROM agent_whitelist w
+             LEFT JOIN agents a ON w.agent_id = a.agent_id
+             WHERE w.agent_id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![agent_id], |row| {
+            let created: i64 = row.get(2)?;
+            let updated: i64 = row.get(3)?;
+            let encrypted_token: Option<String> = row.get(5)?;
+            let collection_interval: Option<i64> = row.get(6)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                created,
+                updated,
+                row.get::<_, Option<String>>(4)?,
+                encrypted_token,
+                collection_interval.map(|v| v as u64),
+            ))
+        })?;
+        match rows.next() {
+            Some(Ok((id, agent_id, created, updated, description, encrypted_token, collection_interval_secs))) => {
+                let token = encrypted_token.and_then(|e| self.token_encryptor.decrypt(&e).ok());
+                Ok(Some(oxmon_common::types::AgentWhitelistEntry {
+                    id,
+                    agent_id,
+                    created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+                    updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+                    description,
+                    token,
+                    collection_interval_secs,
+                }))
+            }
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    // ---- Agent operations ----
+
+    /// 更新或插入 agent 信息（当 agent 上报时调用）
+    pub fn upsert_agent(&self, agent_id: &str) -> Result<()> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+
+        // 尝试更新
+        let updated = conn.execute(
+            "UPDATE agents SET last_seen = ?1, updated_at = ?1 WHERE agent_id = ?2",
+            rusqlite::params![now, agent_id],
+        )?;
+
+        // 如果没有更新到（agent 不存在），则插入
+        if updated == 0 {
+            let id = oxmon_common::id::next_id();
+            conn.execute(
+                "INSERT INTO agents (id, agent_id, first_seen, last_seen, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![id, agent_id, now, now, now, now],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// 更新 agent 配置（采集间隔和描述）
+    pub fn update_agent_config(
+        &self,
+        agent_id: &str,
+        collection_interval_secs: Option<u64>,
+        description: Option<&str>,
+    ) -> Result<bool> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        let updated = conn.execute(
+            "UPDATE agents SET collection_interval_secs = ?1, description = ?2, updated_at = ?3 WHERE agent_id = ?4",
+            rusqlite::params![
+                collection_interval_secs.map(|v| v as i64),
+                description,
+                now,
+                agent_id
+            ],
+        )?;
+        Ok(updated > 0)
+    }
+
+    /// 从数据库查询 agent 列表（支持分页）
+    pub fn list_agents_from_db(&self, limit: usize, offset: usize) -> Result<Vec<oxmon_common::types::AgentInfo>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT agent_id, last_seen, collection_interval_secs, description FROM agents ORDER BY last_seen DESC LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+            let agent_id: String = row.get(0)?;
+            let last_seen: i64 = row.get(1)?;
+            let interval: Option<i64> = row.get(2)?;
+            let description: Option<String> = row.get(3)?;
+            Ok((agent_id, last_seen, interval.map(|v| v as u64), description))
+        })?;
+
+        let mut agents = Vec::new();
+        for row in rows {
+            let (agent_id, last_seen_ts, collection_interval_secs, description) = row?;
+            let last_seen = DateTime::from_timestamp(last_seen_ts, 0).unwrap_or_default();
+
+            agents.push(oxmon_common::types::AgentInfo {
+                agent_id,
+                last_seen,
+                active: false, // 稍后在 API 层计算
+                collection_interval_secs,
+                description,
+            });
+        }
+
+        Ok(agents)
+    }
+
+    /// 从数据库查询单个 agent
+    pub fn get_agent_from_db(&self, agent_id: &str) -> Result<Option<(DateTime<Utc>, DateTime<Utc>)>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT first_seen, last_seen FROM agents WHERE agent_id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![agent_id], |row| {
+            let first_seen: i64 = row.get(0)?;
+            let last_seen: i64 = row.get(1)?;
+            Ok((first_seen, last_seen))
+        })?;
+
+        match rows.next() {
+            Some(Ok((first_seen_ts, last_seen_ts))) => {
+                let first_seen = DateTime::from_timestamp(first_seen_ts, 0).unwrap_or_default();
+                let last_seen = DateTime::from_timestamp(last_seen_ts, 0).unwrap_or_default();
+                Ok(Some((first_seen, last_seen)))
+            }
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    /// 根据数据库 id 或 agent_id 查询 agent 完整记录
+    pub fn get_agent_by_id_or_agent_id(&self, id: &str) -> Result<Option<oxmon_common::types::AgentEntry>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, agent_id, first_seen, last_seen, collection_interval_secs, description, created_at, updated_at
+             FROM agents
+             WHERE id = ?1 OR agent_id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
+            let first_seen: i64 = row.get(2)?;
+            let last_seen: i64 = row.get(3)?;
+            let collection_interval: Option<i64> = row.get(4)?;
+            let created_at: i64 = row.get(6)?;
+            let updated_at: i64 = row.get(7)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                first_seen,
+                last_seen,
+                collection_interval.map(|v| v as u64),
+                row.get::<_, Option<String>>(5)?,
+                created_at,
+                updated_at,
+            ))
+        })?;
+
+        match rows.next() {
+            Some(Ok((id, agent_id, first_seen_ts, last_seen_ts, collection_interval_secs, description, created_at_ts, updated_at_ts))) => {
+                Ok(Some(oxmon_common::types::AgentEntry {
+                    id,
+                    agent_id,
+                    first_seen: DateTime::from_timestamp(first_seen_ts, 0).unwrap_or_default(),
+                    last_seen: DateTime::from_timestamp(last_seen_ts, 0).unwrap_or_default(),
+                    collection_interval_secs,
+                    description,
+                    created_at: DateTime::from_timestamp(created_at_ts, 0).unwrap_or_default(),
+                    updated_at: DateTime::from_timestamp(updated_at_ts, 0).unwrap_or_default(),
+                }))
+            }
             Some(Err(e)) => Err(e.into()),
             None => Ok(None),
         }

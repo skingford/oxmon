@@ -80,7 +80,7 @@ async fn add_agent(
         Err(resp) => return resp,
     };
 
-    // 存储到数据库
+    // 存储到白名单表（不包含 collection_interval_secs）
     let created_at = Utc::now();
     let id = match state
         .cert_store
@@ -89,7 +89,6 @@ async fn add_agent(
             &token,
             &token_hash,
             req.description.as_deref(),
-            req.collection_interval_secs,
         )
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to add agent to whitelist");
@@ -103,6 +102,44 @@ async fn add_agent(
         Ok(v) => v,
         Err(resp) => return resp,
     };
+
+    // 初始化 agent 到 agents 表（包含 collection_interval_secs）
+    if let Err(resp) = state
+        .cert_store
+        .upsert_agent(&req.agent_id)
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to initialize agent");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "INTERNAL_ERROR",
+                "Database error",
+            )
+        })
+    {
+        return resp;
+    }
+
+    // 更新 agents 表的配置（collection_interval_secs）
+    if let Err(resp) = state
+        .cert_store
+        .update_agent_config(
+            &req.agent_id,
+            req.collection_interval_secs,
+            req.description.as_deref(),
+        )
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to update agent config");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "INTERNAL_ERROR",
+                "Database error",
+            )
+        })
+    {
+        return resp;
+    }
 
     tracing::info!(agent_id = %req.agent_id, id = %id, "Agent added to whitelist");
 
@@ -206,29 +243,64 @@ async fn update_agent(
     Path(id): Path<String>,
     Json(req): Json<UpdateAgentRequest>,
 ) -> impl IntoResponse {
-    let updated = match state
+    // 获取白名单条目以获取 agent_id
+    let entry = match state.cert_store.get_agent_by_id(&id).map_err(|e| {
+        tracing::error!(error = %e, "Failed to query agent");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
+            "INTERNAL_ERROR",
+            "Database error",
+        )
+    }) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "NOT_FOUND",
+                &format!("Agent with id '{}' not found", id),
+            )
+        }
+        Err(resp) => return resp,
+    };
+
+    // 更新白名单表（只更新 description）
+    if let Err(resp) = state
         .cert_store
-        .update_agent_whitelist(&id, req.description.as_deref(), req.collection_interval_secs)
+        .update_agent_whitelist(&id, req.description.as_deref())
         .map_err(|e| {
-            tracing::error!(error = %e, "Failed to update agent");
+            tracing::error!(error = %e, "Failed to update agent whitelist");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
                 "INTERNAL_ERROR",
                 "Database error",
             )
-        }) {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+        })
+    {
+        return resp;
+    }
 
-    if !updated {
-        return error_response(
-            StatusCode::NOT_FOUND,
-            &trace_id,
-            "NOT_FOUND",
-            &format!("Agent with id '{}' not found", id),
-        );
+    // 更新 agents 表（collection_interval_secs 和 description）
+    if let Err(resp) = state
+        .cert_store
+        .update_agent_config(
+            &entry.agent_id,
+            req.collection_interval_secs,
+            req.description.as_deref(),
+        )
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to update agent config");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "INTERNAL_ERROR",
+                "Database error",
+            )
+        })
+    {
+        return resp;
     }
 
     // 重新查询获取完整信息

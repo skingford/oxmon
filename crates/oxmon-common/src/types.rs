@@ -119,6 +119,29 @@ pub struct AgentInfo {
     pub agent_id: String,
     pub last_seen: DateTime<Utc>,
     pub active: bool,
+    pub collection_interval_secs: Option<u64>,
+    pub description: Option<String>,
+}
+
+/// Agent 完整记录（来自 agents 表）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentEntry {
+    /// 数据库 ID
+    pub id: String,
+    /// Agent 唯一标识
+    pub agent_id: String,
+    /// 首次上报时间
+    pub first_seen: DateTime<Utc>,
+    /// 最后上报时间
+    pub last_seen: DateTime<Utc>,
+    /// 采集间隔（秒）
+    pub collection_interval_secs: Option<u64>,
+    /// 描述信息
+    pub description: Option<String>,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 更新时间
+    pub updated_at: DateTime<Utc>,
 }
 
 // Certificate domain monitoring types

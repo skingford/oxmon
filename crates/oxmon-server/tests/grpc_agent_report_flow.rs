@@ -41,23 +41,7 @@ async fn grpc_report_should_write_metrics_and_be_queryable_via_rest() {
     let (status, body, _) = request_no_body(
         &ctx.app,
         "GET",
-        "/v1/agents/whitelist?limit=20&offset=0",
-        Some(&http_token),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_ok_envelope(&body);
-    let entries = body["data"].as_array().expect("data should be array");
-    let id = entries
-        .iter()
-        .find(|entry| entry["agent_id"].as_str() == Some("agent-grpc-1"))
-        .and_then(|entry| entry["id"].as_str())
-        .expect("agent id should exist in whitelist list");
-
-    let (status, body, _) = request_no_body(
-        &ctx.app,
-        "GET",
-        &format!("/v1/agents/{id}/latest"),
+        "/v1/agents/agent-grpc-1/latest",
         Some(&http_token),
     )
     .await;
