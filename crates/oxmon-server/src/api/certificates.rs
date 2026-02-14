@@ -1,5 +1,5 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response, success_response};
+use crate::api::{error_response, success_paginated_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::response::IntoResponse;
@@ -74,7 +74,7 @@ async fn get_certificate(
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "Database error",
             )
         }) {
@@ -83,7 +83,7 @@ async fn get_certificate(
             return error_response(
                 StatusCode::NOT_FOUND,
                 &trace_id,
-                "NOT_FOUND",
+                "not_found",
                 &format!("Certificate with id '{}' not found", id),
             )
         }
@@ -116,23 +116,35 @@ async fn list_certificates(
 ) -> impl IntoResponse {
     let filter = CertificateDetailsFilter {
         not_after_lte: query.not_after_lte,
-        ip_address_contains: query.ip_address_contains,
-        issuer_contains: query.issuer_contains,
+        ip_address_contains: query.ip_address_contains.clone(),
+        issuer_contains: query.issuer_contains.clone(),
+    };
+
+    let limit = PaginationParams::resolve_limit(query.limit);
+    let offset = PaginationParams::resolve_offset(query.offset);
+
+    let total = match state.cert_store.count_certificate_details(&filter) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count certificates");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            );
+        }
     };
 
     let certificates = match state
         .cert_store
-        .list_certificate_details(
-            &filter,
-            PaginationParams::resolve_limit(query.limit),
-            PaginationParams::resolve_offset(query.offset),
-        )
+        .list_certificate_details(&filter, limit, offset)
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to list certificates");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "Database error",
             )
         }) {
@@ -140,7 +152,7 @@ async fn list_certificates(
         Err(resp) => return resp,
     };
 
-    success_response(StatusCode::OK, &trace_id, certificates)
+    success_paginated_response(StatusCode::OK, &trace_id, certificates, total, limit, offset)
 }
 
 /// 证书链信息
@@ -188,7 +200,7 @@ async fn get_certificate_chain(
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "Database error",
             )
         }) {
@@ -197,7 +209,7 @@ async fn get_certificate_chain(
             return error_response(
                 StatusCode::NOT_FOUND,
                 &trace_id,
-                "NOT_FOUND",
+                "not_found",
                 &format!("Certificate with id '{}' not found", id),
             )
         }
@@ -217,9 +229,40 @@ async fn get_certificate_chain(
     )
 }
 
+/// 证书健康摘要。
+#[utoipa::path(
+    get,
+    path = "/v1/certs/summary",
+    tag = "Certificates",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "证书健康摘要"),
+        (status = 401, description = "未认证", body = crate::api::ApiError)
+    )
+)]
+async fn cert_summary(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.cert_store.cert_summary() {
+        Ok(summary) => success_response(StatusCode::OK, &trace_id, summary),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to query cert summary");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
+    }
+}
+
 pub fn certificates_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(get_certificate))
         .routes(routes!(list_certificates))
         .routes(routes!(get_certificate_chain))
+        .routes(routes!(cert_summary))
 }

@@ -1,5 +1,5 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response, success_empty_response, success_response};
+use crate::api::{error_response, success_empty_response, success_paginated_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::response::IntoResponse;
@@ -24,7 +24,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
     request_body = AddAgentRequest,
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "新增白名单 Agent 结果", body = AddAgentResponse),
+        (status = 201, description = "新增白名单 Agent 结果", body = AddAgentResponse),
         (status = 401, description = "未认证"),
         (status = 409, description = "Agent ID 已存在"),
         (status = 500, description = "服务器错误")
@@ -45,7 +45,7 @@ async fn add_agent(
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "Database error",
             )
         });
@@ -60,7 +60,7 @@ async fn add_agent(
         return error_response(
             StatusCode::CONFLICT,
             &trace_id,
-            "CONFLICT",
+            "conflict",
             &format!("Agent '{}' already exists", req.agent_id),
         );
     }
@@ -72,7 +72,7 @@ async fn add_agent(
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             &trace_id,
-            "INTERNAL_ERROR",
+            "internal_error",
             "Token generation error",
         )
     }) {
@@ -95,7 +95,7 @@ async fn add_agent(
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "Database error",
             )
         }) {
@@ -112,7 +112,7 @@ async fn add_agent(
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "Database error",
             )
         })
@@ -133,7 +133,7 @@ async fn add_agent(
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "Database error",
             )
         })
@@ -144,7 +144,7 @@ async fn add_agent(
     tracing::info!(agent_id = %req.agent_id, id = %id, "Agent added to whitelist");
 
     success_response(
-        StatusCode::OK,
+        StatusCode::CREATED,
         &trace_id,
         AddAgentResponse {
             id,
@@ -177,12 +177,25 @@ async fn list_whitelist_agents(
     let limit = pagination.limit();
     let offset = pagination.offset();
 
+    let total = match state.cert_store.count_agents().map_err(|e| {
+        tracing::error!(error = %e, "Failed to count agents");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
+            "internal_error",
+            "Database error",
+        )
+    }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
     let agents = match state.cert_store.list_agents(limit, offset).map_err(|e| {
         tracing::error!(error = %e, "Failed to list agents");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             &trace_id,
-            "INTERNAL_ERROR",
+            "internal_error",
             "Database error",
         )
     }) {
@@ -194,7 +207,7 @@ async fn list_whitelist_agents(
         .agent_registry
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let details: Vec<AgentWhitelistDetail> = agents
+    let items: Vec<AgentWhitelistDetail> = agents
         .into_iter()
         .map(|entry| {
             let agent_info = registry.get_agent(&entry.agent_id);
@@ -216,7 +229,75 @@ async fn list_whitelist_agents(
         })
         .collect();
 
-    success_response(StatusCode::OK, &trace_id, details)
+    success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
+}
+
+/// 获取单个白名单 Agent 详情（按 ID）。
+/// 鉴权：需要 Bearer Token。
+#[utoipa::path(
+    get,
+    path = "/v1/agents/whitelist/{id}",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "白名单条目 ID（路径参数）")
+    ),
+    responses(
+        (status = 200, description = "白名单 Agent 详情", body = AgentWhitelistDetail),
+        (status = 401, description = "未认证"),
+        (status = 404, description = "Agent 不存在"),
+        (status = 500, description = "服务器错误")
+    ),
+    tag = "Agents"
+)]
+async fn get_whitelist_agent(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let entry = match state.cert_store.get_agent_by_id(&id).map_err(|e| {
+        tracing::error!(error = %e, "Failed to get agent");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
+            "internal_error",
+            "Database error",
+        )
+    }) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                &format!("Agent with id '{}' not found", id),
+            )
+        }
+        Err(resp) => return resp,
+    };
+
+    let registry = state
+        .agent_registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let agent_info = registry.get_agent(&entry.agent_id);
+
+    let detail = AgentWhitelistDetail {
+        id: entry.id,
+        agent_id: entry.agent_id,
+        created_at: entry.created_at,
+        updated_at: entry.updated_at,
+        description: entry.description,
+        token: None, // Never expose tokens in responses
+        collection_interval_secs: entry.collection_interval_secs,
+        last_seen: agent_info.as_ref().map(|a| a.last_seen),
+        status: match &agent_info {
+            Some(a) if a.active => "active".to_string(),
+            Some(_) => "inactive".to_string(),
+            None => "unknown".to_string(),
+        },
+    };
+
+    success_response(StatusCode::OK, &trace_id, detail)
 }
 
 /// 更新白名单 Agent 信息（按 ID）。
@@ -249,7 +330,7 @@ async fn update_agent(
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             &trace_id,
-            "INTERNAL_ERROR",
+            "internal_error",
             "Database error",
         )
     }) {
@@ -258,7 +339,7 @@ async fn update_agent(
             return error_response(
                 StatusCode::NOT_FOUND,
                 &trace_id,
-                "NOT_FOUND",
+                "not_found",
                 &format!("Agent with id '{}' not found", id),
             )
         }
@@ -274,7 +355,7 @@ async fn update_agent(
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "Database error",
             )
         })
@@ -295,7 +376,7 @@ async fn update_agent(
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "Database error",
             )
         })
@@ -309,7 +390,7 @@ async fn update_agent(
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             &trace_id,
-            "INTERNAL_ERROR",
+            "internal_error",
             "Database error",
         )
     }) {
@@ -318,7 +399,7 @@ async fn update_agent(
             return error_response(
                 StatusCode::NOT_FOUND,
                 &trace_id,
-                "NOT_FOUND",
+                "not_found",
                 &format!("Agent with id '{}' not found", id),
             )
         }
@@ -382,7 +463,7 @@ async fn regenerate_token(
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             &trace_id,
-            "INTERNAL_ERROR",
+            "internal_error",
             "Database error",
         )
     }) {
@@ -391,7 +472,7 @@ async fn regenerate_token(
             return error_response(
                 StatusCode::NOT_FOUND,
                 &trace_id,
-                "NOT_FOUND",
+                "not_found",
                 &format!("Agent with id '{}' not found", id),
             )
         }
@@ -405,7 +486,7 @@ async fn regenerate_token(
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             &trace_id,
-            "INTERNAL_ERROR",
+            "internal_error",
             "Token generation error",
         )
     }) {
@@ -422,7 +503,7 @@ async fn regenerate_token(
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "Database error",
             )
         })
@@ -470,7 +551,7 @@ async fn delete_agent(
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             &trace_id,
-            "INTERNAL_ERROR",
+            "internal_error",
             "Database error",
         )
     }) {
@@ -488,7 +569,7 @@ async fn delete_agent(
                 error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     &trace_id,
-                    "INTERNAL_ERROR",
+                    "internal_error",
                     "Database error",
                 )
             }) {
@@ -511,7 +592,7 @@ async fn delete_agent(
         return error_response(
             StatusCode::NOT_FOUND,
             &trace_id,
-            "NOT_FOUND",
+            "not_found",
             &format!("Agent with id '{}' not found", id),
         );
     }
@@ -530,7 +611,7 @@ pub fn whitelist_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(add_agent))
         .routes(routes!(list_whitelist_agents))
-        .routes(routes!(update_agent))
+        .routes(routes!(get_whitelist_agent, update_agent))
         .routes(routes!(regenerate_token))
         .routes(routes!(delete_agent))
 }

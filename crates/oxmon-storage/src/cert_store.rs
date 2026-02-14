@@ -596,6 +596,29 @@ impl CertStore {
         Ok(domains)
     }
 
+    pub fn count_domains(&self, enabled: Option<bool>, search: Option<&str>) -> Result<u64> {
+        let conn = self.lock_conn();
+        let mut sql = String::from("SELECT COUNT(*) FROM cert_domains WHERE 1=1");
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
+
+        if let Some(en) = enabled {
+            sql.push_str(&format!(" AND enabled = ?{idx}"));
+            params.push(Box::new(en as i32));
+            idx += 1;
+        }
+        if let Some(s) = search {
+            sql.push_str(&format!(" AND domain LIKE ?{idx}"));
+            params.push(Box::new(format!("%{s}%")));
+        }
+
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = stmt.query_row(param_refs.as_slice(), |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
     pub fn get_domain_by_id(&self, id: &str) -> Result<Option<CertDomain>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
@@ -767,6 +790,23 @@ impl CertStore {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn count_latest_results(&self) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*)
+             FROM (
+                 SELECT MAX(id) AS max_id
+                 FROM cert_check_results
+                 GROUP BY domain_id
+             ) latest
+             INNER JOIN cert_check_results r ON r.id = latest.max_id
+             INNER JOIN cert_domains d ON d.id = r.domain_id AND d.enabled = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
     }
 
     pub fn query_latest_results(
@@ -1745,6 +1785,64 @@ impl CertStore {
         Ok(results)
     }
 
+    pub fn count_silence_windows(&self) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM notification_silence_windows",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
+    pub fn update_silence_window(
+        &self,
+        id: &str,
+        start_time: Option<String>,
+        end_time: Option<String>,
+        recurrence: Option<Option<String>>,
+    ) -> Result<Option<SilenceWindowRow>> {
+        let conn = self.lock_conn();
+        let mut updates = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(st) = start_time {
+            updates.push("start_time = ?".to_string());
+            params.push(Box::new(st));
+        }
+        if let Some(et) = end_time {
+            updates.push("end_time = ?".to_string());
+            params.push(Box::new(et));
+        }
+        if let Some(rec) = recurrence {
+            updates.push("recurrence = ?".to_string());
+            params.push(Box::new(rec));
+        }
+
+        if updates.is_empty() {
+            return self.get_silence_window_by_id(id);
+        }
+
+        updates.push("updated_at = ?".to_string());
+        params.push(Box::new(Utc::now().timestamp()));
+        params.push(Box::new(id.to_string()));
+
+        let sql = format!(
+            "UPDATE notification_silence_windows SET {} WHERE id = ?{}",
+            updates.join(", "),
+            params.len()
+        );
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let updated = conn.execute(&sql, param_refs.as_slice())?;
+
+        if updated > 0 {
+            self.get_silence_window_by_id(id)
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn delete_silence_window(&self, id: &str) -> Result<bool> {
         let conn = self.lock_conn();
         let deleted = conn.execute(
@@ -1839,6 +1937,22 @@ impl CertStore {
             params.iter().map(|p| p.as_ref()).collect();
         let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
+    }
+
+    pub fn get_notification_log_by_id(&self, id: &str) -> Result<Option<NotificationLogRow>> {
+        let conn = self.lock_conn();
+        let row = conn.query_row(
+            "SELECT id, alert_event_id, rule_id, rule_name, agent_id, channel_id, channel_name, channel_type, status, error_message, duration_ms, recipient_count, severity, created_at, http_status_code, response_body, request_body, retry_count, recipient_details, api_message_id, api_error_code
+             FROM notification_logs WHERE id = ?1",
+            rusqlite::params![id],
+            |row| Ok(Self::row_to_notification_log(row)),
+        );
+        match row {
+            Ok(Ok(log)) => Ok(Some(log)),
+            Ok(Err(e)) => Err(e),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn cleanup_notification_logs(&self, retention_days: u32) -> Result<u64> {
@@ -1996,6 +2110,16 @@ impl CertStore {
         Ok(results)
     }
 
+    pub fn count_recipients_by_channel(&self, channel_id: &str) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM notification_recipients WHERE channel_id = ?1",
+            rusqlite::params![channel_id],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
     pub fn delete_recipient(&self, id: &str) -> Result<bool> {
         let conn = self.lock_conn();
         let deleted = conn.execute(
@@ -2071,6 +2195,12 @@ impl CertStore {
         let conn = self.lock_conn();
         let count: i64 =
             conn.query_row("SELECT COUNT(*) FROM agent_whitelist", [], |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
+    pub fn count_agents_from_db(&self) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM agents", [], |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -2590,6 +2720,39 @@ impl CertStore {
         Ok(results)
     }
 
+    pub fn count_certificate_details(
+        &self,
+        filter: &oxmon_common::types::CertificateDetailsFilter,
+    ) -> Result<u64> {
+        let conn = self.lock_conn();
+        let mut sql = String::from("SELECT COUNT(*) FROM certificate_details WHERE 1=1");
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
+
+        if let Some(not_after_lte) = filter.not_after_lte {
+            sql.push_str(&format!(" AND not_after <= ?{idx}"));
+            params.push(Box::new(not_after_lte));
+            idx += 1;
+        }
+        if let Some(ip) = &filter.ip_address_contains {
+            sql.push_str(&format!(" AND ip_addresses LIKE ?{idx}"));
+            params.push(Box::new(format!("%{ip}%")));
+            idx += 1;
+        }
+        if let Some(issuer) = &filter.issuer_contains {
+            sql.push_str(&format!(
+                " AND (issuer_cn LIKE ?{idx} OR issuer_o LIKE ?{idx})"
+            ));
+            params.push(Box::new(format!("%{issuer}%")));
+        }
+
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = stmt.query_row(param_refs.as_slice(), |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
     // ---- System dictionaries CRUD ----
 
     pub fn insert_dictionary(
@@ -2806,13 +2969,14 @@ impl CertStore {
         Ok(count as u64)
     }
 
-    pub fn count_dictionaries_by_type(&self, dict_type: &str) -> Result<u64> {
+    pub fn count_dictionaries_by_type(&self, dict_type: &str, enabled_only: bool) -> Result<u64> {
         let conn = self.lock_conn();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM system_dictionaries WHERE dict_type = ?1",
-            rusqlite::params![dict_type],
-            |row| row.get(0),
-        )?;
+        let sql = if enabled_only {
+            "SELECT COUNT(*) FROM system_dictionaries WHERE dict_type = ?1 AND enabled = 1"
+        } else {
+            "SELECT COUNT(*) FROM system_dictionaries WHERE dict_type = ?1"
+        };
+        let count: i64 = conn.query_row(sql, rusqlite::params![dict_type], |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -2865,6 +3029,13 @@ impl CertStore {
             results.push(row??);
         }
         Ok(results)
+    }
+
+    pub fn count_all_dict_types(&self) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM dictionary_types", [], |row| row.get(0))?;
+        Ok(count as u64)
     }
 
     pub fn update_dictionary_type(
@@ -3989,8 +4160,8 @@ mod tests {
                 })
                 .unwrap();
         }
-        assert_eq!(store.count_dictionaries_by_type("test_type").unwrap(), 3);
-        assert_eq!(store.count_dictionaries_by_type("nonexistent").unwrap(), 0);
+        assert_eq!(store.count_dictionaries_by_type("test_type", false).unwrap(), 3);
+        assert_eq!(store.count_dictionaries_by_type("nonexistent", false).unwrap(), 0);
     }
 
     #[test]

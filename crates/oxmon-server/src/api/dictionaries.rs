@@ -1,5 +1,5 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response, success_empty_response, success_response};
+use crate::api::{error_response, success_empty_response, success_paginated_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
@@ -38,11 +38,25 @@ async fn list_dict_types(
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
-    match state
-        .cert_store
-        .list_all_dict_types(pagination.limit(), pagination.offset())
-    {
-        Ok(types) => success_response(StatusCode::OK, &trace_id, types),
+    let limit = pagination.limit();
+    let offset = pagination.offset();
+
+    let total = match state.cert_store.count_all_dict_types() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count dictionary types");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
+    match state.cert_store.list_all_dict_types(limit, offset) {
+        Ok(types) => success_paginated_response(StatusCode::OK, &trace_id, types, total, limit, offset),
         Err(e) => {
             tracing::error!(error = %e, "Failed to list dictionary types");
             error_response(
@@ -79,13 +93,30 @@ async fn list_by_type(
     Query(query): Query<ListByTypeQuery>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
+    let limit = pagination.limit();
+    let offset = pagination.offset();
+
+    let total = match state.cert_store.count_dictionaries_by_type(&dict_type, query.enabled_only) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, dict_type = %dict_type, "Failed to count dictionaries by type");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
     match state.cert_store.list_dictionaries_by_type(
         &dict_type,
         query.enabled_only,
-        pagination.limit(),
-        pagination.offset(),
+        limit,
+        offset,
     ) {
-        Ok(items) => success_response(StatusCode::OK, &trace_id, items),
+        Ok(items) => success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset),
         Err(e) => {
             tracing::error!(error = %e, dict_type = %dict_type, "Failed to list dictionaries by type");
             error_response(

@@ -1,5 +1,5 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response, success_empty_response, success_response};
+use crate::api::{error_response, success_empty_response, success_paginated_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
@@ -12,6 +12,98 @@ use oxmon_storage::StorageEngine;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
+
+// ---- Alert Rules ----
+
+/// 告警规则信息
+#[derive(Serialize, ToSchema)]
+pub struct AlertRuleResponse {
+    /// 规则唯一标识
+    pub id: String,
+    /// 规则名称
+    pub name: String,
+    /// 规则类型（threshold / rate_of_change / trend_prediction / cert_expiration）
+    pub rule_type: String,
+    /// 监控指标名称
+    pub metric: String,
+    /// Agent 匹配模式（支持 glob）
+    pub agent_pattern: String,
+    /// 告警级别
+    pub severity: String,
+    /// 是否启用
+    pub enabled: bool,
+}
+
+/// 分页查询告警规则列表。
+/// 默认排序：`id` 升序；默认分页：`limit=20&offset=0`。
+#[utoipa::path(
+    get,
+    path = "/v1/alerts/rules",
+    tag = "Alerts",
+    security(("bearer_auth" = [])),
+    params(PaginationParams),
+    responses(
+        (status = 200, description = "告警规则分页列表", body = Vec<AlertRuleResponse>),
+        (status = 401, description = "未认证", body = crate::api::ApiError)
+    )
+)]
+async fn list_alert_rules(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Query(pagination): Query<PaginationParams>,
+) -> impl IntoResponse {
+    let total = match state.cert_store.count_alert_rules() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count alert rules");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
+    match state
+        .cert_store
+        .list_alert_rules(pagination.limit(), pagination.offset())
+    {
+        Ok(rules) => {
+            let items: Vec<AlertRuleResponse> = rules
+                .into_iter()
+                .map(|r| AlertRuleResponse {
+                    id: r.id,
+                    name: r.name,
+                    rule_type: r.rule_type,
+                    metric: r.metric,
+                    agent_pattern: r.agent_pattern,
+                    severity: r.severity,
+                    enabled: r.enabled,
+                })
+                .collect();
+            success_paginated_response(
+                StatusCode::OK,
+                &trace_id,
+                items,
+                total,
+                pagination.limit(),
+                pagination.offset(),
+            )
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to list alert rules");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response()
+        }
+    }
+}
 
 /// 告警规则详情
 #[derive(Serialize, ToSchema)]
@@ -352,6 +444,205 @@ async fn set_alert_rule_enabled(
     }
 }
 
+// ---- Alert history ----
+
+// GET /v1/alerts/history
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct AlertHistoryQueryParams {
+    /// Agent ID 精确匹配（agent_id__eq，可选）
+    #[param(required = false)]
+    #[serde(rename = "agent_id__eq")]
+    agent_id_eq: Option<String>,
+    /// 告警级别精确匹配（severity__eq,可选)
+    #[param(required = false)]
+    #[serde(rename = "severity__eq")]
+    severity_eq: Option<String>,
+    /// 时间下界（timestamp >=，默认为当前时间前 1 天）
+    #[param(required = false)]
+    #[serde(rename = "timestamp__gte")]
+    timestamp_gte: Option<DateTime<Utc>>,
+    /// 时间上界（timestamp <=，默认为当前时间）
+    #[param(required = false)]
+    #[serde(rename = "timestamp__lte")]
+    timestamp_lte: Option<DateTime<Utc>>,
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    offset: Option<u64>,
+}
+
+/// 告警事件
+#[derive(Serialize, ToSchema)]
+struct AlertEventResponse {
+    /// 事件唯一标识
+    id: String,
+    /// 触发规则 ID
+    rule_id: String,
+    /// Agent 唯一标识
+    agent_id: String,
+    /// 指标名称
+    metric_name: String,
+    /// 告警级别
+    severity: String,
+    /// 告警消息
+    message: String,
+    /// 当前指标值
+    value: f64,
+    /// 告警阈值
+    threshold: f64,
+    /// 触发时间
+    timestamp: DateTime<Utc>,
+    /// 预测突破时间（趋势预测规则）
+    predicted_breach: Option<DateTime<Utc>>,
+    /// 状态：1=未处理, 2=已确认, 3=已处理
+    status: u8,
+}
+
+/// 分页查询告警事件历史（支持按 agent_id__eq、severity__eq、时间范围过滤）。
+/// 默认排序：`timestamp` 倒序；默认分页：`limit=20&offset=0`。
+#[utoipa::path(
+    get,
+    path = "/v1/alerts/history",
+    tag = "Alerts",
+    security(("bearer_auth" = [])),
+    params(AlertHistoryQueryParams),
+    responses(
+        (status = 200, description = "告警事件分页列表", body = Vec<AlertEventResponse>),
+        (status = 401, description = "未认证", body = crate::api::ApiError)
+    )
+)]
+async fn alert_history(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Query(params): Query<AlertHistoryQueryParams>,
+) -> impl IntoResponse {
+    let to = params.timestamp_lte.unwrap_or_else(Utc::now);
+    let from = params
+        .timestamp_gte
+        .unwrap_or_else(|| to - chrono::Duration::days(1));
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
+
+    let total = match state.storage.count_alert_history(
+        from,
+        to,
+        params.severity_eq.as_deref(),
+        params.agent_id_eq.as_deref(),
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count alert history");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response();
+        }
+    };
+
+    match state.storage.query_alert_history(
+        from,
+        to,
+        params.severity_eq.as_deref(),
+        params.agent_id_eq.as_deref(),
+        limit,
+        offset,
+    ) {
+        Ok(events) => {
+            let items: Vec<AlertEventResponse> = events
+                .into_iter()
+                .map(|e| AlertEventResponse {
+                    id: e.id,
+                    rule_id: e.rule_id,
+                    agent_id: e.agent_id,
+                    metric_name: e.metric_name,
+                    severity: e.severity.to_string(),
+                    message: e.message,
+                    value: e.value,
+                    threshold: e.threshold,
+                    timestamp: e.timestamp,
+                    predicted_breach: e.predicted_breach,
+                    status: e.status,
+                })
+                .collect();
+            success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Query failed");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
+    }
+}
+
+/// 获取单个告警事件详情（按 ID）。
+#[utoipa::path(
+    get,
+    path = "/v1/alerts/history/{id}",
+    params(
+        ("id" = String, Path, description = "告警事件 ID")
+    ),
+    responses(
+        (status = 200, description = "告警事件详情", body = AlertEventResponse),
+        (status = 404, description = "告警事件不存在"),
+        (status = 500, description = "服务器错误")
+    ),
+    tag = "Alerts"
+)]
+async fn get_alert_event(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.storage.get_alert_event_by_id(&id) {
+        Ok(Some(e)) => {
+            let response = AlertEventResponse {
+                id: e.id,
+                rule_id: e.rule_id,
+                agent_id: e.agent_id,
+                metric_name: e.metric_name,
+                severity: e.severity.to_string(),
+                message: e.message,
+                value: e.value,
+                threshold: e.threshold,
+                timestamp: e.timestamp,
+                predicted_breach: e.predicted_breach,
+                status: e.status,
+            };
+            success_response(StatusCode::OK, &trace_id, response)
+        }
+        Ok(None) => error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Alert event not found",
+        )
+        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to get alert event");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
+    }
+}
+
 // ---- Alert lifecycle ----
 
 /// 确认告警事件。
@@ -451,11 +742,32 @@ async fn active_alerts(
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
+    let total = match state.storage.count_active_alerts() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count active alerts");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
     match state
         .storage
         .query_active_alerts(pagination.limit(), pagination.offset())
     {
-        Ok(events) => success_response(StatusCode::OK, &trace_id, events),
+        Ok(events) => success_paginated_response(
+            StatusCode::OK,
+            &trace_id,
+            events,
+            total,
+            pagination.limit(),
+            pagination.offset(),
+        ),
         Err(e) => {
             tracing::error!(error = %e, "Failed to query active alerts");
             error_response(
@@ -513,8 +825,10 @@ async fn alert_summary(
 
 pub fn alert_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(super::list_alert_rules, create_alert_rule))
+        .routes(routes!(list_alert_rules, create_alert_rule))
         .routes(routes!(get_alert_rule))
+        .routes(routes!(alert_history))
+        .routes(routes!(get_alert_event))
         .routes(routes!(update_alert_rule, delete_alert_rule))
         .routes(routes!(set_alert_rule_enabled))
         .routes(routes!(acknowledge_alert))

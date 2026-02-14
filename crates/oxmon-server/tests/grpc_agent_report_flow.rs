@@ -35,8 +35,8 @@ async fn grpc_report_should_write_metrics_and_be_queryable_via_rest() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let rows = body["data"].as_array().expect("data should be array");
-    assert!(!rows.is_empty());
+    let items = body["data"]["items"].as_array().expect("data.items should be array");
+    assert!(!items.is_empty());
 
     let (status, body, _) = request_no_body(
         &ctx.app,

@@ -1,5 +1,5 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response as common_error_response, success_response};
+use crate::api::{error_response as common_error_response, success_empty_response, success_paginated_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
@@ -226,13 +226,38 @@ async fn list_domains(
 ) -> impl IntoResponse {
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
+
+    let total = match state.cert_store.count_domains(
+        params.enabled_eq,
+        params.domain_contains.as_deref(),
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count domains");
+            return common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
     match state.cert_store.query_domains(
         params.enabled_eq,
         params.domain_contains.as_deref(),
         limit,
         offset,
     ) {
-        Ok(domains) => success_response(StatusCode::OK, &trace_id, domains),
+        Ok(domains) => success_paginated_response(
+            StatusCode::OK,
+            &trace_id,
+            domains,
+            total,
+            limit,
+            offset,
+        ),
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
             common_error_response(
@@ -394,11 +419,7 @@ async fn delete_domain(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.cert_store.delete_domain(&id) {
-        Ok(true) => success_response(
-            StatusCode::OK,
-            &trace_id,
-            serde_json::json!({ "deleted": true }),
-        ),
+        Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "Deleted"),
         Ok(false) => common_error_response(
             StatusCode::NOT_FOUND,
             &trace_id,
@@ -440,8 +461,29 @@ async fn cert_status_all(
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
 
+    let total = match state.cert_store.count_latest_results() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count latest results");
+            return common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
     match state.cert_store.query_latest_results(limit, offset) {
-        Ok(results) => success_response(StatusCode::OK, &trace_id, results),
+        Ok(results) => success_paginated_response(
+            StatusCode::OK,
+            &trace_id,
+            results,
+            total,
+            limit,
+            offset,
+        ),
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
             common_error_response(
@@ -712,6 +754,94 @@ async fn store_check_result(
     Ok(())
 }
 
+// ---- Cert check history ----
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct CertHistoryParams {
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    offset: Option<u64>,
+}
+
+/// 获取指定域名的证书检查历史记录。
+#[utoipa::path(
+    get,
+    path = "/v1/certs/domains/{id}/history",
+    tag = "Certificates",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "域名 ID"),
+        CertHistoryParams,
+    ),
+    responses(
+        (status = 200, description = "证书检查历史"),
+        (status = 401, description = "未认证", body = crate::api::ApiError),
+        (status = 404, description = "域名不存在", body = crate::api::ApiError)
+    )
+)]
+async fn cert_check_history(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<CertHistoryParams>,
+) -> impl IntoResponse {
+    // Verify domain exists
+    match state.cert_store.get_domain_by_id(&id) {
+        Ok(None) => {
+            return common_error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                "Domain not found",
+            )
+            .into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Query failed");
+            return common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response();
+        }
+        _ => {}
+    }
+
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
+
+    match state
+        .cert_store
+        .query_check_results_by_domain_id(&id, limit, offset)
+    {
+        Ok(results) => success_response(StatusCode::OK, &trace_id, results),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to query cert check history");
+            common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
+    }
+}
+
 pub fn cert_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(create_domain, list_domains))
@@ -721,4 +851,5 @@ pub fn cert_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(check_all_domains))
         .routes(routes!(cert_status_all))
         .routes(routes!(cert_status_by_domain))
+        .routes(routes!(cert_check_history))
 }

@@ -124,6 +124,9 @@ pub trait StorageEngine: Send + Sync {
     /// Resolves an alert event by ID. Returns true if found and updated.
     fn resolve_alert(&self, event_id: &str) -> Result<bool>;
 
+    /// Gets a single alert event by ID.
+    fn get_alert_event_by_id(&self, event_id: &str) -> Result<Option<AlertEvent>>;
+
     /// Queries active (non-resolved) alert events.
     fn query_active_alerts(&self, limit: usize, offset: usize) -> Result<Vec<AlertEvent>>;
 
@@ -144,6 +147,15 @@ pub trait StorageEngine: Send + Sync {
         severity: Option<&str>,
         agent_id: Option<&str>,
     ) -> Result<u64>;
+
+    /// Returns total count of distinct metric names in the given time range.
+    fn count_distinct_metric_names(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<u64>;
+
+    /// Returns total count of distinct agent IDs in the given time range.
+    fn count_distinct_agent_ids(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<u64>;
+
+    /// Returns total count of active (non-resolved) alert events.
+    fn count_active_alerts(&self) -> Result<u64>;
 }
 
 /// Aggregated metric statistics.

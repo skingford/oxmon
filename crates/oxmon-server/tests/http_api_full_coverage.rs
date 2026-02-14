@@ -163,9 +163,9 @@ async fn metrics_alerts_and_history_should_return_paginated_data() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let rows: Vec<serde_json::Value> = decode_data(&body);
-    assert!(!rows.is_empty());
-    assert!(rows[0]["labels"].is_object());
+    let items = body["data"]["items"].as_array().expect("data.items should be array");
+    assert!(!items.is_empty());
+    assert!(items[0]["labels"].is_object());
 
     let (status, body, _) =
         request_no_body(&ctx.app, "GET", "/v1/alerts/rules", Some(&token)).await;
@@ -195,7 +195,7 @@ async fn whitelist_endpoints_should_cover_sensitive_field_and_crud_paths() {
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::CREATED);
     assert_ok_envelope(&body);
     let id = body["data"]["id"]
         .as_str()
@@ -222,7 +222,7 @@ async fn whitelist_endpoints_should_cover_sensitive_field_and_crud_paths() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let items: Vec<serde_json::Value> = decode_data(&body);
+    let items = body["data"]["items"].as_array().expect("data.items should be array");
     assert!(!items.is_empty());
     assert!(items[0].get("token").is_some());
     assert!(items[0]["token"].is_null());
@@ -428,8 +428,8 @@ async fn certificate_list_should_default_to_20_when_pagination_missing() {
         request_no_body(&ctx.app, "GET", "/v1/certificates", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let rows: Vec<serde_json::Value> = decode_data(&body);
-    assert_eq!(rows.len(), 20);
+    let items = body["data"]["items"].as_array().expect("items should be array");
+    assert_eq!(items.len(), 20);
 }
 
 #[tokio::test]
@@ -442,7 +442,7 @@ async fn dictionary_endpoints_should_cover_crud_paths() {
         request_no_body(&ctx.app, "GET", "/v1/dictionaries/types", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let types: Vec<serde_json::Value> = decode_data(&body);
+    let types = body["data"]["items"].as_array().expect("items should be array");
     assert!(types.is_empty());
 
     // Create a dictionary item
@@ -534,14 +534,14 @@ async fn dictionary_endpoints_should_cover_crud_paths() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let items: Vec<serde_json::Value> = decode_data(&body);
+    let items = body["data"]["items"].as_array().expect("items should be array");
     assert_eq!(items.len(), 2);
 
     // List types again (should have 1 type, with auto-created dict_type_label)
     let (status, body, _) =
         request_no_body(&ctx.app, "GET", "/v1/dictionaries/types", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
-    let types: Vec<serde_json::Value> = decode_data(&body);
+    let types = body["data"]["items"].as_array().expect("items should be array");
     assert_eq!(types.len(), 1);
     assert_eq!(types[0]["dict_type"], "channel_type");
     assert_eq!(types[0]["dict_type_label"], "channel_type"); // auto-ensured, label defaults to dict_type
@@ -699,7 +699,7 @@ async fn system_config_endpoints_should_cover_crud_paths() {
         request_no_body(&ctx.app, "GET", "/v1/system/configs", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let items: Vec<serde_json::Value> = decode_data(&body);
+    let items = body["data"]["items"].as_array().expect("items should be array");
     assert!(items.is_empty());
 
     // Create a runtime system config
@@ -1106,10 +1106,11 @@ async fn notification_channel_config_get_by_id_should_work() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_err_envelope(&body, 1004);
 
+    // Phase 3: 使用合并后的端点 /v1/notifications/channels/{id}
     let (status, body, _) = request_no_body(
         &ctx.app,
         "GET",
-        &format!("/v1/notifications/channels/config/{}", inserted.id),
+        &format!("/v1/notifications/channels/{}", inserted.id),
         Some(&token),
     )
     .await;
@@ -1119,25 +1120,9 @@ async fn notification_channel_config_get_by_id_should_work() {
     assert_eq!(body["data"]["name"], "Email Channel");
     assert_eq!(body["data"]["channel_type"], "email");
     assert_eq!(body["data"]["min_severity"], "warning");
-
-    let (status, body, _) = request_no_body(
-        &ctx.app,
-        "GET",
-        "/v1/notifications/channels/config/nonexistent",
-        Some(&token),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_err_envelope(&body, 1004);
-
-    let (status, _, _) = request_no_body(
-        &ctx.app,
-        "GET",
-        &format!("/v1/notifications/channels/config/{}", inserted.id),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // 验证返回包含收件人和配置信息
+    assert!(body["data"]["recipients"].is_array());
+    assert!(body["data"]["config_json"].is_string());
 }
 
 #[tokio::test]

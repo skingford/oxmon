@@ -531,6 +531,77 @@ impl StorageEngine for SqliteStorageEngine {
         self.partitions.update_alert_status(event_id, "resolved")
     }
 
+    fn get_alert_event_by_id(&self, event_id: &str) -> Result<Option<AlertEvent>> {
+        // Search last 30 days for the alert event
+        let to = Utc::now();
+        let from = to - chrono::Duration::days(30);
+        let keys = self.partitions.partitions_in_range(from, to)?;
+
+        for key in keys {
+            let found = self.partitions.with_partition(&key, |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, rule_id, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach, created_at, updated_at, status, rule_name, labels, first_triggered_at
+                     FROM alert_events WHERE id = ?1",
+                )?;
+                let row = stmt.query_row(rusqlite::params![event_id], |row| {
+                    let ts_ms: i64 = row.get(8)?;
+                    let predicted_ms: Option<i64> = row.get(9)?;
+                    let sev_str: String = row.get(4)?;
+                    let created_at: i64 = row.get(10)?;
+                    let updated_at: i64 = row.get(11)?;
+                    let status_str: Option<String> = row.get(12)?;
+                    let rule_name: String = row.get(13)?;
+                    let labels_str: String = row.get(14)?;
+                    let first_triggered_ms: Option<i64> = row.get(15)?;
+
+                    let timestamp = DateTime::from_timestamp_millis(ts_ms).unwrap_or_default();
+                    let predicted_breach = predicted_ms.and_then(DateTime::from_timestamp_millis);
+                    let severity_val: Severity = sev_str.parse().unwrap_or(Severity::Info);
+                    let status = match status_str.as_deref() {
+                        Some("acknowledged") => 2,
+                        Some("resolved") => 3,
+                        _ => 1,
+                    };
+                    let labels: std::collections::HashMap<String, String> =
+                        serde_json::from_str(&labels_str).unwrap_or_default();
+                    let first_triggered_at =
+                        first_triggered_ms.and_then(DateTime::from_timestamp_millis);
+
+                    Ok(AlertEvent {
+                        id: row.get(0)?,
+                        rule_id: row.get(1)?,
+                        agent_id: row.get(2)?,
+                        metric_name: row.get(3)?,
+                        severity: severity_val,
+                        message: row.get(5)?,
+                        value: row.get(6)?,
+                        threshold: row.get(7)?,
+                        timestamp,
+                        predicted_breach,
+                        created_at: DateTime::from_timestamp_millis(created_at).unwrap_or_default(),
+                        updated_at: DateTime::from_timestamp_millis(updated_at).unwrap_or_default(),
+                        status,
+                        rule_name,
+                        labels,
+                        first_triggered_at,
+                    })
+                });
+
+                match row {
+                    Ok(event) => Ok(Some(event)),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                    Err(e) => Err(e.into()),
+                }
+            })?;
+
+            if found.is_some() {
+                return Ok(found);
+            }
+        }
+
+        Ok(None)
+    }
+
     fn query_active_alerts(&self, limit: usize, offset: usize) -> Result<Vec<AlertEvent>> {
         // Query last 7 days for active alerts
         let to = Utc::now();
@@ -681,6 +752,75 @@ impl StorageEngine for SqliteStorageEngine {
                 let param_refs: Vec<&dyn rusqlite::types::ToSql> =
                     params.iter().map(|p| p.as_ref()).collect();
                 let count: i64 = stmt.query_row(param_refs.as_slice(), |row| row.get(0))?;
+                total += count as u64;
+                Ok(())
+            })?;
+        }
+        Ok(total)
+    }
+
+    fn count_distinct_metric_names(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<u64> {
+        let keys = self.partitions.partitions_in_range(from, to)?;
+        let from_ms = from.timestamp_millis();
+        let to_ms = to.timestamp_millis();
+        let mut all_names = std::collections::HashSet::new();
+
+        for key in keys {
+            self.partitions.with_partition(&key, |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT DISTINCT metric_name FROM metrics WHERE timestamp >= ?1 AND timestamp <= ?2",
+                )?;
+                let rows = stmt.query_map(rusqlite::params![from_ms, to_ms], |row| {
+                    row.get::<_, String>(0)
+                })?;
+                for row in rows {
+                    all_names.insert(row?);
+                }
+                Ok(())
+            })?;
+        }
+        Ok(all_names.len() as u64)
+    }
+
+    fn count_distinct_agent_ids(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<u64> {
+        let keys = self.partitions.partitions_in_range(from, to)?;
+        let from_ms = from.timestamp_millis();
+        let to_ms = to.timestamp_millis();
+        let mut all_ids = std::collections::HashSet::new();
+
+        for key in keys {
+            self.partitions.with_partition(&key, |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT DISTINCT agent_id FROM metrics WHERE timestamp >= ?1 AND timestamp <= ?2",
+                )?;
+                let rows = stmt.query_map(rusqlite::params![from_ms, to_ms], |row| {
+                    row.get::<_, String>(0)
+                })?;
+                for row in rows {
+                    all_ids.insert(row?);
+                }
+                Ok(())
+            })?;
+        }
+        Ok(all_ids.len() as u64)
+    }
+
+    fn count_active_alerts(&self) -> Result<u64> {
+        // Query last 7 days for active alerts
+        let to = Utc::now();
+        let from = to - chrono::Duration::days(7);
+        let keys = self.partitions.partitions_in_range(from, to)?;
+        let from_ms = from.timestamp_millis();
+        let to_ms = to.timestamp_millis();
+        let mut total: u64 = 0;
+
+        for key in keys {
+            self.partitions.with_partition(&key, |conn| {
+                let count: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM alert_events WHERE timestamp >= ?1 AND timestamp <= ?2 AND (status IS NULL OR status NOT IN ('resolved'))",
+                    rusqlite::params![from_ms, to_ms],
+                    |row| row.get(0),
+                )?;
                 total += count as u64;
                 Ok(())
             })?;

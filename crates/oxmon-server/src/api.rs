@@ -51,6 +51,22 @@ where
     pub data: Option<T>,
 }
 
+/// 分页数据结构
+#[derive(Serialize, ToSchema)]
+pub struct PaginatedData<T>
+where
+    T: Serialize,
+{
+    /// 数据项列表
+    pub items: Vec<T>,
+    /// 总数
+    pub total: u64,
+    /// 每页数量
+    pub limit: usize,
+    /// 偏移量
+    pub offset: usize,
+}
+
 pub fn success_response<T>(status: StatusCode, trace_id: &str, data: T) -> Response
 where
     T: Serialize,
@@ -80,13 +96,38 @@ pub fn success_empty_response(status: StatusCode, trace_id: &str, msg: &str) -> 
         .into_response()
 }
 
+pub fn success_paginated_response<T>(
+    status: StatusCode,
+    trace_id: &str,
+    items: Vec<T>,
+    total: u64,
+    limit: usize,
+    offset: usize,
+) -> Response
+where
+    T: Serialize,
+{
+    success_response(
+        status,
+        trace_id,
+        PaginatedData {
+            items,
+            total,
+            limit,
+            offset,
+        },
+    )
+}
+
 fn to_custom_error_code(code: &str) -> i32 {
     match code {
-        "BAD_REQUEST" | "bad_request" => 1001,
-        "UNAUTHORIZED" | "unauthorized" => 1002,
-        "TOKEN_EXPIRED" | "token_expired" => 1003,
-        "NOT_FOUND" | "not_found" => 1004,
-        "CONFLICT" | "conflict" => 1005,
+        "bad_request" => 1001,
+        "unauthorized" => 1002,
+        "token_expired" => 1003,
+        "not_found" => 1004,
+        "conflict" => 1005,
+        "app_id_missing" => 1008,
+        "app_id_invalid" => 1009,
         "duplicate_domain" => 1101,
         "invalid_domain" => 1102,
         "invalid_port" => 1103,
@@ -95,7 +136,7 @@ fn to_custom_error_code(code: &str) -> i32 {
         "disabled_system_config" => 1106,
         "invalid_system_config" => 1107,
         "storage_error" => 1501,
-        "INTERNAL_ERROR" | "internal_error" => 1500,
+        "internal_error" => 1500,
         _ => 1999,
     }
 }
@@ -127,13 +168,15 @@ struct HealthResponse {
 }
 
 /// 获取服务健康状态。
-/// 鉴权：无需 Bearer Token。
+/// 鉴权：无需 Bearer Token，但需要 ox-app-id 请求头（如果在配置中启用）。
 #[utoipa::path(
     get,
     path = "/v1/health",
     tag = "Health",
+    security(("app_id_auth" = [])),
     responses(
-        (status = 200, description = "服务健康状态", body = HealthResponse)
+        (status = 200, description = "服务健康状态", body = HealthResponse),
+        (status = 403, description = "缺少或无效的 ox-app-id", body = ApiError)
     )
 )]
 async fn health(
@@ -224,13 +267,13 @@ async fn list_agents(
     let limit = pagination.limit();
     let offset = pagination.offset();
 
-    // 从数据库查询 agent 列表
-    let agents = match state.cert_store.list_agents_from_db(limit, offset).map_err(|e| {
-        tracing::error!(error = %e, "Failed to list agents from database");
+    // 获取总数
+    let total = match state.cert_store.count_agents_from_db().map_err(|e| {
+        tracing::error!(error = %e, "Failed to count agents");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             &trace_id,
-            "INTERNAL_ERROR",
+            "internal_error",
             "Database error",
         )
     }) {
@@ -238,7 +281,21 @@ async fn list_agents(
         Err(resp) => return resp,
     };
 
-    let paginated_agents: Vec<AgentResponse> = agents
+    // 从数据库查询 agent 列表
+    let agents = match state.cert_store.list_agents_from_db(limit, offset).map_err(|e| {
+        tracing::error!(error = %e, "Failed to list agents from database");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
+            "internal_error",
+            "Database error",
+        )
+    }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    let items: Vec<AgentResponse> = agents
         .into_iter()
         .map(|agent_info| {
             // 尝试从白名单获取白名单特有的信息（id, created_at）
@@ -271,7 +328,7 @@ async fn list_agents(
         })
         .collect();
 
-    success_response(StatusCode::OK, &trace_id, paginated_agents)
+    success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
 }
 
 /// 获取指定 Agent 的详细信息。
@@ -301,7 +358,7 @@ async fn get_agent(
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             &trace_id,
-            "INTERNAL_ERROR",
+            "internal_error",
             "Database error",
         )
     }) {
@@ -310,7 +367,7 @@ async fn get_agent(
             return error_response(
                 StatusCode::NOT_FOUND,
                 &trace_id,
-                "NOT_FOUND",
+                "not_found",
                 &format!("Agent '{}' not found", id),
             )
         }
@@ -505,6 +562,25 @@ async fn query_all_metrics(
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
 
+    let total = match state.storage.count_metrics(
+        from,
+        to,
+        params.agent_id_eq.as_deref(),
+        params.metric_name_eq.as_deref(),
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Count metrics failed");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response();
+        }
+    };
+
     match state.storage.query_metrics_paginated(
         from,
         to,
@@ -514,7 +590,7 @@ async fn query_all_metrics(
         offset,
     ) {
         Ok(points) => {
-            let resp: Vec<MetricDataPointResponse> = points
+            let items: Vec<MetricDataPointResponse> = points
                 .into_iter()
                 .map(|dp| MetricDataPointResponse {
                     id: dp.id,
@@ -526,198 +602,7 @@ async fn query_all_metrics(
                     created_at: dp.created_at,
                 })
                 .collect();
-            success_response(StatusCode::OK, &trace_id, resp)
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Query failed");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Internal query error",
-            )
-            .into_response()
-        }
-    }
-}
-
-/// 告警规则信息
-#[derive(Serialize, ToSchema)]
-struct AlertRuleResponse {
-    /// 规则唯一标识
-    id: String,
-    /// 规则名称
-    name: String,
-    /// 规则类型（threshold / rate_of_change / trend_prediction / cert_expiration）
-    rule_type: String,
-    /// 监控指标名称
-    metric: String,
-    /// Agent 匹配模式（支持 glob）
-    agent_pattern: String,
-    /// 告警级别
-    severity: String,
-    /// 是否启用
-    enabled: bool,
-}
-
-/// 分页查询告警规则列表。
-/// 默认排序：`id` 升序；默认分页：`limit=20&offset=0`。
-#[utoipa::path(
-    get,
-    path = "/v1/alerts/rules",
-    tag = "Alerts",
-    security(("bearer_auth" = [])),
-    params(PaginationParams),
-    responses(
-        (status = 200, description = "告警规则分页列表", body = Vec<AlertRuleResponse>),
-        (status = 401, description = "未认证", body = ApiError)
-    )
-)]
-async fn list_alert_rules(
-    Extension(trace_id): Extension<TraceId>,
-    State(state): State<AppState>,
-    Query(pagination): Query<PaginationParams>,
-) -> impl IntoResponse {
-    match state
-        .cert_store
-        .list_alert_rules(pagination.limit(), pagination.offset())
-    {
-        Ok(rules) => {
-            let resp: Vec<AlertRuleResponse> = rules
-                .into_iter()
-                .map(|r| AlertRuleResponse {
-                    id: r.id,
-                    name: r.name,
-                    rule_type: r.rule_type,
-                    metric: r.metric,
-                    agent_pattern: r.agent_pattern,
-                    severity: r.severity,
-                    enabled: r.enabled,
-                })
-                .collect();
-            success_response(StatusCode::OK, &trace_id, resp)
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to list alert rules");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Database error",
-            )
-            .into_response()
-        }
-    }
-}
-
-// GET /v1/alerts/history
-#[derive(Deserialize, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
-struct AlertHistoryQueryParams {
-    /// Agent ID 精确匹配（agent_id__eq，可选）
-    #[param(required = false)]
-    #[serde(rename = "agent_id__eq")]
-    agent_id_eq: Option<String>,
-    /// 告警级别精确匹配（severity__eq，可选）
-    #[param(required = false)]
-    #[serde(rename = "severity__eq")]
-    severity_eq: Option<String>,
-    /// 时间下界（timestamp >=，默认为当前时间前 1 天）
-    #[param(required = false)]
-    #[serde(rename = "timestamp__gte")]
-    timestamp_gte: Option<DateTime<Utc>>,
-    /// 时间上界（timestamp <=，默认为当前时间）
-    #[param(required = false)]
-    #[serde(rename = "timestamp__lte")]
-    timestamp_lte: Option<DateTime<Utc>>,
-    /// 每页条数（默认 20）
-    #[param(required = false)]
-    #[serde(default, deserialize_with = "pagination::deserialize_optional_u64")]
-    limit: Option<u64>,
-    /// 偏移量（默认 0）
-    #[param(required = false)]
-    #[serde(default, deserialize_with = "pagination::deserialize_optional_u64")]
-    offset: Option<u64>,
-}
-
-/// 告警事件
-#[derive(Serialize, ToSchema)]
-struct AlertEventResponse {
-    /// 事件唯一标识
-    id: String,
-    /// 触发规则 ID
-    rule_id: String,
-    /// Agent 唯一标识
-    agent_id: String,
-    /// 指标名称
-    metric_name: String,
-    /// 告警级别
-    severity: String,
-    /// 告警消息
-    message: String,
-    /// 当前指标值
-    value: f64,
-    /// 告警阈值
-    threshold: f64,
-    /// 触发时间
-    timestamp: DateTime<Utc>,
-    /// 预测突破时间（趋势预测规则）
-    predicted_breach: Option<DateTime<Utc>>,
-    /// 状态：1=未处理, 2=已确认, 3=已处理
-    status: u8,
-}
-
-/// 分页查询告警事件历史（支持按 agent_id__eq、severity__eq、时间范围过滤）。
-/// 默认排序：`timestamp` 倒序；默认分页：`limit=20&offset=0`。
-#[utoipa::path(
-    get,
-    path = "/v1/alerts/history",
-    tag = "Alerts",
-    security(("bearer_auth" = [])),
-    params(AlertHistoryQueryParams),
-    responses(
-        (status = 200, description = "告警事件分页列表", body = Vec<AlertEventResponse>),
-        (status = 401, description = "未认证", body = ApiError)
-    )
-)]
-async fn alert_history(
-    Extension(trace_id): Extension<TraceId>,
-    State(state): State<AppState>,
-    Query(params): Query<AlertHistoryQueryParams>,
-) -> impl IntoResponse {
-    let to = params.timestamp_lte.unwrap_or_else(Utc::now);
-    let from = params
-        .timestamp_gte
-        .unwrap_or_else(|| to - chrono::Duration::days(1));
-    let limit = PaginationParams::resolve_limit(params.limit);
-    let offset = PaginationParams::resolve_offset(params.offset);
-
-    match state.storage.query_alert_history(
-        from,
-        to,
-        params.severity_eq.as_deref(),
-        params.agent_id_eq.as_deref(),
-        limit,
-        offset,
-    ) {
-        Ok(events) => {
-            let resp: Vec<AlertEventResponse> = events
-                .into_iter()
-                .map(|e| AlertEventResponse {
-                    id: e.id,
-                    rule_id: e.rule_id,
-                    agent_id: e.agent_id,
-                    metric_name: e.metric_name,
-                    severity: e.severity.to_string(),
-                    message: e.message,
-                    value: e.value,
-                    threshold: e.threshold,
-                    timestamp: e.timestamp,
-                    predicted_breach: e.predicted_breach,
-                    status: e.status,
-                })
-                .collect();
-            success_response(StatusCode::OK, &trace_id, resp)
+            success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
         }
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
@@ -769,13 +654,35 @@ async fn metric_names(
     let from = params
         .timestamp_gte
         .unwrap_or_else(|| to - chrono::Duration::days(1));
+
+    let total = match state.storage.count_distinct_metric_names(from, to) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count metric names");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response();
+        }
+    };
+
     match state.storage.query_distinct_metric_names(
         from,
         to,
         pagination.limit(),
         pagination.offset(),
     ) {
-        Ok(names) => success_response(StatusCode::OK, &trace_id, names),
+        Ok(names) => success_paginated_response(
+            StatusCode::OK,
+            &trace_id,
+            names,
+            total,
+            pagination.limit(),
+            pagination.offset(),
+        ),
         Err(e) => {
             tracing::error!(error = %e, "Failed to query metric names");
             error_response(
@@ -811,11 +718,33 @@ async fn metric_agents(
     let from = params
         .timestamp_gte
         .unwrap_or_else(|| to - chrono::Duration::days(1));
+
+    let total = match state.storage.count_distinct_agent_ids(from, to) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count agent ids");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response();
+        }
+    };
+
     match state
         .storage
         .query_distinct_agent_ids(from, to, pagination.limit(), pagination.offset())
     {
-        Ok(ids) => success_response(StatusCode::OK, &trace_id, ids),
+        Ok(ids) => success_paginated_response(
+            StatusCode::OK,
+            &trace_id,
+            ids,
+            total,
+            pagination.limit(),
+            pagination.offset(),
+        ),
         Err(e) => {
             tracing::error!(error = %e, "Failed to query agent ids");
             error_response(
@@ -887,118 +816,6 @@ async fn metric_summary(
     }
 }
 
-/// 证书健康摘要。
-#[utoipa::path(
-    get,
-    path = "/v1/certs/summary",
-    tag = "Certificates",
-    security(("bearer_auth" = [])),
-    responses(
-        (status = 200, description = "证书健康摘要"),
-        (status = 401, description = "未认证", body = ApiError)
-    )
-)]
-async fn cert_summary(
-    Extension(trace_id): Extension<TraceId>,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
-    match state.cert_store.cert_summary() {
-        Ok(summary) => success_response(StatusCode::OK, &trace_id, summary),
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to query cert summary");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Internal query error",
-            )
-            .into_response()
-        }
-    }
-}
-
-// ---- Cert check history ----
-
-#[derive(Deserialize, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
-struct CertHistoryParams {
-    /// 每页条数（默认 20）
-    #[param(required = false)]
-    #[serde(default, deserialize_with = "pagination::deserialize_optional_u64")]
-    limit: Option<u64>,
-    /// 偏移量（默认 0）
-    #[param(required = false)]
-    #[serde(default, deserialize_with = "pagination::deserialize_optional_u64")]
-    offset: Option<u64>,
-}
-
-/// 获取指定域名的证书检查历史记录。
-#[utoipa::path(
-    get,
-    path = "/v1/certs/domains/{id}/history",
-    tag = "Certificates",
-    security(("bearer_auth" = [])),
-    params(
-        ("id" = String, Path, description = "域名 ID"),
-        CertHistoryParams,
-    ),
-    responses(
-        (status = 200, description = "证书检查历史"),
-        (status = 401, description = "未认证", body = ApiError),
-        (status = 404, description = "域名不存在", body = ApiError)
-    )
-)]
-async fn cert_check_history(
-    Extension(trace_id): Extension<TraceId>,
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(params): Query<CertHistoryParams>,
-) -> impl IntoResponse {
-    // Verify domain exists
-    match state.cert_store.get_domain_by_id(&id) {
-        Ok(None) => {
-            return error_response(
-                StatusCode::NOT_FOUND,
-                &trace_id,
-                "not_found",
-                "Domain not found",
-            )
-            .into_response();
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Query failed");
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Internal query error",
-            )
-            .into_response();
-        }
-        _ => {}
-    }
-
-    let limit = PaginationParams::resolve_limit(params.limit);
-    let offset = PaginationParams::resolve_offset(params.offset);
-
-    match state
-        .cert_store
-        .query_check_results_by_domain_id(&id, limit, offset)
-    {
-        Ok(results) => success_response(StatusCode::OK, &trace_id, results),
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to query cert check history");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Internal query error",
-            )
-            .into_response()
-        }
-    }
-}
-
 pub fn public_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().routes(routes!(health))
 }
@@ -1014,12 +831,9 @@ pub fn protected_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(get_agent))
         .routes(routes!(agent_latest))
         .routes(routes!(query_all_metrics))
-        .routes(routes!(alert_history))
         .routes(routes!(metric_names))
         .routes(routes!(metric_agents))
         .routes(routes!(metric_summary))
-        .routes(routes!(cert_summary))
-        .routes(routes!(cert_check_history))
         .merge(whitelist::whitelist_routes())
         .merge(certificates::certificates_routes())
         .merge(alerts::alert_routes())

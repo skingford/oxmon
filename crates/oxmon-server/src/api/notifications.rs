@@ -1,5 +1,5 @@
 use crate::api::pagination::{deserialize_optional_u64, PaginationParams};
-use crate::api::{error_response, success_empty_response, success_response};
+use crate::api::{error_response, success_empty_response, success_paginated_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-/// 通知渠道概览（含收件人列表）
+/// 通知渠道完整信息（含配置和收件人）
 #[derive(Serialize, ToSchema)]
 struct ChannelOverview {
     id: String,
@@ -22,10 +22,23 @@ struct ChannelOverview {
     description: Option<String>,
     min_severity: String,
     enabled: bool,
+    config_json: String,
     recipient_type: Option<String>,
     recipients: Vec<String>,
     created_at: String,
     updated_at: String,
+}
+
+fn validate_time_format(time: &str) -> bool {
+    let parts: Vec<&str> = time.split(':').collect();
+    if parts.len() != 2 {
+        return false;
+    }
+    if let (Ok(hour), Ok(minute)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
+        hour < 24 && minute < 60
+    } else {
+        false
+    }
 }
 
 fn build_channel_overview(state: &AppState, ch: NotificationChannelRow) -> ChannelOverview {
@@ -42,12 +55,13 @@ fn build_channel_overview(state: &AppState, ch: NotificationChannelRow) -> Chann
         .get_plugin(&ch.channel_type)
         .map(|p| p.recipient_type().to_string());
     ChannelOverview {
-        id: ch.id,
-        name: ch.name,
-        channel_type: ch.channel_type,
-        description: ch.description,
-        min_severity: ch.min_severity,
+        id: ch.id.clone(),
+        name: ch.name.clone(),
+        channel_type: ch.channel_type.clone(),
+        description: ch.description.clone(),
+        min_severity: ch.min_severity.clone(),
         enabled: ch.enabled,
+        config_json: ch.config_json,
         recipient_type,
         recipients,
         created_at: ch.created_at.to_rfc3339(),
@@ -72,16 +86,30 @@ async fn list_channels(
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
-    match state
-        .cert_store
-        .list_notification_channels(pagination.limit(), pagination.offset())
-    {
+    let limit = pagination.limit();
+    let offset = pagination.offset();
+
+    let total = match state.cert_store.count_notification_channels() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count notification channels");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
+    match state.cert_store.list_notification_channels(limit, offset) {
         Ok(channels) => {
             let mut result = Vec::with_capacity(channels.len());
             for ch in channels {
                 result.push(build_channel_overview(&state, ch));
             }
-            success_response(StatusCode::OK, &trace_id, result)
+            success_paginated_response(StatusCode::OK, &trace_id, result, total, limit, offset)
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to list notification channels");
@@ -300,94 +328,21 @@ fn default_min_severity() -> String {
     "info".to_string()
 }
 
-/// 列出持久化的通知渠道配置。
-#[utoipa::path(
-    get,
-    path = "/v1/notifications/channels/config",
-    tag = "Notifications",
-    security(("bearer_auth" = [])),
-    params(PaginationParams),
-    responses(
-        (status = 200, description = "通知渠道配置列表", body = Vec<serde_json::Value>),
-        (status = 401, description = "未认证", body = crate::api::ApiError)
-    )
-)]
-async fn list_channel_configs(
-    Extension(trace_id): Extension<TraceId>,
-    State(state): State<AppState>,
-    Query(pagination): Query<PaginationParams>,
-) -> impl IntoResponse {
-    match state
-        .cert_store
-        .list_notification_channels(pagination.limit(), pagination.offset())
-    {
-        Ok(channels) => success_response(StatusCode::OK, &trace_id, channels),
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to list notification channels");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Database error",
-            )
-            .into_response()
-        }
-    }
-}
-
-/// 获取单个通知渠道配置。
-#[utoipa::path(
-    get,
-    path = "/v1/notifications/channels/config/{id}",
-    tag = "Notifications",
-    security(("bearer_auth" = [])),
-    params(("id" = String, Path, description = "渠道配置 ID")),
-    responses(
-        (status = 200, description = "通知渠道配置详情", body = serde_json::Value),
-        (status = 401, description = "未认证", body = crate::api::ApiError),
-        (status = 404, description = "渠道不存在", body = crate::api::ApiError)
-    )
-)]
-async fn get_channel_config(
-    Extension(trace_id): Extension<TraceId>,
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    match state.cert_store.get_notification_channel_by_id(&id) {
-        Ok(Some(channel)) => success_response(StatusCode::OK, &trace_id, channel),
-        Ok(None) => error_response(
-            StatusCode::NOT_FOUND,
-            &trace_id,
-            "not_found",
-            "Channel not found",
-        )
-        .into_response(),
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to get notification channel");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Database error",
-            )
-            .into_response()
-        }
-    }
-}
-
-/// 创建通知渠道配置（含收件人）。
+/// 创建通知渠道（含配置和收件人）。
 #[utoipa::path(
     post,
-    path = "/v1/notifications/channels/config",
+    path = "/v1/notifications/channels",
     tag = "Notifications",
     security(("bearer_auth" = [])),
     request_body = CreateChannelRequest,
     responses(
-        (status = 201, description = "通知渠道已创建", body = serde_json::Value),
-        (status = 401, description = "未认证", body = crate::api::ApiError)
+        (status = 201, description = "通知渠道已创建", body = ChannelOverview),
+        (status = 400, description = "请求参数错误", body = crate::api::ApiError),
+        (status = 401, description = "未认证", body = crate::api::ApiError),
+        (status = 409, description = "渠道名称已存在", body = crate::api::ApiError)
     )
 )]
-async fn create_channel_config(
+async fn create_channel(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Json(req): Json<CreateChannelRequest>,
@@ -458,7 +413,8 @@ async fn create_channel_config(
             if let Err(e) = state.notifier.reload().await {
                 tracing::warn!(error = %e, "Failed to reload channels after create");
             }
-            success_response(StatusCode::CREATED, &trace_id, ch)
+            // 返回完整的渠道信息（含收件人）
+            success_response(StatusCode::CREATED, &trace_id, build_channel_overview(&state, ch))
         }
         Err(e) => {
             let msg = e.to_string();
@@ -484,21 +440,21 @@ async fn create_channel_config(
     }
 }
 
-/// 更新通知渠道配置。
+/// 更新通知渠道（含配置和收件人）。
 #[utoipa::path(
     put,
-    path = "/v1/notifications/channels/config/{id}",
+    path = "/v1/notifications/channels/{id}",
     tag = "Notifications",
     security(("bearer_auth" = [])),
-    params(("id" = String, Path, description = "渠道配置 ID")),
+    params(("id" = String, Path, description = "渠道 ID")),
     request_body = serde_json::Value,
     responses(
-        (status = 200, description = "通知渠道已更新", body = serde_json::Value),
+        (status = 200, description = "通知渠道已更新", body = ChannelOverview),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "渠道不存在", body = crate::api::ApiError)
     )
 )]
-async fn update_channel_config(
+async fn update_channel(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -524,7 +480,8 @@ async fn update_channel_config(
             if let Err(e) = state.notifier.reload().await {
                 tracing::warn!(error = %e, "Failed to reload channels after update");
             }
-            success_response(StatusCode::OK, &trace_id, ch)
+            // 返回完整的渠道信息（含收件人）
+            success_response(StatusCode::OK, &trace_id, build_channel_overview(&state, ch))
         }
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
@@ -546,20 +503,20 @@ async fn update_channel_config(
     }
 }
 
-/// 删除通知渠道配置。
+/// 删除通知渠道。
 #[utoipa::path(
     delete,
-    path = "/v1/notifications/channels/config/{id}",
+    path = "/v1/notifications/channels/{id}",
     tag = "Notifications",
     security(("bearer_auth" = [])),
-    params(("id" = String, Path, description = "渠道配置 ID")),
+    params(("id" = String, Path, description = "渠道 ID")),
     responses(
         (status = 200, description = "通知渠道已删除"),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "渠道不存在", body = crate::api::ApiError)
     )
 )]
-async fn delete_channel_config(
+async fn delete_channel(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -591,121 +548,6 @@ async fn delete_channel_config(
     }
 }
 
-// ---- Recipients management ----
-
-#[derive(Deserialize, ToSchema)]
-struct SetRecipientsRequest {
-    recipients: Vec<String>,
-}
-
-/// 设置（替换）渠道收件人列表。
-#[utoipa::path(
-    put,
-    path = "/v1/notifications/channels/{id}/recipients",
-    tag = "Notifications",
-    security(("bearer_auth" = [])),
-    params(("id" = String, Path, description = "渠道 ID")),
-    request_body = SetRecipientsRequest,
-    responses(
-        (status = 200, description = "收件人已更新", body = Vec<String>),
-        (status = 401, description = "未认证", body = crate::api::ApiError),
-        (status = 404, description = "渠道不存在", body = crate::api::ApiError)
-    )
-)]
-async fn set_recipients(
-    Extension(trace_id): Extension<TraceId>,
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(req): Json<SetRecipientsRequest>,
-) -> impl IntoResponse {
-    // 验证渠道存在
-    match state.cert_store.get_notification_channel_by_id(&id) {
-        Ok(Some(_)) => {}
-        Ok(None) => {
-            return error_response(
-                StatusCode::NOT_FOUND,
-                &trace_id,
-                "not_found",
-                "Channel not found",
-            )
-            .into_response();
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to get channel");
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Database error",
-            )
-            .into_response();
-        }
-    }
-
-    match state
-        .cert_store
-        .set_channel_recipients(&id, &req.recipients)
-    {
-        Ok(rows) => {
-            if let Err(e) = state.notifier.reload().await {
-                tracing::warn!(error = %e, "Failed to reload channels after recipients update");
-            }
-            let values: Vec<String> = rows.into_iter().map(|r| r.value).collect();
-            success_response(StatusCode::OK, &trace_id, values)
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to set recipients");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Database error",
-            )
-            .into_response()
-        }
-    }
-}
-
-/// 获取渠道收件人列表。
-#[utoipa::path(
-    get,
-    path = "/v1/notifications/channels/{id}/recipients",
-    tag = "Notifications",
-    security(("bearer_auth" = [])),
-    params(("id" = String, Path, description = "渠道 ID"), PaginationParams),
-    responses(
-        (status = 200, description = "收件人列表", body = Vec<String>),
-        (status = 401, description = "未认证", body = crate::api::ApiError)
-    )
-)]
-async fn get_recipients(
-    Extension(trace_id): Extension<TraceId>,
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(pagination): Query<PaginationParams>,
-) -> impl IntoResponse {
-    match state.cert_store.list_recipients_by_channel_paged(
-        &id,
-        pagination.limit(),
-        pagination.offset(),
-    ) {
-        Ok(rows) => {
-            let values: Vec<String> = rows.into_iter().map(|r| r.value).collect();
-            success_response(StatusCode::OK, &trace_id, values)
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to list recipients");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Database error",
-            )
-            .into_response()
-        }
-    }
-}
-
 // ---- Silence windows CRUD ----
 
 /// 列出持久化的静默窗口。
@@ -725,11 +567,27 @@ async fn list_silence_windows(
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
-    match state
-        .cert_store
-        .list_silence_windows(pagination.limit(), pagination.offset())
-    {
-        Ok(windows) => success_response(StatusCode::OK, &trace_id, windows),
+    let limit = pagination.limit();
+    let offset = pagination.offset();
+
+    let total = match state.cert_store.count_silence_windows() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count silence windows");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
+    match state.cert_store.list_silence_windows(limit, offset) {
+        Ok(windows) => {
+            success_paginated_response(StatusCode::OK, &trace_id, windows, total, limit, offset)
+        }
         Err(e) => {
             tracing::error!(error = %e, "Failed to list silence windows");
             error_response(
@@ -767,6 +625,51 @@ async fn create_silence_window(
     State(state): State<AppState>,
     Json(req): Json<CreateSilenceWindowRequest>,
 ) -> impl IntoResponse {
+    // Validate time format (HH:MM)
+    if !validate_time_format(&req.start_time) {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &trace_id,
+            "bad_request",
+            "start_time must be in HH:MM format (00:00 to 23:59)",
+        )
+        .into_response();
+    }
+    if !validate_time_format(&req.end_time) {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &trace_id,
+            "bad_request",
+            "end_time must be in HH:MM format (00:00 to 23:59)",
+        )
+        .into_response();
+    }
+
+    // Validate start_time < end_time
+    if req.start_time >= req.end_time {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &trace_id,
+            "bad_request",
+            "start_time must be earlier than end_time",
+        )
+        .into_response();
+    }
+
+    // Validate recurrence if provided
+    if let Some(ref rec) = req.recurrence {
+        let valid_recurrences = ["daily", "weekly", "monthly"];
+        if !valid_recurrences.contains(&rec.as_str()) {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "bad_request",
+                "recurrence must be one of: daily, weekly, monthly",
+            )
+            .into_response();
+        }
+    }
+
     let row = SilenceWindowRow {
         id: oxmon_common::id::next_id(),
         start_time: req.start_time,
@@ -779,6 +682,168 @@ async fn create_silence_window(
         Ok(sw) => success_response(StatusCode::CREATED, &trace_id, sw),
         Err(e) => {
             tracing::error!(error = %e, "Failed to create silence window");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response()
+        }
+    }
+}
+
+/// 获取单个静默窗口详情（按 ID）。
+#[utoipa::path(
+    get,
+    path = "/v1/notifications/silence-windows/{id}",
+    tag = "Notifications",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "静默窗口 ID")),
+    responses(
+        (status = 200, description = "静默窗口详情", body = serde_json::Value),
+        (status = 401, description = "未认证", body = crate::api::ApiError),
+        (status = 404, description = "静默窗口不存在", body = crate::api::ApiError)
+    )
+)]
+async fn get_silence_window(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.cert_store.get_silence_window_by_id(&id) {
+        Ok(Some(window)) => success_response(StatusCode::OK, &trace_id, window),
+        Ok(None) => error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Silence window not found",
+        )
+        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to get silence window");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response()
+        }
+    }
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+struct UpdateSilenceWindowRequest {
+    start_time: Option<String>,
+    end_time: Option<String>,
+    recurrence: Option<Option<String>>,
+}
+
+/// 更新静默窗口（按 ID）。
+#[utoipa::path(
+    put,
+    path = "/v1/notifications/silence-windows/{id}",
+    tag = "Notifications",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "静默窗口 ID")),
+    request_body = UpdateSilenceWindowRequest,
+    responses(
+        (status = 200, description = "静默窗口已更新", body = serde_json::Value),
+        (status = 401, description = "未认证", body = crate::api::ApiError),
+        (status = 404, description = "静默窗口不存在", body = crate::api::ApiError)
+    )
+)]
+async fn update_silence_window(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateSilenceWindowRequest>,
+) -> impl IntoResponse {
+    // Validate time format if provided
+    if let Some(ref st) = req.start_time {
+        if !validate_time_format(st) {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "bad_request",
+                "start_time must be in HH:MM format (00:00 to 23:59)",
+            )
+            .into_response();
+        }
+    }
+    if let Some(ref et) = req.end_time {
+        if !validate_time_format(et) {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "bad_request",
+                "end_time must be in HH:MM format (00:00 to 23:59)",
+            )
+            .into_response();
+        }
+    }
+
+    // Validate recurrence if provided
+    if let Some(Some(ref rec)) = req.recurrence {
+        let valid_recurrences = ["daily", "weekly", "monthly"];
+        if !valid_recurrences.contains(&rec.as_str()) {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "bad_request",
+                "recurrence must be one of: daily, weekly, monthly",
+            )
+            .into_response();
+        }
+    }
+
+    // If both start_time and end_time are provided, validate their relationship
+    if let (Some(ref st), Some(ref et)) = (&req.start_time, &req.end_time) {
+        if st >= et {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "bad_request",
+                "start_time must be earlier than end_time",
+            )
+            .into_response();
+        }
+    }
+
+    // If only one time is provided, need to check against existing value
+    if req.start_time.is_some() != req.end_time.is_some() {
+        if let Ok(Some(existing)) = state.cert_store.get_silence_window_by_id(&id) {
+            let final_start = req.start_time.as_ref().unwrap_or(&existing.start_time);
+            let final_end = req.end_time.as_ref().unwrap_or(&existing.end_time);
+            if final_start >= final_end {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    &trace_id,
+                    "bad_request",
+                    "start_time must be earlier than end_time",
+                )
+                .into_response();
+            }
+        }
+    }
+
+    match state.cert_store.update_silence_window(
+        &id,
+        req.start_time,
+        req.end_time,
+        req.recurrence,
+    ) {
+        Ok(Some(window)) => success_response(StatusCode::OK, &trace_id, window),
+        Ok(None) => error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Silence window not found",
+        )
+        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to update silence window");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
@@ -978,14 +1043,82 @@ async fn list_notification_logs(
                     api_error_code: r.api_error_code,
                 })
                 .collect();
-            success_response(
+            success_paginated_response(
                 StatusCode::OK,
                 &trace_id,
-                NotificationLogListResponse { items, total },
+                items,
+                total,
+                limit,
+                offset,
             )
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to list notification logs");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response()
+        }
+    }
+}
+
+/// 获取单个通知日志详情（按 ID）。
+#[utoipa::path(
+    get,
+    path = "/v1/notifications/logs/{id}",
+    tag = "Notifications",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "通知日志 ID")),
+    responses(
+        (status = 200, description = "通知日志详情", body = NotificationLogItem),
+        (status = 401, description = "未认证", body = crate::api::ApiError),
+        (status = 404, description = "通知日志不存在", body = crate::api::ApiError)
+    )
+)]
+async fn get_notification_log(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.cert_store.get_notification_log_by_id(&id) {
+        Ok(Some(r)) => {
+            let item = NotificationLogItem {
+                id: r.id,
+                alert_event_id: r.alert_event_id,
+                rule_id: r.rule_id,
+                rule_name: r.rule_name,
+                agent_id: r.agent_id,
+                channel_id: r.channel_id,
+                channel_name: r.channel_name,
+                channel_type: r.channel_type,
+                status: r.status,
+                error_message: r.error_message,
+                duration_ms: r.duration_ms,
+                recipient_count: r.recipient_count,
+                severity: r.severity,
+                created_at: r.created_at.to_rfc3339(),
+                http_status_code: r.http_status_code,
+                response_body: r.response_body,
+                request_body: r.request_body,
+                retry_count: r.retry_count,
+                recipient_details: r.recipient_details,
+                api_message_id: r.api_message_id,
+                api_error_code: r.api_error_code,
+            };
+            success_response(StatusCode::OK, &trace_id, item)
+        }
+        Ok(None) => error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Notification log not found",
+        )
+        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to get notification log");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
@@ -1098,15 +1231,12 @@ async fn notification_log_summary(
 
 pub fn notification_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(list_channels))
-        .routes(routes!(get_channel_by_id))
+        .routes(routes!(list_channels, create_channel))
+        .routes(routes!(get_channel_by_id, update_channel, delete_channel))
         .routes(routes!(test_channel))
-        .routes(routes!(list_channel_configs, create_channel_config))
-        .routes(routes!(get_channel_config))
-        .routes(routes!(update_channel_config, delete_channel_config))
-        .routes(routes!(set_recipients, get_recipients))
         .routes(routes!(list_silence_windows, create_silence_window))
-        .routes(routes!(delete_silence_window))
+        .routes(routes!(get_silence_window, update_silence_window, delete_silence_window))
         .routes(routes!(list_notification_logs))
+        .routes(routes!(get_notification_log))
         .routes(routes!(notification_log_summary))
 }

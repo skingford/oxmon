@@ -1,5 +1,5 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response, success_empty_response, success_response};
+use crate::api::{error_response, success_empty_response, success_paginated_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
@@ -109,13 +109,27 @@ async fn list_system_configs(
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
-    match state
-        .cert_store
-        .list_system_configs(pagination.limit(), pagination.offset())
-    {
+    let limit = pagination.limit();
+    let offset = pagination.offset();
+
+    let total = match state.cert_store.count_system_configs() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count system configs");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
+    match state.cert_store.list_system_configs(limit, offset) {
         Ok(rows) => {
             let resp: Vec<SystemConfigResponse> = rows.into_iter().map(row_to_response).collect();
-            success_response(StatusCode::OK, &trace_id, resp)
+            success_paginated_response(StatusCode::OK, &trace_id, resp, total, limit, offset)
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to list system configs");
