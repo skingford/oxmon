@@ -249,6 +249,62 @@ fn trend_prediction_does_not_fire_when_decreasing() {
 }
 
 #[test]
+fn trend_prediction_does_not_fire_when_too_soon() {
+    oxmon_common::id::init(1, 1);
+    let rule = TrendPredictionRule {
+        id: "disk-full".into(),
+        name: "磁盘容量趋势预测".into(),
+        metric: "disk.used_percent".into(),
+        agent_pattern: "*".into(),
+        severity: Severity::Info,
+        predict_threshold: 95.0,
+        horizon_secs: 86400, // 24h
+        min_data_points: 3,
+        silence_secs: 3600,
+    };
+
+    // 快速增长：90, 92, 94 在 1 分钟内（预计 30 秒后达到 95）
+    // 这种情况下预测时间小于 5 分钟，不应该触发预测告警
+    let now = Utc::now();
+    let window = vec![
+        MetricDataPoint {
+            id: oxmon_common::id::next_id(),
+            timestamp: now - Duration::seconds(60),
+            agent_id: "db-01".into(),
+            metric_name: "disk.used_percent".into(),
+            value: 90.0,
+            labels: HashMap::new(),
+            created_at: now - Duration::seconds(60),
+            updated_at: now - Duration::seconds(60),
+        },
+        MetricDataPoint {
+            id: oxmon_common::id::next_id(),
+            timestamp: now - Duration::seconds(30),
+            agent_id: "db-01".into(),
+            metric_name: "disk.used_percent".into(),
+            value: 92.0,
+            labels: HashMap::new(),
+            created_at: now - Duration::seconds(30),
+            updated_at: now - Duration::seconds(30),
+        },
+        MetricDataPoint {
+            id: oxmon_common::id::next_id(),
+            timestamp: now,
+            agent_id: "db-01".into(),
+            metric_name: "disk.used_percent".into(),
+            value: 94.0,
+            labels: HashMap::new(),
+            created_at: now,
+            updated_at: now,
+        },
+    ];
+
+    // 应该返回 None，因为预测时间小于 5 分钟
+    let event = rule.evaluate(&window, now);
+    assert!(event.is_none(), "Should not fire when prediction time is less than 5 minutes");
+}
+
+#[test]
 fn engine_deduplication() {
     oxmon_common::id::init(1, 1);
     let rule = ThresholdRule {

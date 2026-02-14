@@ -86,18 +86,31 @@ impl AlertRule for TrendPredictionRule {
         }
 
         let time_to_threshold = (self.predict_threshold - intercept) / slope - current_x;
-        if time_to_threshold < 0.0 || time_to_threshold > self.horizon_secs as f64 {
+
+        // 最小预测时间阈值：5分钟（300秒）
+        // 如果预测时间太短，说明已经接近阈值，应该由阈值告警规则处理，而不是预测告警
+        const MIN_PREDICTION_SECS: f64 = 300.0;
+
+        if time_to_threshold < MIN_PREDICTION_SECS || time_to_threshold > self.horizon_secs as f64 {
             return None;
         }
 
         let breach_time = now + Duration::seconds(time_to_threshold as i64);
-        let hours_remaining = time_to_threshold / 3600.0;
         let last = window.last()?;
         let labels_str = format_labels(&last.labels);
         let labels_display = if labels_str.is_empty() {
             String::new()
         } else {
             format!(" [{}]", labels_str)
+        };
+
+        // 智能时间显示：小于1小时显示分钟，否则显示小时
+        let time_display = if time_to_threshold < 3600.0 {
+            let minutes = (time_to_threshold / 60.0).round() as i64;
+            format!("{} 分钟", minutes)
+        } else {
+            let hours = time_to_threshold / 3600.0;
+            format!("{:.1} 小时", hours)
         };
 
         Some(AlertEvent {
@@ -108,8 +121,8 @@ impl AlertRule for TrendPredictionRule {
             metric_name: self.metric.clone(),
             severity: self.severity,
             message: format!(
-                "{}{} predicted to reach {:.1} in {:.1} hours on {}",
-                self.metric, labels_display, self.predict_threshold, hours_remaining, last.agent_id,
+                "{}{} 预计在 {} 后达到阈值 {:.1}（主机: {}）",
+                self.metric, labels_display, time_display, self.predict_threshold, last.agent_id,
             ),
             value: last.value,
             threshold: self.predict_threshold,
