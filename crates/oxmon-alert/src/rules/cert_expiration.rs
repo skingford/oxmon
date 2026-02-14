@@ -19,7 +19,13 @@ pub struct CertExpirationRule {
 }
 
 impl CertExpirationRule {
-    pub fn new(id: String, name: String, warning_days: i64, critical_days: i64, silence_secs: u64) -> Self {
+    pub fn new(
+        id: String,
+        name: String,
+        warning_days: i64,
+        critical_days: i64,
+        silence_secs: u64,
+    ) -> Self {
         Self {
             id,
             name,
@@ -126,7 +132,13 @@ mod tests {
     use std::collections::HashMap;
 
     fn make_rule() -> CertExpirationRule {
-        CertExpirationRule::new("cert-expiry".to_string(), "证书过期检查".to_string(), 30, 7, 3600)
+        CertExpirationRule::new(
+            "cert-expiry".to_string(),
+            "证书过期检查".to_string(),
+            30,
+            7,
+            3600,
+        )
     }
 
     fn make_dp(days: f64, domain: &str) -> MetricDataPoint {

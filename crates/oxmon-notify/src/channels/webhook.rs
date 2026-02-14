@@ -34,8 +34,18 @@ impl WebhookChannel {
                 .replace("{{threshold}}", &format!("{:.2}", alert.threshold))
                 .replace("{{timestamp}}", &alert.timestamp.to_rfc3339())
                 .replace("{{rule_name}}", &alert.rule_name)
-                .replace("{{labels}}", &oxmon_common::types::format_labels(&alert.labels))
-                .replace("{{status}}", if alert.status == 3 { "recovered" } else { "firing" })
+                .replace(
+                    "{{labels}}",
+                    &oxmon_common::types::format_labels(&alert.labels),
+                )
+                .replace(
+                    "{{status}}",
+                    if alert.status == 3 {
+                        "recovered"
+                    } else {
+                        "firing"
+                    },
+                )
         } else {
             serde_json::json!({
                 "alert_id": alert.id,
@@ -122,7 +132,8 @@ impl NotificationChannel for WebhookChannel {
                     }
                 }
                 if attempt < 2 {
-                    tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt))).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt)))
+                        .await;
                 }
             }
 
@@ -184,9 +195,16 @@ impl ChannelPlugin for WebhookPlugin {
         Ok(())
     }
 
-    fn create_channel(&self, instance_id: &str, config: &Value) -> Result<Box<dyn NotificationChannel>> {
+    fn create_channel(
+        &self,
+        instance_id: &str,
+        config: &Value,
+    ) -> Result<Box<dyn NotificationChannel>> {
         let cfg: WebhookConfig = serde_json::from_value(config.clone())
             .map_err(|e| anyhow::anyhow!("Invalid webhook config: {e}"))?;
-        Ok(Box::new(WebhookChannel::new(instance_id, cfg.body_template)))
+        Ok(Box::new(WebhookChannel::new(
+            instance_id,
+            cfg.body_template,
+        )))
     }
 }

@@ -54,7 +54,7 @@ struct AggregationEntry {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RecipientResult {
     pub recipient: String,
-    pub status: String,  // "success" | "failed"
+    pub status: String, // "success" | "failed"
     pub error: Option<String>,
 }
 
@@ -153,9 +153,7 @@ impl NotificationManager {
     /// 从数据库重新加载所有已启用的通知渠道。
     /// 使用 build-then-swap 模式：先构建新实例表，再整体替换。
     pub async fn reload(&self) -> anyhow::Result<()> {
-        let channels_with_recipients = self
-            .cert_store
-            .list_enabled_channels_with_recipients()?;
+        let channels_with_recipients = self.cert_store.list_enabled_channels_with_recipients()?;
 
         let mut new_instances = HashMap::new();
         for (row, recipients) in channels_with_recipients {
@@ -165,16 +163,25 @@ impl NotificationManager {
                 None => continue,
             };
 
-            match self.registry.create_channel(&row.channel_type, &row.id, &config) {
+            match self
+                .registry
+                .create_channel(&row.channel_type, &row.id, &config)
+            {
                 Ok(channel) => {
-                    let severity = row.min_severity.parse().unwrap_or(oxmon_common::types::Severity::Info);
-                    new_instances.insert(row.id.clone(), ChannelInstance {
-                        channel,
-                        recipients,
-                        min_severity: severity,
-                        name: row.name.clone(),
-                        channel_type: row.channel_type.clone(),
-                    });
+                    let severity = row
+                        .min_severity
+                        .parse()
+                        .unwrap_or(oxmon_common::types::Severity::Info);
+                    new_instances.insert(
+                        row.id.clone(),
+                        ChannelInstance {
+                            channel,
+                            recipients,
+                            min_severity: severity,
+                            name: row.name.clone(),
+                            channel_type: row.channel_type.clone(),
+                        },
+                    );
                     tracing::info!(
                         channel_id = %row.id,
                         channel_type = %row.channel_type,
@@ -356,26 +363,35 @@ impl NotificationManager {
         };
 
         // 从 SendResponse 提取详细信息
-        let (http_status, response_body, request_body, retry_count, recipient_details, api_message_id, api_error_code) =
-            if let Some(ref resp) = ctx.response {
-                // 脱敏并截断 request_body
-                let redacted_request = resp.request_body.as_ref().map(|s| {
-                    let redacted = redact_json_string(s);
-                    truncate_string(&redacted, MAX_BODY_LENGTH)
-                });
+        let (
+            http_status,
+            response_body,
+            request_body,
+            retry_count,
+            recipient_details,
+            api_message_id,
+            api_error_code,
+        ) = if let Some(ref resp) = ctx.response {
+            // 脱敏并截断 request_body
+            let redacted_request = resp.request_body.as_ref().map(|s| {
+                let redacted = redact_json_string(s);
+                truncate_string(&redacted, MAX_BODY_LENGTH)
+            });
 
-                (
-                    resp.http_status.map(|s| s as i32),
-                    resp.response_body.as_ref().map(|s| truncate_string(s, MAX_BODY_LENGTH)),
-                    redacted_request,
-                    resp.retry_count as i32,
-                    serialize_recipient_results(resp),
-                    resp.api_message_id.clone(),
-                    resp.api_error_code.clone(),
-                )
-            } else {
-                (None, None, None, 0, None, None, None)
-            };
+            (
+                resp.http_status.map(|s| s as i32),
+                resp.response_body
+                    .as_ref()
+                    .map(|s| truncate_string(s, MAX_BODY_LENGTH)),
+                redacted_request,
+                resp.retry_count as i32,
+                serialize_recipient_results(resp),
+                resp.api_message_id.clone(),
+                resp.api_error_code.clone(),
+            )
+        } else {
+            (None, None, None, 0, None, None, None)
+        };
 
         let log = NotificationLogRow {
             id: oxmon_common::id::next_id(),

@@ -43,8 +43,9 @@ async fn get_system_config(
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     let config = &state.config;
-    let notification_aggregation_window_secs =
-        state.cert_store.get_runtime_setting_u64("notification_aggregation_window", 60);
+    let notification_aggregation_window_secs = state
+        .cert_store
+        .get_runtime_setting_u64("notification_aggregation_window", 60);
     success_response(
         StatusCode::OK,
         &trace_id,
@@ -60,7 +61,8 @@ async fn get_system_config(
             cert_check_max_concurrent: config.cert_check.max_concurrent,
             notification_aggregation_window_secs,
             alert_rules_count: state.cert_store.count_alert_rules().unwrap_or(0) as usize,
-            notification_channels_count: state.cert_store.count_notification_channels().unwrap_or(0) as usize,
+            notification_channels_count: state.cert_store.count_notification_channels().unwrap_or(0)
+                as usize,
         },
     )
 }

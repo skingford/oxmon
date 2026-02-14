@@ -38,7 +38,10 @@ async fn list_dict_types(
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
-    match state.cert_store.list_all_dict_types(pagination.limit(), pagination.offset()) {
+    match state
+        .cert_store
+        .list_all_dict_types(pagination.limit(), pagination.offset())
+    {
         Ok(types) => success_response(StatusCode::OK, &trace_id, types),
         Err(e) => {
             tracing::error!(error = %e, "Failed to list dictionary types");
@@ -76,10 +79,12 @@ async fn list_by_type(
     Query(query): Query<ListByTypeQuery>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
-    match state
-        .cert_store
-        .list_dictionaries_by_type(&dict_type, query.enabled_only, pagination.limit(), pagination.offset())
-    {
+    match state.cert_store.list_dictionaries_by_type(
+        &dict_type,
+        query.enabled_only,
+        pagination.limit(),
+        pagination.offset(),
+    ) {
         Ok(items) => success_response(StatusCode::OK, &trace_id, items),
         Err(e) => {
             tracing::error!(error = %e, dict_type = %dict_type, "Failed to list dictionaries by type");
@@ -403,9 +408,7 @@ async fn delete_dict_type(
     Path(dict_type): Path<String>,
 ) -> impl IntoResponse {
     match state.cert_store.delete_dictionary_type(&dict_type) {
-        Ok(true) => {
-            success_empty_response(StatusCode::OK, &trace_id, "Dictionary type deleted")
-        }
+        Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "Dictionary type deleted"),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,

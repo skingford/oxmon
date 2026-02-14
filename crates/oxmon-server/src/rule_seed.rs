@@ -143,6 +143,10 @@ pub fn init_default_rules(cert_store: &CertStore) -> anyhow::Result<usize> {
         }
     }
 
-    tracing::info!(inserted, total = DEFAULT_RULES.len(), "Default alert rules initialized");
+    tracing::info!(
+        inserted,
+        total = DEFAULT_RULES.len(),
+        "Default alert rules initialized"
+    );
     Ok(inserted)
 }

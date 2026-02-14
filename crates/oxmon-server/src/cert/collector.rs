@@ -44,8 +44,7 @@ impl CertificateCollector {
             match self.fetch_certificate(domain, *ip, port).await {
                 Ok(mut details) => {
                     // 成功获取证书，填充所有解析的 IP
-                    details.ip_addresses =
-                        ip_addresses.iter().map(|ip| ip.to_string()).collect();
+                    details.ip_addresses = ip_addresses.iter().map(|ip| ip.to_string()).collect();
                     return Ok(details);
                 }
                 Err(e) => {
@@ -147,9 +146,7 @@ impl CertificateCollector {
         // 获取 TLS 连接信息
         let (_, connection) = tls_stream.get_ref();
 
-        let tls_version = connection
-            .protocol_version()
-            .map(|v| format!("{v:?}"));
+        let tls_version = connection.protocol_version().map(|v| format!("{v:?}"));
         let cipher_suite = connection
             .negotiated_cipher_suite()
             .map(|cs| format!("{:?}", cs.suite()));
@@ -575,7 +572,7 @@ fn extract_crl_distribution_points(cert: &X509Certificate) -> Option<Vec<String>
 /// 提取 SCT (Signed Certificate Timestamp) 数量
 fn extract_sct_count(cert: &X509Certificate) -> Option<i32> {
     // SCT List OID: 1.3.6.1.4.1.11129.2.4.2
-    let sct_oid = asn1_rs::oid!(1.3.6.1.4.1.11129.2.4.2);
+    let sct_oid = asn1_rs::oid!(1.3.6 .1 .4 .1 .11129 .2 .4 .2);
 
     let ext = match cert.get_extension_unique(&sct_oid) {
         Ok(Some(ext)) => ext,

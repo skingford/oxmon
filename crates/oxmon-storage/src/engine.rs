@@ -460,11 +460,7 @@ impl StorageEngine for SqliteStorageEngine {
         })
     }
 
-    fn query_alert_summary(
-        &self,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
-    ) -> Result<AlertSummary> {
+    fn query_alert_summary(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<AlertSummary> {
         let keys = self.partitions.partitions_in_range(from, to)?;
         let from_ms = from.timestamp_millis();
         let to_ms = to.timestamp_millis();
@@ -527,18 +523,15 @@ impl StorageEngine for SqliteStorageEngine {
     }
 
     fn acknowledge_alert(&self, event_id: &str) -> Result<bool> {
-        self.partitions.update_alert_status(event_id, "acknowledged")
+        self.partitions
+            .update_alert_status(event_id, "acknowledged")
     }
 
     fn resolve_alert(&self, event_id: &str) -> Result<bool> {
         self.partitions.update_alert_status(event_id, "resolved")
     }
 
-    fn query_active_alerts(
-        &self,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<AlertEvent>> {
+    fn query_active_alerts(&self, limit: usize, offset: usize) -> Result<Vec<AlertEvent>> {
         // Query last 7 days for active alerts
         let to = Utc::now();
         let from = to - chrono::Duration::days(7);
@@ -633,10 +626,8 @@ impl StorageEngine for SqliteStorageEngine {
                 let mut sql = String::from(
                     "SELECT COUNT(*) FROM metrics WHERE timestamp >= ?1 AND timestamp <= ?2",
                 );
-                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
-                    Box::new(from_ms),
-                    Box::new(to_ms),
-                ];
+                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+                    vec![Box::new(from_ms), Box::new(to_ms)];
                 if let Some(agent) = agent_id {
                     let idx = params.len() + 1;
                     sql.push_str(&format!(" AND agent_id = ?{idx}"));
@@ -675,10 +666,8 @@ impl StorageEngine for SqliteStorageEngine {
                 let mut sql = String::from(
                     "SELECT COUNT(*) FROM alert_events WHERE timestamp >= ?1 AND timestamp <= ?2",
                 );
-                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
-                    Box::new(from_ms),
-                    Box::new(to_ms),
-                ];
+                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+                    vec![Box::new(from_ms), Box::new(to_ms)];
                 if let Some(sev) = severity {
                     sql.push_str(" AND severity = ?3");
                     params.push(Box::new(sev.to_string()));

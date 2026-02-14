@@ -120,8 +120,8 @@ pub fn build_rule_from_row(row: &AlertRuleRow) -> Result<Box<dyn AlertRule>> {
             }))
         }
         "cert_expiration" => {
-            let cfg: CertExpirationConfig = serde_json::from_str(&row.config_json)
-                .unwrap_or(CertExpirationConfig {
+            let cfg: CertExpirationConfig =
+                serde_json::from_str(&row.config_json).unwrap_or(CertExpirationConfig {
                     warning_days: 30,
                     critical_days: 7,
                 });
@@ -176,4 +176,3 @@ pub fn reload_alert_engine(
     tracing::info!(rule_count = count, "Alert engine reloaded from DB");
     Ok(count)
 }
-

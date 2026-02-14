@@ -309,11 +309,11 @@ impl CertStore {
         conn.execute_batch(NOTIFICATION_LOGS_SCHEMA)?;
 
         // 迁移：为已有的 notification_channels 表添加 description 列
-        let _ = conn.execute_batch("ALTER TABLE notification_channels ADD COLUMN description TEXT;");
+        let _ =
+            conn.execute_batch("ALTER TABLE notification_channels ADD COLUMN description TEXT;");
         // 迁移：为已有的 notification_channels 表添加 system_config_id 列
-        let _ = conn.execute_batch(
-            "ALTER TABLE notification_channels ADD COLUMN system_config_id TEXT;",
-        );
+        let _ = conn
+            .execute_batch("ALTER TABLE notification_channels ADD COLUMN system_config_id TEXT;");
 
         // 迁移：为已有的 users 表添加 token_version 列
         let _ = conn.execute_batch(
@@ -1180,7 +1180,9 @@ impl CertStore {
             "SELECT id, name, rule_type, metric, agent_pattern, severity, enabled, config_json, silence_secs, source, created_at, updated_at
              FROM alert_rules WHERE id = ?1",
         )?;
-        let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_alert_rule(row)))?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
+            Ok(Self::row_to_alert_rule(row))
+        })?;
         match rows.next() {
             Some(Ok(Ok(r))) => Ok(Some(r)),
             Some(Ok(Err(e))) => Err(e),
@@ -1212,7 +1214,11 @@ impl CertStore {
         Ok(count as u64)
     }
 
-    pub fn update_alert_rule(&self, id: &str, update: &AlertRuleUpdate) -> Result<Option<AlertRuleRow>> {
+    pub fn update_alert_rule(
+        &self,
+        id: &str,
+        update: &AlertRuleUpdate,
+    ) -> Result<Option<AlertRuleRow>> {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
         let mut sets = vec!["updated_at = ?1".to_string()];
@@ -1255,10 +1261,14 @@ impl CertStore {
             idx += 1;
         }
 
-        let sql = format!("UPDATE alert_rules SET {} WHERE id = ?{idx}", sets.join(", "));
+        let sql = format!(
+            "UPDATE alert_rules SET {} WHERE id = ?{idx}",
+            sets.join(", ")
+        );
         params.push(Box::new(id.to_string()));
 
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let updated = conn.execute(&sql, param_refs.as_slice())?;
         drop(conn);
 
@@ -1328,7 +1338,10 @@ impl CertStore {
 
     // ---- Notification channels CRUD ----
 
-    pub fn insert_notification_channel(&self, ch: &NotificationChannelRow) -> Result<NotificationChannelRow> {
+    pub fn insert_notification_channel(
+        &self,
+        ch: &NotificationChannelRow,
+    ) -> Result<NotificationChannelRow> {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
         conn.execute(
@@ -1344,13 +1357,18 @@ impl CertStore {
             .and_then(|opt| opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted channel")))
     }
 
-    pub fn get_notification_channel_by_id(&self, id: &str) -> Result<Option<NotificationChannelRow>> {
+    pub fn get_notification_channel_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<NotificationChannelRow>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, name, channel_type, description, min_severity, enabled, config_json, created_at, updated_at
              FROM notification_channels WHERE id = ?1",
         )?;
-        let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_notification_channel(row)))?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
+            Ok(Self::row_to_notification_channel(row))
+        })?;
         match rows.next() {
             Some(Ok(Ok(r))) => Ok(Some(r)),
             Some(Ok(Err(e))) => Err(e),
@@ -1359,7 +1377,11 @@ impl CertStore {
         }
     }
 
-    pub fn list_notification_channels(&self, limit: usize, offset: usize) -> Result<Vec<NotificationChannelRow>> {
+    pub fn list_notification_channels(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<NotificationChannelRow>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, name, channel_type, description, min_severity, enabled, config_json, created_at, updated_at
@@ -1377,11 +1399,18 @@ impl CertStore {
 
     pub fn count_notification_channels(&self) -> Result<u64> {
         let conn = self.lock_conn();
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM notification_channels", [], |row| row.get(0))?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM notification_channels", [], |row| {
+                row.get(0)
+            })?;
         Ok(count as u64)
     }
 
-    pub fn update_notification_channel(&self, id: &str, update: &NotificationChannelUpdate) -> Result<Option<NotificationChannelRow>> {
+    pub fn update_notification_channel(
+        &self,
+        id: &str,
+        update: &NotificationChannelUpdate,
+    ) -> Result<Option<NotificationChannelRow>> {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
         let mut sets = vec!["updated_at = ?1".to_string()];
@@ -1414,10 +1443,14 @@ impl CertStore {
             idx += 1;
         }
 
-        let sql = format!("UPDATE notification_channels SET {} WHERE id = ?{idx}", sets.join(", "));
+        let sql = format!(
+            "UPDATE notification_channels SET {} WHERE id = ?{idx}",
+            sets.join(", ")
+        );
         params.push(Box::new(id.to_string()));
 
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let updated = conn.execute(&sql, param_refs.as_slice())?;
         drop(conn);
 
@@ -1472,8 +1505,9 @@ impl CertStore {
             ],
         )?;
         drop(conn);
-        self.get_system_config_by_id(&row.id)
-            .and_then(|opt| opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted system config")))
+        self.get_system_config_by_id(&row.id).and_then(|opt| {
+            opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted system config"))
+        })
     }
 
     pub fn get_system_config_by_id(&self, id: &str) -> Result<Option<SystemConfigRow>> {
@@ -1482,7 +1516,9 @@ impl CertStore {
             "SELECT id, config_key, config_type, provider, display_name, description, config_json, enabled, created_at, updated_at
              FROM system_configs WHERE id = ?1",
         )?;
-        let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_system_config(row)))?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
+            Ok(Self::row_to_system_config(row))
+        })?;
         match rows.next() {
             Some(Ok(Ok(r))) => Ok(Some(r)),
             Some(Ok(Err(e))) => Err(e),
@@ -1497,7 +1533,9 @@ impl CertStore {
             "SELECT id, config_key, config_type, provider, display_name, description, config_json, enabled, created_at, updated_at
              FROM system_configs WHERE config_key = ?1",
         )?;
-        let mut rows = stmt.query_map(rusqlite::params![config_key], |row| Ok(Self::row_to_system_config(row)))?;
+        let mut rows = stmt.query_map(rusqlite::params![config_key], |row| {
+            Ok(Self::row_to_system_config(row))
+        })?;
         match rows.next() {
             Some(Ok(Ok(r))) => Ok(Some(r)),
             Some(Ok(Err(e))) => Err(e),
@@ -1524,11 +1562,16 @@ impl CertStore {
 
     pub fn count_system_configs(&self) -> Result<u64> {
         let conn = self.lock_conn();
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM system_configs", [], |row| row.get(0))?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM system_configs", [], |row| row.get(0))?;
         Ok(count as u64)
     }
 
-    pub fn update_system_config(&self, id: &str, update: &SystemConfigUpdate) -> Result<Option<SystemConfigRow>> {
+    pub fn update_system_config(
+        &self,
+        id: &str,
+        update: &SystemConfigUpdate,
+    ) -> Result<Option<SystemConfigRow>> {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
         let mut sets = vec!["updated_at = ?1".to_string()];
@@ -1556,10 +1599,14 @@ impl CertStore {
             idx += 1;
         }
 
-        let sql = format!("UPDATE system_configs SET {} WHERE id = ?{idx}", sets.join(", "));
+        let sql = format!(
+            "UPDATE system_configs SET {} WHERE id = ?{idx}",
+            sets.join(", ")
+        );
         params.push(Box::new(id.to_string()));
 
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let updated = conn.execute(&sql, param_refs.as_slice())?;
         drop(conn);
 
@@ -1639,8 +1686,9 @@ impl CertStore {
             rusqlite::params![sw.id, sw.start_time, sw.end_time, sw.recurrence, now, now],
         )?;
         drop(conn);
-        self.get_silence_window_by_id(&sw.id)
-            .and_then(|opt| opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted silence window")))
+        self.get_silence_window_by_id(&sw.id).and_then(|opt| {
+            opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted silence window"))
+        })
     }
 
     pub fn get_silence_window_by_id(&self, id: &str) -> Result<Option<SilenceWindowRow>> {
@@ -1649,7 +1697,9 @@ impl CertStore {
             "SELECT id, start_time, end_time, recurrence, created_at, updated_at
              FROM notification_silence_windows WHERE id = ?1",
         )?;
-        let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_silence_window(row)))?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
+            Ok(Self::row_to_silence_window(row))
+        })?;
         match rows.next() {
             Some(Ok(Ok(r))) => Ok(Some(r)),
             Some(Ok(Err(e))) => Err(e),
@@ -1658,7 +1708,11 @@ impl CertStore {
         }
     }
 
-    pub fn list_silence_windows(&self, limit: usize, offset: usize) -> Result<Vec<SilenceWindowRow>> {
+    pub fn list_silence_windows(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SilenceWindowRow>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, start_time, end_time, recurrence, created_at, updated_at
@@ -1747,9 +1801,12 @@ impl CertStore {
         let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = params;
         all_params.push(Box::new(limit as i64));
         all_params.push(Box::new(offset as i64));
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            all_params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(param_refs.as_slice(), |row| Ok(Self::row_to_notification_log(row)))?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok(Self::row_to_notification_log(row))
+        })?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row??);
@@ -1761,7 +1818,8 @@ impl CertStore {
         let conn = self.lock_conn();
         let (where_clause, params) = Self::build_notification_log_where(filter);
         let sql = format!("SELECT COUNT(*) FROM notification_logs {where_clause}");
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
@@ -1776,7 +1834,9 @@ impl CertStore {
         Ok(deleted as u64)
     }
 
-    fn build_notification_log_where(filter: &NotificationLogFilter) -> (String, Vec<Box<dyn rusqlite::types::ToSql>>) {
+    fn build_notification_log_where(
+        filter: &NotificationLogFilter,
+    ) -> (String, Vec<Box<dyn rusqlite::types::ToSql>>) {
         let mut conditions = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         let mut idx = 1;
@@ -1820,7 +1880,9 @@ impl CertStore {
             conditions.push(format!("created_at <= ?{idx}"));
             params.push(Box::new(end));
             #[allow(unused_assignments)]
-            { idx += 1; }
+            {
+                idx += 1;
+            }
         }
 
         let where_clause = if conditions.is_empty() {
@@ -1860,7 +1922,11 @@ impl CertStore {
 
     // ---- Notification recipients CRUD ----
 
-    pub fn insert_recipient(&self, channel_id: &str, value: &str) -> Result<NotificationRecipientRow> {
+    pub fn insert_recipient(
+        &self,
+        channel_id: &str,
+        value: &str,
+    ) -> Result<NotificationRecipientRow> {
         let conn = self.lock_conn();
         let id = oxmon_common::id::next_id();
         let now = Utc::now().timestamp();
@@ -1877,7 +1943,10 @@ impl CertStore {
         })
     }
 
-    pub fn list_recipients_by_channel(&self, channel_id: &str) -> Result<Vec<NotificationRecipientRow>> {
+    pub fn list_recipients_by_channel(
+        &self,
+        channel_id: &str,
+    ) -> Result<Vec<NotificationRecipientRow>> {
         self.list_recipients_by_channel_paged(channel_id, 10000, 0)
     }
 
@@ -1891,15 +1960,18 @@ impl CertStore {
         let mut stmt = conn.prepare(
             "SELECT id, channel_id, value, created_at FROM notification_recipients WHERE channel_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
         )?;
-        let rows = stmt.query_map(rusqlite::params![channel_id, limit as i64, offset as i64], |row| {
-            let created: i64 = row.get(3)?;
-            Ok(NotificationRecipientRow {
-                id: row.get(0)?,
-                channel_id: row.get(1)?,
-                value: row.get(2)?,
-                created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
-            })
-        })?;
+        let rows = stmt.query_map(
+            rusqlite::params![channel_id, limit as i64, offset as i64],
+            |row| {
+                let created: i64 = row.get(3)?;
+                Ok(NotificationRecipientRow {
+                    id: row.get(0)?,
+                    channel_id: row.get(1)?,
+                    value: row.get(2)?,
+                    created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+                })
+            },
+        )?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row?);
@@ -1917,7 +1989,11 @@ impl CertStore {
     }
 
     /// 替换某渠道的全部收件人：先删后批量插入。
-    pub fn set_channel_recipients(&self, channel_id: &str, values: &[String]) -> Result<Vec<NotificationRecipientRow>> {
+    pub fn set_channel_recipients(
+        &self,
+        channel_id: &str,
+        values: &[String],
+    ) -> Result<Vec<NotificationRecipientRow>> {
         let conn = self.lock_conn();
         conn.execute(
             "DELETE FROM notification_recipients WHERE channel_id = ?1",
@@ -1943,7 +2019,9 @@ impl CertStore {
     }
 
     /// 列出所有已启用的通知渠道及其收件人。
-    pub fn list_enabled_channels_with_recipients(&self) -> Result<Vec<(NotificationChannelRow, Vec<String>)>> {
+    pub fn list_enabled_channels_with_recipients(
+        &self,
+    ) -> Result<Vec<(NotificationChannelRow, Vec<String>)>> {
         let channels = {
             let conn = self.lock_conn();
             let mut stmt = conn.prepare(
@@ -1960,7 +2038,8 @@ impl CertStore {
 
         let mut result = Vec::with_capacity(channels.len());
         for ch in channels {
-            let recipients = self.list_recipients_by_channel(&ch.id)?
+            let recipients = self
+                .list_recipients_by_channel(&ch.id)?
                 .into_iter()
                 .map(|r| r.value)
                 .collect();
@@ -1973,7 +2052,8 @@ impl CertStore {
 
     pub fn count_agents(&self) -> Result<u64> {
         let conn = self.lock_conn();
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM agent_whitelist", [], |row| row.get(0))?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM agent_whitelist", [], |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -2053,11 +2133,26 @@ impl CertStore {
         let conn = self.lock_conn();
         let ip_json = serde_json::to_string(&details.ip_addresses)?;
         let san_json = serde_json::to_string(&details.subject_alt_names)?;
-        let key_usage_json = details.key_usage.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
-        let eku_json = details.extended_key_usage.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
-        let ocsp_json = details.ocsp_urls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
-        let crl_json = details.crl_urls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
-        let ca_issuer_json = details.ca_issuer_urls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
+        let key_usage_json = details
+            .key_usage
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
+        let eku_json = details
+            .extended_key_usage
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
+        let ocsp_json = details
+            .ocsp_urls
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
+        let crl_json = details
+            .crl_urls
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
+        let ca_issuer_json = details
+            .ca_issuer_urls
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
         let now = Utc::now().timestamp();
 
         // 尝试更新已有记录
@@ -2302,8 +2397,9 @@ impl CertStore {
             ],
         )?;
         drop(conn);
-        self.get_dictionary_by_id(&id)
-            .and_then(|opt| opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted dictionary")))
+        self.get_dictionary_by_id(&id).and_then(|opt| {
+            opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted dictionary"))
+        })
     }
 
     pub fn batch_insert_dictionaries(&self, items: &[DictionaryItem]) -> Result<usize> {
@@ -2343,7 +2439,9 @@ impl CertStore {
             "SELECT id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at
              FROM system_dictionaries WHERE id = ?1",
         )?;
-        let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_dictionary(row)))?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
+            Ok(Self::row_to_dictionary(row))
+        })?;
         match rows.next() {
             Some(Ok(Ok(r))) => Ok(Some(r)),
             Some(Ok(Err(e))) => Err(e),
@@ -2368,9 +2466,10 @@ impl CertStore {
              FROM system_dictionaries WHERE dict_type = ?1 ORDER BY sort_order ASC, created_at ASC LIMIT ?2 OFFSET ?3"
         };
         let mut stmt = conn.prepare(sql)?;
-        let rows = stmt.query_map(rusqlite::params![dict_type, limit as i64, offset as i64], |row| {
-            Ok(Self::row_to_dictionary(row))
-        })?;
+        let rows = stmt.query_map(
+            rusqlite::params![dict_type, limit as i64, offset as i64],
+            |row| Ok(Self::row_to_dictionary(row)),
+        )?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row??);
@@ -2378,7 +2477,11 @@ impl CertStore {
         Ok(results)
     }
 
-    pub fn list_all_dict_types(&self, limit: usize, offset: usize) -> Result<Vec<DictionaryTypeSummary>> {
+    pub fn list_all_dict_types(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<DictionaryTypeSummary>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT sd.dict_type, COUNT(*) as cnt, dt.dict_type_label
@@ -2475,11 +2578,9 @@ impl CertStore {
 
     pub fn count_dictionaries(&self) -> Result<u64> {
         let conn = self.lock_conn();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM system_dictionaries",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM system_dictionaries", [], |row| {
+            row.get(0)
+        })?;
         Ok(count as u64)
     }
 
@@ -2508,8 +2609,9 @@ impl CertStore {
             rusqlite::params![req.dict_type, req.dict_type_label, sort_order, req.description, now, now],
         )?;
         drop(conn);
-        self.get_dictionary_type(&req.dict_type)
-            .and_then(|opt| opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted dictionary type")))
+        self.get_dictionary_type(&req.dict_type).and_then(|opt| {
+            opt.ok_or_else(|| anyhow::anyhow!("Failed to read inserted dictionary type"))
+        })
     }
 
     pub fn get_dictionary_type(&self, dict_type: &str) -> Result<Option<DictionaryType>> {
@@ -2623,15 +2725,17 @@ impl CertStore {
 
     /// Upsert system dictionary types: insert if missing, update label/description/sort_order if changed.
     /// Returns (inserted, updated) counts.
-    pub fn upsert_system_dictionary_types(&self, items: &[DictionaryType]) -> Result<(usize, usize)> {
+    pub fn upsert_system_dictionary_types(
+        &self,
+        items: &[DictionaryType],
+    ) -> Result<(usize, usize)> {
         let conn = self.lock_conn();
         let tx = conn.unchecked_transaction()?;
         let mut inserted = 0usize;
         let mut updated = 0usize;
         {
-            let mut exists_stmt = tx.prepare(
-                "SELECT 1 FROM dictionary_types WHERE dict_type = ?1",
-            )?;
+            let mut exists_stmt =
+                tx.prepare("SELECT 1 FROM dictionary_types WHERE dict_type = ?1")?;
             let mut update_stmt = tx.prepare(
                 "UPDATE dictionary_types SET
                    dict_type_label = ?1, sort_order = ?2, description = ?3, updated_at = ?4
@@ -2763,9 +2867,8 @@ impl CertStore {
         )?;
         tx.execute_batch("DELETE FROM _active_keys")?;
         {
-            let mut stmt = tx.prepare(
-                "INSERT INTO _active_keys (dict_type, dict_key) VALUES (?1, ?2)",
-            )?;
+            let mut stmt =
+                tx.prepare("INSERT INTO _active_keys (dict_type, dict_key) VALUES (?1, ?2)")?;
             for (dt, dk) in active_keys {
                 stmt.execute(rusqlite::params![dt, dk])?;
             }
@@ -2793,9 +2896,7 @@ impl CertStore {
         }
         let conn = self.lock_conn();
         // Build placeholders: (?1, ?2, ..., ?N)
-        let placeholders: Vec<String> = (1..=active_types.len())
-            .map(|i| format!("?{i}"))
-            .collect();
+        let placeholders: Vec<String> = (1..=active_types.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
             "DELETE FROM dictionary_types WHERE dict_type NOT IN ({})",
             placeholders.join(", ")
@@ -3259,7 +3360,11 @@ mod tests {
     #[test]
     fn test_dictionary_list_by_type() {
         let (_dir, store) = setup();
-        for (key, label, order) in &[("info", "信息", 1), ("warning", "警告", 2), ("critical", "严重", 3)] {
+        for (key, label, order) in &[
+            ("info", "信息", 1),
+            ("warning", "警告", 2),
+            ("critical", "严重", 3),
+        ] {
             store
                 .insert_dictionary(&oxmon_common::types::CreateDictionaryRequest {
                     dict_type: "severity".to_string(),
@@ -3287,13 +3392,17 @@ mod tests {
             })
             .unwrap();
 
-        let severity_items = store.list_dictionaries_by_type("severity", false, 1000, 0).unwrap();
+        let severity_items = store
+            .list_dictionaries_by_type("severity", false, 1000, 0)
+            .unwrap();
         assert_eq!(severity_items.len(), 3);
         // Should be ordered by sort_order
         assert_eq!(severity_items[0].dict_key, "info");
         assert_eq!(severity_items[2].dict_key, "critical");
 
-        let channel_items = store.list_dictionaries_by_type("channel_type", false, 1000, 0).unwrap();
+        let channel_items = store
+            .list_dictionaries_by_type("channel_type", false, 1000, 0)
+            .unwrap();
         assert_eq!(channel_items.len(), 1);
     }
 
@@ -3471,7 +3580,7 @@ mod tests {
         store.ensure_dictionary_type("new_type").unwrap();
         let dt = store.get_dictionary_type("new_type").unwrap().unwrap();
         assert_eq!(dt.dict_type_label, "new_type"); // label defaults to dict_type
-        // calling again should be a no-op
+                                                    // calling again should be a no-op
         store.ensure_dictionary_type("new_type").unwrap();
         assert_eq!(store.list_dictionary_types().unwrap().len(), 1);
     }
@@ -3550,10 +3659,15 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        store.batch_insert_dictionaries(&[system_item.clone()]).unwrap();
+        store
+            .batch_insert_dictionaries(&[system_item.clone()])
+            .unwrap();
         // Delete should fail (is_system = 1)
         assert!(!store.delete_dictionary(&system_item.id).unwrap());
-        assert!(store.get_dictionary_by_id(&system_item.id).unwrap().is_some());
+        assert!(store
+            .get_dictionary_by_id(&system_item.id)
+            .unwrap()
+            .is_some());
     }
 
     #[test]
@@ -3650,10 +3764,14 @@ mod tests {
             })
             .unwrap();
 
-        let all = store.list_dictionaries_by_type("test", false, 1000, 0).unwrap();
+        let all = store
+            .list_dictionaries_by_type("test", false, 1000, 0)
+            .unwrap();
         assert_eq!(all.len(), 2);
 
-        let enabled = store.list_dictionaries_by_type("test", true, 1000, 0).unwrap();
+        let enabled = store
+            .list_dictionaries_by_type("test", true, 1000, 0)
+            .unwrap();
         assert_eq!(enabled.len(), 1);
         assert_ne!(enabled[0].id, disabled.id);
     }
@@ -3763,7 +3881,9 @@ mod tests {
             created_at: now,
             updated_at: now,
         }];
-        let (ins, upd) = store.upsert_system_dictionary_types(&updated_items).unwrap();
+        let (ins, upd) = store
+            .upsert_system_dictionary_types(&updated_items)
+            .unwrap();
         assert_eq!(ins, 0);
         assert_eq!(upd, 1);
 
@@ -3854,7 +3974,9 @@ mod tests {
         assert_eq!(upd, 1);
 
         // Verify updated — original id preserved
-        let all = store.list_dictionaries_by_type("severity", false, 1000, 0).unwrap();
+        let all = store
+            .list_dictionaries_by_type("severity", false, 1000, 0)
+            .unwrap();
         let info_item = all.iter().find(|i| i.dict_key == "info").unwrap();
         assert_eq!(info_item.dict_label, "信息(更新)");
         assert_eq!(info_item.id, "id-1"); // original id preserved
@@ -3877,7 +3999,13 @@ mod tests {
         let (ins, upd) = store.upsert_system_dictionaries(&new_item).unwrap();
         assert_eq!(ins, 1);
         assert_eq!(upd, 0);
-        assert_eq!(store.list_dictionaries_by_type("severity", false, 1000, 0).unwrap().len(), 3);
+        assert_eq!(
+            store
+                .list_dictionaries_by_type("severity", false, 1000, 0)
+                .unwrap()
+                .len(),
+            3
+        );
     }
 
     #[test]
@@ -3959,22 +4087,46 @@ mod tests {
         // Insert 3 system items
         let items = vec![
             DictionaryItem {
-                id: "s1".into(), dict_type: "severity".into(), dict_key: "info".into(),
-                dict_label: "信息".into(), dict_value: Some("1".into()), sort_order: 1,
-                enabled: true, is_system: true, description: None, extra_json: None,
-                created_at: now, updated_at: now,
+                id: "s1".into(),
+                dict_type: "severity".into(),
+                dict_key: "info".into(),
+                dict_label: "信息".into(),
+                dict_value: Some("1".into()),
+                sort_order: 1,
+                enabled: true,
+                is_system: true,
+                description: None,
+                extra_json: None,
+                created_at: now,
+                updated_at: now,
             },
             DictionaryItem {
-                id: "s2".into(), dict_type: "severity".into(), dict_key: "warning".into(),
-                dict_label: "警告".into(), dict_value: Some("2".into()), sort_order: 2,
-                enabled: true, is_system: true, description: None, extra_json: None,
-                created_at: now, updated_at: now,
+                id: "s2".into(),
+                dict_type: "severity".into(),
+                dict_key: "warning".into(),
+                dict_label: "警告".into(),
+                dict_value: Some("2".into()),
+                sort_order: 2,
+                enabled: true,
+                is_system: true,
+                description: None,
+                extra_json: None,
+                created_at: now,
+                updated_at: now,
             },
             DictionaryItem {
-                id: "s3".into(), dict_type: "severity".into(), dict_key: "critical".into(),
-                dict_label: "严重".into(), dict_value: Some("3".into()), sort_order: 3,
-                enabled: true, is_system: true, description: None, extra_json: None,
-                created_at: now, updated_at: now,
+                id: "s3".into(),
+                dict_type: "severity".into(),
+                dict_key: "critical".into(),
+                dict_label: "严重".into(),
+                dict_value: Some("3".into()),
+                sort_order: 3,
+                enabled: true,
+                is_system: true,
+                description: None,
+                extra_json: None,
+                created_at: now,
+                updated_at: now,
             },
         ];
         store.batch_insert_dictionaries(&items).unwrap();
@@ -3984,7 +4136,9 @@ mod tests {
             ("severity".to_string(), "info".to_string()),
             ("severity".to_string(), "warning".to_string()),
         ];
-        let disabled = store.disable_stale_system_dictionaries(&active_keys).unwrap();
+        let disabled = store
+            .disable_stale_system_dictionaries(&active_keys)
+            .unwrap();
         assert_eq!(disabled, 1);
 
         // Verify: critical is disabled
@@ -3998,7 +4152,9 @@ mod tests {
         assert!(warning.enabled);
 
         // Calling again should disable 0 (already disabled)
-        let disabled2 = store.disable_stale_system_dictionaries(&active_keys).unwrap();
+        let disabled2 = store
+            .disable_stale_system_dictionaries(&active_keys)
+            .unwrap();
         assert_eq!(disabled2, 0);
     }
 
@@ -4021,10 +4177,18 @@ mod tests {
         // Insert a non-system item
         store
             .batch_insert_dictionaries(&[DictionaryItem {
-                id: "u1".into(), dict_type: "custom".into(), dict_key: "user_key".into(),
-                dict_label: "User".into(), dict_value: None, sort_order: 1,
-                enabled: true, is_system: false, description: None, extra_json: None,
-                created_at: now, updated_at: now,
+                id: "u1".into(),
+                dict_type: "custom".into(),
+                dict_key: "user_key".into(),
+                dict_label: "User".into(),
+                dict_value: None,
+                sort_order: 1,
+                enabled: true,
+                is_system: false,
+                description: None,
+                extra_json: None,
+                created_at: now,
+                updated_at: now,
             }])
             .unwrap();
 
@@ -4049,17 +4213,26 @@ mod tests {
                 DictionaryType {
                     dict_type: "severity".to_string(),
                     dict_type_label: "告警级别".to_string(),
-                    sort_order: 1, description: None, created_at: now, updated_at: now,
+                    sort_order: 1,
+                    description: None,
+                    created_at: now,
+                    updated_at: now,
                 },
                 DictionaryType {
                     dict_type: "old_type".to_string(),
                     dict_type_label: "旧类型".to_string(),
-                    sort_order: 2, description: None, created_at: now, updated_at: now,
+                    sort_order: 2,
+                    description: None,
+                    created_at: now,
+                    updated_at: now,
                 },
                 DictionaryType {
                     dict_type: "channel_type".to_string(),
                     dict_type_label: "渠道类型".to_string(),
-                    sort_order: 3, description: None, created_at: now, updated_at: now,
+                    sort_order: 3,
+                    description: None,
+                    created_at: now,
+                    updated_at: now,
                 },
             ])
             .unwrap();

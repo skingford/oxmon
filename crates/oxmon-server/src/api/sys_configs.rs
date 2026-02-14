@@ -75,8 +75,8 @@ fn redact_config(config_type: &str, config: &serde_json::Value) -> serde_json::V
 }
 
 fn row_to_response(row: SystemConfigRow) -> SystemConfigResponse {
-    let config_val: serde_json::Value = serde_json::from_str(&row.config_json)
-        .unwrap_or_else(|_| serde_json::json!({}));
+    let config_val: serde_json::Value =
+        serde_json::from_str(&row.config_json).unwrap_or_else(|_| serde_json::json!({}));
     let redacted = redact_config(&row.config_type, &config_val);
     SystemConfigResponse {
         id: row.id,
@@ -364,5 +364,9 @@ async fn delete_system_config(
 pub fn sys_config_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_system_configs, create_system_config))
-        .routes(routes!(get_system_config, update_system_config, delete_system_config))
+        .routes(routes!(
+            get_system_config,
+            update_system_config,
+            delete_system_config
+        ))
 }

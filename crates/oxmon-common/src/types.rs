@@ -109,10 +109,7 @@ pub fn format_labels(labels: &HashMap<String, String>) -> String {
     if labels.is_empty() {
         return String::new();
     }
-    let mut pairs: Vec<String> = labels
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect();
+    let mut pairs: Vec<String> = labels.iter().map(|(k, v)| format!("{k}={v}")).collect();
     pairs.sort();
     pairs.join(", ")
 }
@@ -334,7 +331,6 @@ pub struct CertificateDetails {
     pub updated_at: DateTime<Utc>,
 
     // ---- 新增字段 ----
-
     /// 证书序列号（十六进制）
     pub serial_number: Option<String>,
     /// 证书 SHA-256 指纹

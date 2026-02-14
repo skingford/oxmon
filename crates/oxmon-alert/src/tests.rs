@@ -474,7 +474,11 @@ fn threshold_rule_includes_labels_in_message() {
     let event = rule.evaluate(&[dp], Utc::now());
     assert!(event.is_some());
     let event = event.unwrap();
-    assert!(event.message.contains("mount=/data"), "message should contain labels: {}", event.message);
+    assert!(
+        event.message.contains("mount=/data"),
+        "message should contain labels: {}",
+        event.message
+    );
     assert_eq!(event.labels.get("mount").unwrap(), "/data");
     assert_eq!(event.rule_name, "磁盘使用率过高");
 }

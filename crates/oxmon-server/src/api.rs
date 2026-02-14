@@ -694,7 +694,12 @@ async fn metric_names(
     let from = params
         .timestamp_gte
         .unwrap_or_else(|| to - chrono::Duration::days(1));
-    match state.storage.query_distinct_metric_names(from, to, pagination.limit(), pagination.offset()) {
+    match state.storage.query_distinct_metric_names(
+        from,
+        to,
+        pagination.limit(),
+        pagination.offset(),
+    ) {
         Ok(names) => success_response(StatusCode::OK, &trace_id, names),
         Err(e) => {
             tracing::error!(error = %e, "Failed to query metric names");
@@ -731,7 +736,10 @@ async fn metric_agents(
     let from = params
         .timestamp_gte
         .unwrap_or_else(|| to - chrono::Duration::days(1));
-    match state.storage.query_distinct_agent_ids(from, to, pagination.limit(), pagination.offset()) {
+    match state
+        .storage
+        .query_distinct_agent_ids(from, to, pagination.limit(), pagination.offset())
+    {
         Ok(ids) => success_response(StatusCode::OK, &trace_id, ids),
         Err(e) => {
             tracing::error!(error = %e, "Failed to query agent ids");

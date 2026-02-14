@@ -573,7 +573,9 @@ async fn check_single_domain(
     )
     .await;
 
-    if let Err(e) = store_check_result(&state, &domain.id, &domain.domain, domain.port, &result).await {
+    if let Err(e) =
+        store_check_result(&state, &domain.id, &domain.domain, domain.port, &result).await
+    {
         tracing::error!(domain = %domain.domain, error = %e, "Failed to store manual check result");
     }
 
@@ -628,7 +630,9 @@ async fn check_all_domains(
         )
         .await;
 
-        if let Err(e) = store_check_result(&state, &domain.id, &domain.domain, domain.port, &result).await {
+        if let Err(e) =
+            store_check_result(&state, &domain.id, &domain.domain, domain.port, &result).await
+        {
             tracing::error!(domain = %domain.domain, error = %e, "Failed to store manual check result");
         }
 
@@ -652,18 +656,16 @@ async fn store_check_result(
 
     // Sync certificate details
     match CertificateCollector::new(state.connect_timeout_secs).await {
-        Ok(collector) => {
-            match collector.collect(domain_name, port as u16).await {
-                Ok(details) => {
-                    if let Err(e) = state.cert_store.upsert_certificate_details(&details) {
-                        tracing::error!(domain = %domain_name, error = %e, "Failed to store certificate details");
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(domain = %domain_name, error = %e, "Failed to collect certificate details");
+        Ok(collector) => match collector.collect(domain_name, port as u16).await {
+            Ok(details) => {
+                if let Err(e) = state.cert_store.upsert_certificate_details(&details) {
+                    tracing::error!(domain = %domain_name, error = %e, "Failed to store certificate details");
                 }
             }
-        }
+            Err(e) => {
+                tracing::warn!(domain = %domain_name, error = %e, "Failed to collect certificate details");
+            }
+        },
         Err(e) => {
             tracing::error!(error = %e, "Failed to create certificate collector");
         }

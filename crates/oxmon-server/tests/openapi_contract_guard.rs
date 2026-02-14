@@ -70,8 +70,10 @@ async fn openapi_paths_should_be_covered_by_test_matrix() {
         "GET /v1/alerts/summary",
         // New endpoints: notifications
         "GET /v1/notifications/channels",
+        "GET /v1/notifications/channels/{id}",
         "POST /v1/notifications/channels/{id}/test",
         "GET /v1/notifications/channels/config",
+        "GET /v1/notifications/channels/config/{id}",
         "POST /v1/notifications/channels/config",
         "PUT /v1/notifications/channels/config/{id}",
         "DELETE /v1/notifications/channels/config/{id}",

@@ -23,7 +23,11 @@ pub trait ChannelPlugin: Send + Sync {
     /// Creates a configured channel instance from a validated JSON config.
     /// `instance_id` is the database row ID used to uniquely identify this
     /// channel instance.
-    fn create_channel(&self, instance_id: &str, config: &Value) -> Result<Box<dyn NotificationChannel>>;
+    fn create_channel(
+        &self,
+        instance_id: &str,
+        config: &Value,
+    ) -> Result<Box<dyn NotificationChannel>>;
 
     /// Returns a copy of `config` with secrets redacted (e.g., passwords
     /// replaced with `"***"`). Used for API responses.

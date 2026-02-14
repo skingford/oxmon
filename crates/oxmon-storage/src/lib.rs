@@ -113,11 +113,7 @@ pub trait StorageEngine: Send + Sync {
     ) -> Result<MetricSummary>;
 
     /// Returns alert event counts grouped by severity in the given time range.
-    fn query_alert_summary(
-        &self,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
-    ) -> Result<AlertSummary>;
+    fn query_alert_summary(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<AlertSummary>;
 
     /// Returns partition (daily database) information.
     fn list_partitions(&self) -> Result<Vec<PartitionInfo>>;
@@ -129,11 +125,7 @@ pub trait StorageEngine: Send + Sync {
     fn resolve_alert(&self, event_id: &str) -> Result<bool>;
 
     /// Queries active (non-resolved) alert events.
-    fn query_active_alerts(
-        &self,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<AlertEvent>>;
+    fn query_active_alerts(&self, limit: usize, offset: usize) -> Result<Vec<AlertEvent>>;
 
     /// Returns total count for paginated metrics query.
     fn count_metrics(

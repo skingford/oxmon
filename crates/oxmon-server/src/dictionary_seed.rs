@@ -20,7 +20,15 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ("weixin", "企业微信", "企业微信机器人通知"),
     ] {
         order += 1;
-        items.push(make_system_item("channel_type", key, label, None, order, Some(desc), &now));
+        items.push(make_system_item(
+            "channel_type",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
     }
 
     // ---- severity: 告警级别 ----
@@ -31,19 +39,39 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ("critical", "严重", "3", "需要立即处理的告警"),
     ] {
         order += 1;
-        items.push(make_system_item("severity", key, label, Some(value), order, Some(desc), &now));
+        items.push(make_system_item(
+            "severity",
+            key,
+            label,
+            Some(value),
+            order,
+            Some(desc),
+            &now,
+        ));
     }
 
     // ---- rule_type: 告警规则类型 ----
     order = 0;
     for (key, label, desc) in [
         ("threshold", "阈值规则", "当指标值超过设定阈值时触发"),
-        ("rate_of_change", "变化率规则", "当指标变化速率超过阈值时触发"),
+        (
+            "rate_of_change",
+            "变化率规则",
+            "当指标变化速率超过阈值时触发",
+        ),
         ("trend", "趋势预测规则", "根据趋势预测指标将在未来超过阈值"),
         ("cert_expiration", "证书过期规则", "证书即将过期时触发"),
     ] {
         order += 1;
-        items.push(make_system_item("rule_type", key, label, None, order, Some(desc), &now));
+        items.push(make_system_item(
+            "rule_type",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
     }
 
     // ---- alert_status: 告警状态 ----
@@ -54,7 +82,15 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ("resolved", "已处理", "3", "告警已被处理/关闭"),
     ] {
         order += 1;
-        items.push(make_system_item("alert_status", key, label, Some(value), order, Some(desc), &now));
+        items.push(make_system_item(
+            "alert_status",
+            key,
+            label,
+            Some(value),
+            order,
+            Some(desc),
+            &now,
+        ));
     }
 
     // ---- agent_status: Agent 状态 ----
@@ -65,7 +101,15 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ("unknown", "未知", "Agent 状态未确定"),
     ] {
         order += 1;
-        items.push(make_system_item("agent_status", key, label, None, order, Some(desc), &now));
+        items.push(make_system_item(
+            "agent_status",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
     }
 
     // ---- compare_operator: 比较运算符 ----
@@ -79,7 +123,15 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ("ne", "不等于", "!=", "值不等于阈值"),
     ] {
         order += 1;
-        items.push(make_system_item("compare_operator", key, label, Some(value), order, Some(desc), &now));
+        items.push(make_system_item(
+            "compare_operator",
+            key,
+            label,
+            Some(value),
+            order,
+            Some(desc),
+            &now,
+        ));
     }
 
     // ---- metric_name: 系统指标名称 ----
@@ -96,16 +148,40 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ("disk.used_bytes", "已用磁盘", "已使用磁盘字节数"),
         ("disk.total_bytes", "磁盘总量", "磁盘总容量字节数"),
         ("disk.available_bytes", "可用磁盘", "可用磁盘字节数"),
-        ("disk.read_bytes_per_sec", "磁盘读速率", "磁盘每秒读取字节数"),
-        ("disk.write_bytes_per_sec", "磁盘写速率", "磁盘每秒写入字节数"),
-        ("network.rx_bytes_per_sec", "网络接收速率", "网络每秒接收字节数"),
-        ("network.tx_bytes_per_sec", "网络发送速率", "网络每秒发送字节数"),
+        (
+            "disk.read_bytes_per_sec",
+            "磁盘读速率",
+            "磁盘每秒读取字节数",
+        ),
+        (
+            "disk.write_bytes_per_sec",
+            "磁盘写速率",
+            "磁盘每秒写入字节数",
+        ),
+        (
+            "network.rx_bytes_per_sec",
+            "网络接收速率",
+            "网络每秒接收字节数",
+        ),
+        (
+            "network.tx_bytes_per_sec",
+            "网络发送速率",
+            "网络每秒发送字节数",
+        ),
         ("load.load1", "1分钟负载", "系统1分钟平均负载"),
         ("load.load5", "5分钟负载", "系统5分钟平均负载"),
         ("load.load15", "15分钟负载", "系统15分钟平均负载"),
     ] {
         order += 1;
-        items.push(make_system_item("metric_name", key, label, None, order, Some(desc), &now));
+        items.push(make_system_item(
+            "metric_name",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
     }
 
     // ---- rule_source: 规则来源 ----
@@ -116,7 +192,15 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ("toml", "TOML 迁移", "从 TOML 配置文件迁移"),
     ] {
         order += 1;
-        items.push(make_system_item("rule_source", key, label, None, order, Some(desc), &now));
+        items.push(make_system_item(
+            "rule_source",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
     }
 
     // ---- recipient_type: 接收人类型 ----
@@ -127,7 +211,15 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ("webhook_url", "Webhook URL", "用于 HTTP 回调通知"),
     ] {
         order += 1;
-        items.push(make_system_item("recipient_type", key, label, None, order, Some(desc), &now));
+        items.push(make_system_item(
+            "recipient_type",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
     }
 
     // ---- system_config_type: 系统配置类型 ----
@@ -137,7 +229,15 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ("sms", "短信发送配置", "短信供应商发送方配置"),
     ] {
         order += 1;
-        items.push(make_system_item("system_config_type", key, label, None, order, Some(desc), &now));
+        items.push(make_system_item(
+            "system_config_type",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
     }
 
     items
@@ -158,7 +258,11 @@ pub fn default_type_seed_items() -> Vec<DictionaryType> {
         ("metric_name", "系统指标名称", "可监控的系统指标"),
         ("rule_source", "规则来源", "告警规则的创建来源"),
         ("recipient_type", "接收人类型", "通知接收人的类型"),
-        ("system_config_type", "系统配置类型", "系统级发送方配置的类型"),
+        (
+            "system_config_type",
+            "系统配置类型",
+            "系统级发送方配置的类型",
+        ),
     ]
     .into_iter()
     .enumerate()
@@ -210,8 +314,7 @@ fn make_system_item(
 pub fn init_default_dictionaries(cert_store: &CertStore) -> anyhow::Result<usize> {
     // 1. Sync dictionary types
     let type_items = default_type_seed_items();
-    let (types_inserted, types_updated) =
-        cert_store.upsert_system_dictionary_types(&type_items)?;
+    let (types_inserted, types_updated) = cert_store.upsert_system_dictionary_types(&type_items)?;
     if types_inserted > 0 || types_updated > 0 {
         tracing::info!(
             types_inserted,
@@ -242,10 +345,7 @@ pub fn init_default_dictionaries(cert_store: &CertStore) -> anyhow::Result<usize
     }
 
     // 4. Delete dictionary types that no longer exist in seed data
-    let active_types: Vec<String> = type_items
-        .iter()
-        .map(|t| t.dict_type.clone())
-        .collect();
+    let active_types: Vec<String> = type_items.iter().map(|t| t.dict_type.clone()).collect();
     let types_deleted = cert_store.delete_stale_dictionary_types(&active_types)?;
     if types_deleted > 0 {
         tracing::info!(types_deleted, "Deleted stale dictionary types");

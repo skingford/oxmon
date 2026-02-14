@@ -249,8 +249,8 @@ impl SmsChannel {
 
         let signing_key = format!("{}&", access_key_secret);
         type HmacSha1 = Hmac<Sha1>;
-        let mut mac =
-            HmacSha1::new_from_slice(signing_key.as_bytes()).expect("HMAC can take key of any size");
+        let mut mac = HmacSha1::new_from_slice(signing_key.as_bytes())
+            .expect("HMAC can take key of any size");
         mac.update(string_to_sign.as_bytes());
         base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
     }
@@ -321,13 +321,18 @@ impl SmsChannel {
                         if status.is_success() {
                             match resp.json::<serde_json::Value>().await {
                                 Ok(body) => {
-                                    let body_json = serde_json::to_string(&body).unwrap_or_default();
-                                    response_body = Some(truncate_string(&body_json, MAX_BODY_LENGTH));
+                                    let body_json =
+                                        serde_json::to_string(&body).unwrap_or_default();
+                                    response_body =
+                                        Some(truncate_string(&body_json, MAX_BODY_LENGTH));
 
                                     let code = body.get("Code").and_then(|v: &Value| v.as_str());
                                     if code == Some("OK") {
                                         // 提取 BizId 作为 message_id
-                                        message_id = body.get("BizId").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                        message_id = body
+                                            .get("BizId")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
                                         last_err = None;
                                         break;
                                     }
@@ -341,8 +346,11 @@ impl SmsChannel {
                                     last_err = Some(anyhow::anyhow!("Aliyun SMS error: {errmsg}"));
                                 }
                                 Err(e) => {
-                                    response_body = Some(format!("[Failed to parse response: {}]", e));
-                                    last_err = Some(anyhow::anyhow!("Aliyun SMS response parse error: {e}"));
+                                    response_body =
+                                        Some(format!("[Failed to parse response: {}]", e));
+                                    last_err = Some(anyhow::anyhow!(
+                                        "Aliyun SMS response parse error: {e}"
+                                    ));
                                 }
                             }
                         } else {
@@ -397,8 +405,7 @@ impl SmsChannel {
 
     fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
         type HmacSha256 = Hmac<Sha256>;
-        let mut mac =
-            HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
+        let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
         mac.update(data);
         mac.finalize().into_bytes().to_vec()
     }
@@ -440,8 +447,10 @@ impl SmsChannel {
         let secret_signing = Self::hmac_sha256(&secret_service, b"tc3_request");
 
         // Step 4: Signature
-        let signature =
-            Self::hex_encode(&Self::hmac_sha256(&secret_signing, string_to_sign.as_bytes()));
+        let signature = Self::hex_encode(&Self::hmac_sha256(
+            &secret_signing,
+            string_to_sign.as_bytes(),
+        ));
 
         format!(
             "TC3-HMAC-SHA256 Credential={}/{}, SignedHeaders=content-type;host, Signature={}",
@@ -493,8 +502,14 @@ impl SmsChannel {
         let payload_str = payload.to_string();
 
         let timestamp = chrono::Utc::now().timestamp();
-        let authorization =
-            Self::tencent_sign(secret_id, secret_key, "sms", endpoint, &payload_str, timestamp);
+        let authorization = Self::tencent_sign(
+            secret_id,
+            secret_key,
+            "sms",
+            endpoint,
+            &payload_str,
+            timestamp,
+        );
 
         let url = format!("https://{}", endpoint);
 
@@ -533,20 +548,25 @@ impl SmsChannel {
                                 response_body = Some(truncate_string(&body_json, MAX_BODY_LENGTH));
 
                                 // 提取 RequestId
-                                request_id = body.pointer("/Response/RequestId")
+                                request_id = body
+                                    .pointer("/Response/RequestId")
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string());
 
                                 if body.pointer("/Response/Error").is_none() {
                                     // 成功，提取 SendStatusSet
-                                    if let Some(arr) = body.pointer("/Response/SendStatusSet").and_then(|v| v.as_array()) {
+                                    if let Some(arr) = body
+                                        .pointer("/Response/SendStatusSet")
+                                        .and_then(|v| v.as_array())
+                                    {
                                         send_status_set = Some(arr.clone());
                                     }
                                     last_err = None;
                                     break;
                                 }
 
-                                error_code = body.pointer("/Response/Error/Code")
+                                error_code = body
+                                    .pointer("/Response/Error/Code")
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string());
 
@@ -554,12 +574,17 @@ impl SmsChannel {
                                     .pointer("/Response/Error/Message")
                                     .and_then(|v: &Value| v.as_str())
                                     .unwrap_or("unknown");
-                                tracing::warn!(attempt = attempts, error = errmsg, "Tencent SMS API error, retrying");
+                                tracing::warn!(
+                                    attempt = attempts,
+                                    error = errmsg,
+                                    "Tencent SMS API error, retrying"
+                                );
                                 last_err = Some(anyhow::anyhow!("Tencent SMS error: {errmsg}"));
                             }
                             Err(e) => {
                                 response_body = Some(format!("[Failed to parse response: {}]", e));
-                                last_err = Some(anyhow::anyhow!("Tencent SMS response parse error: {e}"));
+                                last_err =
+                                    Some(anyhow::anyhow!("Tencent SMS response parse error: {e}"));
                             }
                         }
                     } else {
@@ -593,8 +618,14 @@ impl SmsChannel {
             // 解析 SendStatusSet，为每个手机号创建结果
             for (idx, phone) in recipients.iter().enumerate() {
                 if let Some(status_obj) = status_set.get(idx) {
-                    let code = status_obj.get("Code").and_then(|v| v.as_str()).unwrap_or("");
-                    let msg_id = status_obj.get("SerialNo").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let code = status_obj
+                        .get("Code")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let msg_id = status_obj
+                        .get("SerialNo")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     let is_success = code == "Ok";
 
                     results.push(PhoneSendResult {
@@ -602,9 +633,17 @@ impl SmsChannel {
                         status_code,
                         response_body: response_body.clone(),
                         message_id: msg_id,
-                        error_code: if is_success { None } else { Some(code.to_string()) },
+                        error_code: if is_success {
+                            None
+                        } else {
+                            Some(code.to_string())
+                        },
                         retries: attempts.saturating_sub(1),
-                        error: if is_success { None } else { Some(anyhow::anyhow!("Tencent SMS error: {}", code)) },
+                        error: if is_success {
+                            None
+                        } else {
+                            Some(anyhow::anyhow!("Tencent SMS error: {}", code))
+                        },
                     });
                 } else {
                     // 状态集合中没有对应的项
@@ -652,7 +691,10 @@ impl NotificationChannel for SmsChannel {
             SmsProvider::Generic {
                 gateway_url,
                 api_key,
-            } => self.send_generic(gateway_url, api_key, alert, recipients).await,
+            } => {
+                self.send_generic(gateway_url, api_key, alert, recipients)
+                    .await
+            }
             SmsProvider::Aliyun {
                 access_key_id,
                 access_key_secret,
@@ -717,7 +759,11 @@ impl NotificationChannel for SmsChannel {
 
             recipient_results.push(RecipientResult {
                 recipient: phone_result.phone,
-                status: if phone_result.error.is_none() { "success".to_string() } else { "failed".to_string() },
+                status: if phone_result.error.is_none() {
+                    "success".to_string()
+                } else {
+                    "failed".to_string()
+                },
                 error: phone_result.error.as_ref().map(|e| e.to_string()),
             });
 

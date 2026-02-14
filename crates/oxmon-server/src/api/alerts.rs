@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-
 /// 告警规则详情
 #[derive(Serialize, ToSchema)]
 struct AlertRuleDetailResponse {
@@ -69,9 +68,18 @@ async fn get_alert_rule(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.cert_store.get_alert_rule_by_id(&id) {
-        Ok(Some(rule)) => success_response(StatusCode::OK, &trace_id, AlertRuleDetailResponse::from(rule)),
-        Ok(None) => error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Rule not found")
-            .into_response(),
+        Ok(Some(rule)) => success_response(
+            StatusCode::OK,
+            &trace_id,
+            AlertRuleDetailResponse::from(rule),
+        ),
+        Ok(None) => error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Rule not found",
+        )
+        .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Failed to get alert rule");
             error_response(
@@ -216,8 +224,13 @@ async fn update_alert_rule(
                 AlertRuleDetailResponse::from(rule),
             )
         }
-        Ok(None) => error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Rule not found")
-            .into_response(),
+        Ok(None) => error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Rule not found",
+        )
+        .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Failed to update alert rule");
             error_response(
@@ -258,8 +271,13 @@ async fn delete_alert_rule(
             }
             success_empty_response(StatusCode::OK, &trace_id, "Rule deleted")
         }
-        Ok(false) => error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Rule not found")
-            .into_response(),
+        Ok(false) => error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Rule not found",
+        )
+        .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Failed to delete alert rule");
             error_response(
@@ -314,8 +332,13 @@ async fn set_alert_rule_enabled(
                 AlertRuleDetailResponse::from(rule),
             )
         }
-        Ok(None) => error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Rule not found")
-            .into_response(),
+        Ok(None) => error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Rule not found",
+        )
+        .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Failed to update rule enabled state");
             error_response(
@@ -351,8 +374,13 @@ async fn acknowledge_alert(
 ) -> impl IntoResponse {
     match state.storage.acknowledge_alert(&id) {
         Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "Alert acknowledged"),
-        Ok(false) => error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Alert not found")
-            .into_response(),
+        Ok(false) => error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Alert not found",
+        )
+        .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Failed to acknowledge alert");
             error_response(
@@ -386,8 +414,13 @@ async fn resolve_alert(
 ) -> impl IntoResponse {
     match state.storage.resolve_alert(&id) {
         Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "Alert resolved"),
-        Ok(false) => error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "Alert not found")
-            .into_response(),
+        Ok(false) => error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Alert not found",
+        )
+        .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Failed to resolve alert");
             error_response(
@@ -489,4 +522,3 @@ pub fn alert_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(active_alerts))
         .routes(routes!(alert_summary))
 }
-

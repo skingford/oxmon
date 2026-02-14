@@ -43,9 +43,6 @@ mod tests {
     fn test_next_id_is_numeric() {
         init(1, 1);
         let id = next_id();
-        assert!(
-            id.parse::<i64>().is_ok(),
-            "ID should be a valid i64: {id}",
-        );
+        assert!(id.parse::<i64>().is_ok(), "ID should be a valid i64: {id}",);
     }
 }

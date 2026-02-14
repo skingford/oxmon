@@ -263,8 +263,10 @@ fn migrate_partition(conn: &Connection) {
     let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN created_at INTEGER;");
     let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN updated_at INTEGER;");
     let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN status TEXT DEFAULT 'open';");
-    let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN rule_name TEXT NOT NULL DEFAULT '';");
-    let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN labels TEXT NOT NULL DEFAULT '{}';");
+    let _ = conn
+        .execute_batch("ALTER TABLE alert_events ADD COLUMN rule_name TEXT NOT NULL DEFAULT '';");
+    let _ = conn
+        .execute_batch("ALTER TABLE alert_events ADD COLUMN labels TEXT NOT NULL DEFAULT '{}';");
     let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN first_triggered_at INTEGER;");
 }
 

@@ -239,7 +239,11 @@ impl NotificationChannel for DingTalkChannel {
 
             recipient_results.push(RecipientResult {
                 recipient: self.webhook_url.clone(),
-                status: if result.error.is_none() { "success".to_string() } else { "failed".to_string() },
+                status: if result.error.is_none() {
+                    "success".to_string()
+                } else {
+                    "failed".to_string()
+                },
                 error: result.error.as_ref().map(|e| e.to_string()),
             });
         } else {
@@ -255,7 +259,11 @@ impl NotificationChannel for DingTalkChannel {
 
                 recipient_results.push(RecipientResult {
                     recipient: webhook.clone(),
-                    status: if result.error.is_none() { "success".to_string() } else { "failed".to_string() },
+                    status: if result.error.is_none() {
+                        "success".to_string()
+                    } else {
+                        "failed".to_string()
+                    },
                     error: result.error.as_ref().map(|e| e.to_string()),
                 });
             }
@@ -303,10 +311,18 @@ impl ChannelPlugin for DingTalkPlugin {
         Ok(())
     }
 
-    fn create_channel(&self, instance_id: &str, config: &Value) -> Result<Box<dyn NotificationChannel>> {
+    fn create_channel(
+        &self,
+        instance_id: &str,
+        config: &Value,
+    ) -> Result<Box<dyn NotificationChannel>> {
         let cfg: DingTalkConfig = serde_json::from_value(config.clone())
             .map_err(|e| anyhow::anyhow!("Invalid dingtalk config: {e}"))?;
-        Ok(Box::new(DingTalkChannel::new(instance_id, &cfg.webhook_url, cfg.secret)))
+        Ok(Box::new(DingTalkChannel::new(
+            instance_id,
+            &cfg.webhook_url,
+            cfg.secret,
+        )))
     }
 
     fn redact_config(&self, config: &Value) -> Value {
