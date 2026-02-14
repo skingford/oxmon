@@ -34,7 +34,7 @@
     {
       "name": "默认钉钉通知",
       "channel_type": "dingtalk",
-      "description": "钉钉机器人通知，启用前请填写 access_token",
+      "description": "钉钉机器人通知。支持 @ 功能：is_at_all(@ 所有人), at_mobiles(@ 手机号), at_user_ids(@ 用户ID)",
       "min_severity": "warning",
       "enabled": false,
       "config": {

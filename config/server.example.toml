@@ -13,68 +13,25 @@ data_dir = "data"
 retention_days = 7
 
 # Require agent authentication (default: false)
-# When enabled, agents must provide a valid token in the whitelist
-# Manage whitelist via: POST/GET/DELETE /v1/agents/whitelist
 require_agent_auth = false
 
 # REST API Authentication (JWT)
-# All REST API endpoints (except health check and login) require a valid JWT token.
-# Obtain a token via: POST /v1/auth/login
 [auth]
-# JWT signing secret. If not set, a random secret is generated on each startup
-# (tokens will be invalidated on restart). Set a fixed value for production.
 jwt_secret = "your-secret-key-here"
 token_expire_secs = 86400       # Token validity period (default: 24 hours)
-default_username = "admin"      # Default admin username (created on first startup)
-default_password = "changeme"   # Default admin password (created on first startup)
+default_username = "admin"      # Default admin username
+default_password = "changeme"   # Default admin password (change this!)
 
 # Alert Rules
-#
-# Rules are managed via REST API or the `init-rules` CLI:
-#
-#   oxmon-server init-rules config/server.toml config/rules.seed.json
-#
-# See config/rules.seed.example.json for a seed file template.
-#
-# REST API endpoints:
-#   POST   /v1/alerts/rules              Create a rule
-#   GET    /v1/alerts/rules              List rules
-#   GET    /v1/alerts/rules/{id}         Get rule details
-#   PUT    /v1/alerts/rules/{id}         Update a rule
-#   DELETE /v1/alerts/rules/{id}         Delete a rule
-#   PUT    /v1/alerts/rules/{id}/enable  Enable/disable a rule
-#
-# Supported types: "threshold", "rate_of_change", "trend_prediction", "cert_expiration"
+# Managed via REST API or CLI: oxmon-server init-rules <config> <seed.json>
+# See config/rules.seed.example.json for examples
 
-# Notification
-#
-# Channels, silence windows, and runtime settings are managed via REST API or CLI:
-#
-#   oxmon-server init-channels config/server.toml config/channels.seed.json
-#
-# See config/channels.seed.example.json for a seed file template.
-#
-# REST API endpoints:
-#   POST   /v1/notifications/channels/config       Create a channel
-#   GET    /v1/notifications/channels               List channels (with recipients)
-#   PUT    /v1/notifications/channels/config/{id}   Update a channel
-#   DELETE /v1/notifications/channels/config/{id}   Delete a channel
-#   PUT    /v1/notifications/channels/{id}/recipients   Set recipients
-#   POST   /v1/notifications/channels/{id}/test     Send test notification
-#   GET    /v1/notifications/silence-windows         List silence windows
-#   POST   /v1/notifications/silence-windows         Create silence window
-#   DELETE /v1/notifications/silence-windows/{id}    Delete silence window
-#
-# Built-in channel types: email, webhook, sms, dingtalk, weixin
-#
-# Runtime settings (aggregation_window_secs, log_retention_days) are stored in the database.
-# They are auto-initialized with default values on first startup and can be updated via REST API:
-#   GET/PUT /v1/system/configs  (filter by config_type="runtime")
+# Notification Channels
+# Managed via REST API or CLI: oxmon-server init-channels <config> <seed.json>
+# See config/channels.seed.example.json for examples
+# Supported types: email, webhook, sms_aliyun, sms_tencent, sms_generic, dingtalk, weixin
 
 # Certificate Check Configuration
-# Server periodically checks TLS certificates for monitored domains.
-# Domains are managed via REST API: POST/GET/PUT/DELETE /v1/certs/domains
-
 [cert_check]
 enabled = true
 default_interval_secs = 86400   # Default check interval (24 hours)
