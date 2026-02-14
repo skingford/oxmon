@@ -437,13 +437,8 @@ async fn dictionary_endpoints_should_cover_crud_paths() {
     let token = login_and_get_token(&ctx.app).await;
 
     // List types (initially empty)
-    let (status, body, _) = request_no_body(
-        &ctx.app,
-        "GET",
-        "/v1/dictionaries/types",
-        Some(&token),
-    )
-    .await;
+    let (status, body, _) =
+        request_no_body(&ctx.app, "GET", "/v1/dictionaries/types", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
     let types: Vec<serde_json::Value> = decode_data(&body);
@@ -465,7 +460,10 @@ async fn dictionary_endpoints_should_cover_crud_paths() {
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_ok_envelope(&body);
-    let item_id = body["data"]["id"].as_str().expect("id should exist").to_string();
+    let item_id = body["data"]["id"]
+        .as_str()
+        .expect("id should exist")
+        .to_string();
     assert_eq!(body["data"]["dict_type"], "channel_type");
     assert_eq!(body["data"]["dict_key"], "email");
     assert_eq!(body["data"]["is_system"], false);
@@ -539,13 +537,8 @@ async fn dictionary_endpoints_should_cover_crud_paths() {
     assert_eq!(items.len(), 2);
 
     // List types again (should have 1 type, with auto-created dict_type_label)
-    let (status, body, _) = request_no_body(
-        &ctx.app,
-        "GET",
-        "/v1/dictionaries/types",
-        Some(&token),
-    )
-    .await;
+    let (status, body, _) =
+        request_no_body(&ctx.app, "GET", "/v1/dictionaries/types", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     let types: Vec<serde_json::Value> = decode_data(&body);
     assert_eq!(types.len(), 1);
@@ -701,13 +694,8 @@ async fn system_config_endpoints_should_cover_crud_paths() {
     let token = login_and_get_token(&ctx.app).await;
 
     // List (initially empty)
-    let (status, body, _) = request_no_body(
-        &ctx.app,
-        "GET",
-        "/v1/system/configs",
-        Some(&token),
-    )
-    .await;
+    let (status, body, _) =
+        request_no_body(&ctx.app, "GET", "/v1/system/configs", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
     let items: Vec<serde_json::Value> = decode_data(&body);
@@ -730,7 +718,10 @@ async fn system_config_endpoints_should_cover_crud_paths() {
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_ok_envelope(&body);
-    let config_id = body["data"]["id"].as_str().expect("id should exist").to_string();
+    let config_id = body["data"]["id"]
+        .as_str()
+        .expect("id should exist")
+        .to_string();
     assert_eq!(body["data"]["config_key"], "test_runtime_setting");
     assert_eq!(body["data"]["config_type"], "runtime");
     assert_eq!(body["data"]["config_json"]["value"], 120);
@@ -855,7 +846,10 @@ async fn system_config_endpoints_should_cover_crud_paths() {
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_ok_envelope(&body);
-    let sms_id = body["data"]["id"].as_str().expect("id should exist").to_string();
+    let sms_id = body["data"]["id"]
+        .as_str()
+        .expect("id should exist")
+        .to_string();
     assert_eq!(body["data"]["config_type"], "runtime");
     assert_eq!(body["data"]["config_json"]["value"], 999);
 
@@ -911,7 +905,8 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
     assert_eq!(body["data"]["total"], 0);
-    let items: Vec<serde_json::Value> = serde_json::from_value(body["data"]["items"].clone()).unwrap();
+    let items: Vec<serde_json::Value> =
+        serde_json::from_value(body["data"]["items"].clone()).unwrap();
     assert!(items.is_empty());
 
     // Insert test logs directly via cert_store
@@ -960,20 +955,17 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
         response_body: Some("Internal Server Error".to_string()),
         request_body: Some("{\"test\":\"data\"}".to_string()),
         retry_count: 2,
-        recipient_details: Some("[{\"recipient\":\"https://example.com\",\"status\":\"failed\"}]".to_string()),
+        recipient_details: Some(
+            "[{\"recipient\":\"https://example.com\",\"status\":\"failed\"}]".to_string(),
+        ),
         api_message_id: None,
         api_error_code: None,
     };
     ctx.state.cert_store.insert_notification_log(&log2).unwrap();
 
     // Query all
-    let (status, body, _) = request_no_body(
-        &ctx.app,
-        "GET",
-        "/v1/notifications/logs",
-        Some(&token),
-    )
-    .await;
+    let (status, body, _) =
+        request_no_body(&ctx.app, "GET", "/v1/notifications/logs", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
     assert_eq!(body["data"]["total"], 2);
@@ -988,7 +980,8 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["total"], 1);
-    let items: Vec<serde_json::Value> = serde_json::from_value(body["data"]["items"].clone()).unwrap();
+    let items: Vec<serde_json::Value> =
+        serde_json::from_value(body["data"]["items"].clone()).unwrap();
     assert_eq!(items[0]["channel_type"], "email");
 
     // Filter by status
@@ -1001,7 +994,8 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["total"], 1);
-    let items: Vec<serde_json::Value> = serde_json::from_value(body["data"]["items"].clone()).unwrap();
+    let items: Vec<serde_json::Value> =
+        serde_json::from_value(body["data"]["items"].clone()).unwrap();
     assert_eq!(items[0]["status"], "failed");
     assert_eq!(items[0]["error_message"], "connection timeout");
 
@@ -1021,7 +1015,11 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
     let (status, body, _) = request_no_body(
         &ctx.app,
         "GET",
-        &format!("/v1/notifications/logs?start_time={}&end_time={}", ts - 60, ts + 60),
+        &format!(
+            "/v1/notifications/logs?start_time={}&end_time={}",
+            ts - 60,
+            ts + 60
+        ),
         Some(&token),
     )
     .await;
@@ -1056,10 +1054,85 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
     assert_eq!(body["data"]["failed"], 0);
 
     // Auth required
+    let (status, _, _) = request_no_body(&ctx.app, "GET", "/v1/notifications/logs", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn notification_channel_config_get_by_id_should_work() {
+    let ctx = build_test_context().expect("test context should build");
+    let token = login_and_get_token(&ctx.app).await;
+
+    let now = chrono::Utc::now();
+    let row = oxmon_storage::cert_store::NotificationChannelRow {
+        id: oxmon_common::id::next_id(),
+        name: "Email Channel".to_string(),
+        channel_type: "email".to_string(),
+        description: Some("for get-by-id test".to_string()),
+        min_severity: "warning".to_string(),
+        enabled: true,
+        config_json: "{\"smtp_host\":\"smtp.example.com\"}".to_string(),
+        created_at: now,
+        updated_at: now,
+    };
+    let inserted = ctx
+        .state
+        .cert_store
+        .insert_notification_channel(&row)
+        .expect("insert notification channel should succeed");
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        &format!("/v1/notifications/channels/{}", inserted.id),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["id"], inserted.id);
+    assert_eq!(body["data"]["name"], "Email Channel");
+    assert_eq!(body["data"]["channel_type"], "email");
+    assert!(body["data"]["recipients"].is_array());
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/notifications/channels/nonexistent",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_err_envelope(&body, 1004);
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        &format!("/v1/notifications/channels/config/{}", inserted.id),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["id"], inserted.id);
+    assert_eq!(body["data"]["name"], "Email Channel");
+    assert_eq!(body["data"]["channel_type"], "email");
+    assert_eq!(body["data"]["min_severity"], "warning");
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/notifications/channels/config/nonexistent",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_err_envelope(&body, 1004);
+
     let (status, _, _) = request_no_body(
         &ctx.app,
         "GET",
-        "/v1/notifications/logs",
+        &format!("/v1/notifications/channels/config/{}", inserted.id),
         None,
     )
     .await;
