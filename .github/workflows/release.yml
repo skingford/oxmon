@@ -37,15 +37,21 @@ jobs:
         run: cross build --release --target ${{ matrix.target }}
 
       - name: Package
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
           else
             TAG="dev-${GITHUB_SHA::7}"
           fi
+          # Convert Rust target triple to friendly platform name
+          PLATFORM=$(echo "$TARGET" | sed \
+            -e 's/x86_64-unknown-linux-gnu/x86_64-linux/' \
+            -e 's/aarch64-unknown-linux-gnu/aarch64-linux/')
           for bin in oxmon-agent oxmon-server; do
-            tar czf "${bin}-${TAG}-${{ matrix.target }}.tar.gz" \
-              -C "target/${{ matrix.target }}/release" "${bin}"
+            tar czf "${bin}-${TAG}-${PLATFORM}.tar.gz" \
+              -C "target/${TARGET}/release" "${bin}"
           done
 
       - uses: actions/upload-artifact@v4
@@ -81,15 +87,21 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
           else
             TAG="dev-${GITHUB_SHA::7}"
           fi
+          # Convert Rust target triple to friendly platform name
+          PLATFORM=$(echo "$TARGET" | sed \
+            -e 's/x86_64-apple-darwin/x86_64-macos/' \
+            -e 's/aarch64-apple-darwin/aarch64-macos/')
           for bin in oxmon-agent oxmon-server; do
-            tar czf "${bin}-${TAG}-${{ matrix.target }}.tar.gz" \
-              -C "target/${{ matrix.target }}/release" "${bin}"
+            tar czf "${bin}-${TAG}-${PLATFORM}.tar.gz" \
+              -C "target/${TARGET}/release" "${bin}"
           done
 
       - uses: actions/upload-artifact@v4

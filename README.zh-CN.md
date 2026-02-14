@@ -210,67 +210,25 @@ buffer_max_size = 1000
 | `retention_days` | 数据保留天数，超期自动清理 | `7` |
 | `require_agent_auth` | 是否要求 Agent 认证 | `false` |
 
-#### 告警规则 (`[[alert.rules]]`)
+#### 告警规则（数据库存储，API 管理）
 
-支持四种规则类型：
+告警规则存储在数据库中，通过 REST API 或 CLI 动态管理。支持四种规则类型：`threshold`（阈值）、`rate_of_change`（变化率）、`trend_prediction`（趋势预测）、`cert_expiration`（证书过期）。
 
-**阈值告警 (threshold)** — 指标持续超过阈值时触发：
+**初始化**使用 `init-rules` CLI 子命令和 JSON 种子文件：
 
-```toml
-[[alert.rules]]
-name = "high-cpu"
-type = "threshold"
-metric = "cpu.usage"          # 监控的指标名
-agent_pattern = "*"           # Agent 匹配模式，支持 glob（如 "web-*"）
-operator = "greater_than"     # 比较运算符：greater_than / less_than
-value = 90.0                  # 阈值
-duration_secs = 300           # 持续时间（秒），超过阈值持续这么久才触发
-severity = "critical"         # 严重级别：info / warning / critical
-silence_secs = 600            # 静默期（秒），同一告警在此期间不重复触发
+```bash
+oxmon-server init-rules config/server.toml config/rules.seed.json
 ```
 
-**变化率告警 (rate_of_change)** — 指标在时间窗口内变化超过百分比时触发：
+规则配置示例见 `config/rules.seed.example.json`，包括：
+- **阈值告警 (threshold)** — 指标持续超过阈值时触发
+- **变化率告警 (rate_of_change)** — 指标在时间窗口内变化超过百分比时触发
+- **趋势预测告警 (trend_prediction)** — 通过线性回归预测指标何时突破阈值
+- **证书过期告警 (cert_expiration)** — 根据证书剩余有效天数触发分级告警
 
-```toml
-[[alert.rules]]
-name = "memory-spike"
-type = "rate_of_change"
-metric = "memory.used_percent"
-agent_pattern = "*"
-rate_threshold = 20.0         # 变化率阈值（百分比）
-window_secs = 300             # 计算窗口（秒）
-severity = "warning"
-silence_secs = 600
-```
+重复运行时，同名规则会被跳过。初始化完成后，使用 REST API (`/v1/alerts/rules`) 管理规则。CRUD 操作触发立即热重载，无需重启服务。
 
-**趋势预测告警 (trend_prediction)** — 通过线性回归预测指标何时突破阈值：
-
-```toml
-[[alert.rules]]
-name = "disk-full-prediction"
-type = "trend_prediction"
-metric = "disk.used_percent"
-agent_pattern = "*"
-predict_threshold = 95.0      # 预测突破的目标阈值
-horizon_secs = 86400          # 预测时间范围（秒），如 86400 = 24 小时
-min_data_points = 10          # 最少数据点数，不够则不预测
-severity = "info"
-silence_secs = 3600
-```
-
-**证书过期告警 (cert_expiration)** — 根据证书剩余有效天数触发分级告警：
-
-```toml
-[[alert.rules]]
-name = "cert-expiry"
-type = "cert_expiration"
-metric = "certificate.days_until_expiry"
-agent_pattern = "cert-checker"
-severity = "critical"           # 默认严重级别
-warning_days = 30               # 距过期 30 天触发 warning
-critical_days = 7               # 距过期 7 天触发 critical
-silence_secs = 86400
-```
+详细接口文档见 [API 接口文档](#api-reference)。
 
 #### 通知渠道（数据库存储，API 管理）
 
@@ -282,39 +240,9 @@ silence_secs = 86400
 oxmon-server init-channels config/server.toml config/channels.seed.json
 ```
 
-模板文件见 `config/channels.seed.example.json`。重复运行时，同名渠道会被跳过。初始化完成后，使用 REST API 管理渠道。
+模板文件见 `config/channels.seed.example.json`。重复运行时，同名渠道会被跳过。初始化完成后，使用 REST API (`/v1/notifications/channels`) 管理渠道、收件人和发送测试通知。
 
 内置渠道类型：`email`、`webhook`、`sms`、`dingtalk`、`weixin`。
-
-**通过 API 管理渠道：**
-
-```bash
-# 创建渠道
-curl -X POST http://localhost:8080/v1/notifications/channels/config \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "ops-email",
-    "channel_type": "email",
-    "description": "运维团队邮件告警",
-    "min_severity": "warning",
-    "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":587,\"from_name\":\"oxmon\",\"from_email\":\"alerts@example.com\"}",
-    "recipients": ["ops@example.com", "admin@example.com"]
-  }'
-
-# 列出渠道（含收件人）
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/channels
-
-# 更新收件人
-curl -X PUT http://localhost:8080/v1/notifications/channels/<id>/recipients \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"recipients": ["ops@example.com", "admin@example.com", "oncall@example.com"]}'
-
-# 发送测试通知
-curl -X POST http://localhost:8080/v1/notifications/channels/<id>/test \
-  -H "Authorization: Bearer $TOKEN"
-```
 
 **各渠道配置参考：**
 
@@ -332,28 +260,27 @@ curl -X POST http://localhost:8080/v1/notifications/channels/<id>/test \
 
 #### 静默窗口（数据库存储，API 管理）
 
-在维护时段抑制通知发送，通过 REST API 管理：
+在维护时段抑制通知发送，通过 REST API (`/v1/notifications/silence-windows`) 管理。
+
+#### 运行时设置（数据库存储）
+
+运行时参数如告警聚合、日志保留等存储在数据库（`system_configs` 表）中，通过 REST API (`/v1/system/configs`) 管理。默认值在首次启动时自动初始化：
+- `aggregation_window_secs`: 60（秒，窗口内的同类告警合并为一条通知）
+- `log_retention_days`: 30（通知日志保留天数）
+
+#### 系统字典（数据库存储）
+
+集中管理系统常量枚举（渠道类型、严重级别、规则类型、告警状态等）。存储在数据库（`system_dictionaries` 表）中，通过 REST API (`/v1/dictionaries`) 或 CLI 管理。
+
+**初始化**使用 `init-dictionaries` CLI 子命令和 JSON 种子文件：
 
 ```bash
-# 创建静默窗口
-curl -X POST http://localhost:8080/v1/notifications/silence-windows \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"start_time": "02:00", "end_time": "04:00", "recurrence": "daily"}'
-
-# 列出静默窗口
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/silence-windows
-
-# 删除静默窗口
-curl -X DELETE http://localhost:8080/v1/notifications/silence-windows/<id> \
-  -H "Authorization: Bearer $TOKEN"
+oxmon-server init-dictionaries config/server.toml config/dictionaries.seed.json
 ```
 
-#### 告警聚合
+默认种子数据（约 50 条）见 `config/dictionaries.seed.example.json`。表为空时，首次启动会自动初始化默认字典。
 
-```toml
-aggregation_window_secs = 60   # 相似告警的聚合窗口（秒），窗口内的同类告警合并为一条通知
-```
+可用字典类型：`channel_type`、`severity`、`rule_type`、`alert_status`、`agent_status`、`compare_operator`、`metric_name`、`rule_source`、`recipient_type`。系统内置项受保护，不可删除。
 
 ## 采集指标列表
 
@@ -570,12 +497,14 @@ pm2 restart oxmon-server   # 或: pm2 reload oxmon-server
 
 支持以下目标平台：
 
-| 目标 | 说明 |
+| 平台 | 说明 |
 |------|------|
-| `x86_64-unknown-linux-gnu` | Linux AMD64 |
-| `aarch64-unknown-linux-gnu` | Linux ARM64 |
-| `x86_64-apple-darwin` | macOS Intel |
-| `aarch64-apple-darwin` | macOS Apple Silicon |
+| `x86_64-linux` | Linux AMD64 |
+| `aarch64-linux` | Linux ARM64 |
+| `x86_64-macos` | macOS Intel |
+| `aarch64-macos` | macOS Apple Silicon |
+
+> 发布产物使用简化的平台名称（如 `x86_64-linux`）。内部 Rust 构建使用标准目标三元组（如 `x86_64-unknown-linux-gnu`）。
 
 ### 前置依赖
 

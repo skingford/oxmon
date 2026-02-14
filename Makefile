@@ -4,6 +4,15 @@ DIST    := dist
 TARGETS := x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin
 BINS    := oxmon-agent oxmon-server
 
+# Friendly platform names for release artifacts
+define get_friendly_name
+$(shell echo "$(1)" | sed \
+	-e 's/x86_64-unknown-linux-gnu/x86_64-linux/' \
+	-e 's/aarch64-unknown-linux-gnu/aarch64-linux/' \
+	-e 's/x86_64-apple-darwin/x86_64-macos/' \
+	-e 's/aarch64-apple-darwin/aarch64-macos/')
+endef
+
 .PHONY: build test clean release $(TARGETS)
 
 build:
@@ -30,11 +39,16 @@ TARGET ?=
 package:
 	@if [ -z "$(TARGET)" ]; then echo "Usage: make package TARGET=<triple>"; exit 1; fi
 	@mkdir -p $(DIST)
-	@for bin in $(BINS); do \
+	@FRIENDLY=$$(echo "$(TARGET)" | sed \
+		-e 's/x86_64-unknown-linux-gnu/x86_64-linux/' \
+		-e 's/aarch64-unknown-linux-gnu/aarch64-linux/' \
+		-e 's/x86_64-apple-darwin/x86_64-macos/' \
+		-e 's/aarch64-apple-darwin/aarch64-macos/'); \
+	for bin in $(BINS); do \
 		src="target/$(TARGET)/release/$$bin"; \
 		if [ -f "$$src" ]; then \
-			tar czf $(DIST)/$$bin-$(VERSION)-$(TARGET).tar.gz -C target/$(TARGET)/release $$bin; \
-			echo "Packaged $(DIST)/$$bin-$(VERSION)-$(TARGET).tar.gz"; \
+			tar czf $(DIST)/$$bin-$(VERSION)-$$FRIENDLY.tar.gz -C target/$(TARGET)/release $$bin; \
+			echo "Packaged $(DIST)/$$bin-$(VERSION)-$$FRIENDLY.tar.gz"; \
 		fi; \
 	done
 

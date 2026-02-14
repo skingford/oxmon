@@ -210,67 +210,25 @@ buffer_max_size = 1000
 | `retention_days` | Data retention in days, auto-cleanup when expired | `7` |
 | `require_agent_auth` | Require agent authentication | `false` |
 
-#### Alert Rules (`[[alert.rules]]`)
+#### Alert Rules (DB-backed, API-managed)
 
-Four rule types are supported:
+Alert rules are stored in the database and managed dynamically via REST API or CLI. Four rule types are supported: `threshold`, `rate_of_change`, `trend_prediction`, and `cert_expiration`.
 
-**Threshold Alert** — triggers when a metric exceeds a threshold for a sustained duration:
+**Initial setup** uses the `init-rules` CLI subcommand with a JSON seed file:
 
-```toml
-[[alert.rules]]
-name = "high-cpu"
-type = "threshold"
-metric = "cpu.usage"          # Metric name to monitor
-agent_pattern = "*"           # Agent match pattern, supports glob (e.g., "web-*")
-operator = "greater_than"     # Comparison operator: greater_than / less_than
-value = 90.0                  # Threshold value
-duration_secs = 300           # Duration (seconds) the metric must exceed threshold to trigger
-severity = "critical"         # Severity level: info / warning / critical
-silence_secs = 600            # Silence period (seconds), same alert won't re-trigger within this window
+```bash
+oxmon-server init-rules config/server.toml config/rules.seed.json
 ```
 
-**Rate of Change Alert** — triggers when a metric changes beyond a percentage within a time window:
+See `config/rules.seed.example.json` for rule configuration examples including:
+- **Threshold Alert** — triggers when a metric exceeds a threshold for a sustained duration
+- **Rate of Change Alert** — triggers when a metric changes beyond a percentage within a time window
+- **Trend Prediction Alert** — uses linear regression to predict when a metric will breach a threshold
+- **Certificate Expiration Alert** — triggers tiered alerts based on days until certificate expiry
 
-```toml
-[[alert.rules]]
-name = "memory-spike"
-type = "rate_of_change"
-metric = "memory.used_percent"
-agent_pattern = "*"
-rate_threshold = 20.0         # Rate threshold (percentage)
-window_secs = 300             # Calculation window (seconds)
-severity = "warning"
-silence_secs = 600
-```
+Duplicate rule names are skipped on re-run. After initial setup, use the REST API (`/v1/alerts/rules`) to manage rules. CRUD operations trigger immediate hot-reload without server restart.
 
-**Trend Prediction Alert** — uses linear regression to predict when a metric will breach a threshold:
-
-```toml
-[[alert.rules]]
-name = "disk-full-prediction"
-type = "trend_prediction"
-metric = "disk.used_percent"
-agent_pattern = "*"
-predict_threshold = 95.0      # Target threshold for prediction
-horizon_secs = 86400          # Prediction horizon (seconds), e.g., 86400 = 24 hours
-min_data_points = 10          # Minimum data points required for prediction
-severity = "info"
-silence_secs = 3600
-```
-
-**Certificate Expiration Alert** — triggers tiered alerts based on days until certificate expiry:
-
-```toml
-[[alert.rules]]
-name = "cert-expiry"
-type = "cert_expiration"
-metric = "certificate.days_until_expiry"
-agent_pattern = "cert-checker"
-severity = "critical"             # Default severity level
-warning_days = 30                 # Trigger warning at 30 days before expiry
-critical_days = 7                 # Trigger critical at 7 days before expiry
-silence_secs = 86400
-```
+See [API Reference](#api-reference) for detailed endpoint documentation.
 
 #### Notification Channels (DB-backed, API-managed)
 
@@ -282,39 +240,9 @@ Notification channels are stored in the database and managed dynamically via RES
 oxmon-server init-channels config/server.toml config/channels.seed.json
 ```
 
-See `config/channels.seed.example.json` for a template. Duplicate channel names are skipped on re-run. After initial setup, use the REST API to manage channels.
+See `config/channels.seed.example.json` for a template. Duplicate channel names are skipped on re-run. After initial setup, use the REST API (`/v1/notifications/channels`) to manage channels, recipients, and send test notifications.
 
 Built-in channel types: `email`, `webhook`, `sms`, `dingtalk`, `weixin`.
-
-**Manage channels via API:**
-
-```bash
-# Create a channel
-curl -X POST http://localhost:8080/v1/notifications/channels/config \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "ops-email",
-    "channel_type": "email",
-    "description": "Ops team email alerts",
-    "min_severity": "warning",
-    "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":587,\"from_name\":\"oxmon\",\"from_email\":\"alerts@example.com\"}",
-    "recipients": ["ops@example.com", "admin@example.com"]
-  }'
-
-# List channels with recipients
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/channels
-
-# Update recipients
-curl -X PUT http://localhost:8080/v1/notifications/channels/<id>/recipients \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"recipients": ["ops@example.com", "admin@example.com", "oncall@example.com"]}'
-
-# Send test notification
-curl -X POST http://localhost:8080/v1/notifications/channels/<id>/test \
-  -H "Authorization: Bearer $TOKEN"
-```
 
 **Channel config reference:**
 
@@ -332,28 +260,27 @@ DingTalk supports optional `secret` for HMAC-SHA256 signing. Webhook supports op
 
 #### Silence Windows (DB-backed, API-managed)
 
-Suppress notifications during maintenance windows. Managed via REST API:
+Suppress notifications during maintenance windows. Managed via REST API (`/v1/notifications/silence-windows`).
+
+#### Runtime Settings (DB-backed)
+
+Runtime parameters such as alert aggregation and log retention are stored in the database (`system_configs` table) and managed via REST API (`/v1/system/configs`). Default values are auto-initialized on first server startup:
+- `aggregation_window_secs`: 60 (seconds for batching similar alerts into one notification)
+- `log_retention_days`: 30 (notification log retention period)
+
+#### System Dictionaries (DB-backed)
+
+Centralized enum management for system constants (channel types, severity levels, rule types, alert statuses, etc.). Stored in the database (`system_dictionaries` table) and managed via REST API (`/v1/dictionaries`) or CLI.
+
+**Initial setup** uses the `init-dictionaries` CLI subcommand with a JSON seed file:
 
 ```bash
-# Create a silence window
-curl -X POST http://localhost:8080/v1/notifications/silence-windows \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"start_time": "02:00", "end_time": "04:00", "recurrence": "daily"}'
-
-# List silence windows
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/silence-windows
-
-# Delete a silence window
-curl -X DELETE http://localhost:8080/v1/notifications/silence-windows/<id> \
-  -H "Authorization: Bearer $TOKEN"
+oxmon-server init-dictionaries config/server.toml config/dictionaries.seed.json
 ```
 
-#### Alert Aggregation
+See `config/dictionaries.seed.example.json` for the default seed data (~50 items). Default dictionaries are auto-initialized on first server startup when the table is empty.
 
-```toml
-aggregation_window_secs = 60   # Aggregation window (seconds) for batching similar alerts into one notification
-```
+Available dictionary types: `channel_type`, `severity`, `rule_type`, `alert_status`, `agent_status`, `compare_operator`, `metric_name`, `rule_source`, `recipient_type`. System built-in items are protected from deletion.
 
 ## Collected Metrics
 
@@ -564,12 +491,14 @@ pm2 restart oxmon-server   # or: pm2 reload oxmon-server
 
 Supported target platforms:
 
-| Target | Description |
-|--------|-------------|
-| `x86_64-unknown-linux-gnu` | Linux AMD64 |
-| `aarch64-unknown-linux-gnu` | Linux ARM64 |
-| `x86_64-apple-darwin` | macOS Intel |
-| `aarch64-apple-darwin` | macOS Apple Silicon |
+| Platform | Description |
+|----------|-------------|
+| `x86_64-linux` | Linux AMD64 |
+| `aarch64-linux` | Linux ARM64 |
+| `x86_64-macos` | macOS Intel |
+| `aarch64-macos` | macOS Apple Silicon |
+
+> Release artifacts use simplified platform names (e.g., `x86_64-linux`). Internal Rust builds use standard target triples (e.g., `x86_64-unknown-linux-gnu`).
 
 ### Prerequisites
 
