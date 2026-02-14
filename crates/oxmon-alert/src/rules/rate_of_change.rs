@@ -1,9 +1,10 @@
 use crate::AlertRule;
 use chrono::{DateTime, Utc};
-use oxmon_common::types::{AlertEvent, MetricDataPoint, Severity};
+use oxmon_common::types::{format_labels, AlertEvent, MetricDataPoint, Severity};
 
 pub struct RateOfChangeRule {
     pub id: String,
+    pub name: String,
     pub metric: String,
     pub agent_pattern: String,
     pub severity: Severity,
@@ -15,6 +16,10 @@ pub struct RateOfChangeRule {
 impl AlertRule for RateOfChangeRule {
     fn id(&self) -> &str {
         &self.id
+    }
+
+    fn name(&self) -> &str {
+        &self.name
     }
 
     fn metric(&self) -> &str {
@@ -48,20 +53,30 @@ impl AlertRule for RateOfChangeRule {
         let rate = ((last.value - first.value) / first.value) * 100.0;
 
         if rate.abs() > self.rate_threshold {
+            let labels_str = format_labels(&last.labels);
+            let labels_display = if labels_str.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", labels_str)
+            };
             Some(AlertEvent {
                 id: oxmon_common::id::next_id(),
                 rule_id: self.id.clone(),
+                rule_name: self.name.clone(),
                 agent_id: last.agent_id.clone(),
                 metric_name: self.metric.clone(),
                 severity: self.severity,
                 message: format!(
-                    "{} changed by {:.1}% (threshold: {:.1}%) on {}",
-                    self.metric, rate, self.rate_threshold, last.agent_id,
+                    "{}{} changed by {:.1}% (threshold: {:.1}%) on {}",
+                    self.metric, labels_display, rate, self.rate_threshold, last.agent_id,
                 ),
                 value: last.value,
                 threshold: self.rate_threshold,
                 timestamp: now,
                 predicted_breach: None,
+                status: 1,
+                labels: last.labels.clone(),
+                first_triggered_at: None,
                 created_at: now,
                 updated_at: now,
             })

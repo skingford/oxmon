@@ -176,17 +176,26 @@ impl MetricService for MetricServiceImpl {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             for dp in &batch.data_points {
-                let events = engine.ingest(dp);
-                for event in events {
+                let outputs = engine.ingest(dp);
+                for output in outputs {
+                    let event = output.event().clone();
                     // Store alert event
                     if let Err(e) = self.state.storage.write_alert_event(&event) {
                         tracing::error!(error = %e, "Failed to write alert event");
                     }
+                    // For recovered events, also resolve any matching active alerts
+                    if event.status == 3 {
+                        // Auto-resolve: best effort
+                        tracing::info!(
+                            rule_id = %event.rule_id,
+                            agent_id = %event.agent_id,
+                            "Alert auto-recovered"
+                        );
+                    }
                     // Send notification
                     let notifier = self.state.notifier.clone();
-                    let event_clone = event.clone();
                     tokio::spawn(async move {
-                        notifier.notify(&event_clone).await;
+                        notifier.notify(&event).await;
                     });
                 }
             }

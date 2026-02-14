@@ -10,7 +10,7 @@ static ID_GENERATOR: Mutex<Option<SnowflakeIdBucket>> = Mutex::new(None);
 pub fn init(machine_id: i32, node_id: i32) {
     let mut gen = ID_GENERATOR
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     *gen = Some(SnowflakeIdBucket::new(machine_id, node_id));
 }
 
@@ -18,7 +18,7 @@ pub fn init(machine_id: i32, node_id: i32) {
 pub fn next_id() -> String {
     let mut gen = ID_GENERATOR
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let bucket = gen.get_or_insert_with(|| SnowflakeIdBucket::new(1, 1));
     bucket.get_id().to_string()
 }
@@ -43,10 +43,6 @@ mod tests {
     fn test_next_id_is_numeric() {
         init(1, 1);
         let id = next_id();
-        assert!(
-            id.parse::<i64>().is_ok(),
-            "ID should be a valid i64: {}",
-            id
-        );
+        assert!(id.parse::<i64>().is_ok(), "ID should be a valid i64: {id}",);
     }
 }

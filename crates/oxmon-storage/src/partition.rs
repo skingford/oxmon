@@ -1,3 +1,4 @@
+use crate::PartitionInfo;
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::Connection;
@@ -27,6 +28,7 @@ const ALERTS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS alert_events (
     id TEXT PRIMARY KEY,
     rule_id TEXT NOT NULL,
+    rule_name TEXT NOT NULL,
     agent_id TEXT NOT NULL,
     metric_name TEXT NOT NULL,
     severity TEXT NOT NULL,
@@ -35,6 +37,8 @@ CREATE TABLE IF NOT EXISTS alert_events (
     threshold REAL NOT NULL,
     timestamp INTEGER NOT NULL,
     predicted_breach INTEGER,
+    labels TEXT NOT NULL,
+    first_triggered_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -180,6 +184,72 @@ impl PartitionManager {
 
         Ok(removed)
     }
+
+    /// Returns information about all existing partitions on disk.
+    pub fn list_partition_info(&self) -> Result<Vec<PartitionInfo>> {
+        let mut infos = Vec::new();
+        let entries = std::fs::read_dir(&self.data_dir)?;
+        for entry in entries {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(date_str) = name.strip_suffix(".db") {
+                if NaiveDate::parse_from_str(date_str, "%Y-%m-%d").is_ok() {
+                    let metadata = entry.metadata()?;
+                    infos.push(PartitionInfo {
+                        date: date_str.to_string(),
+                        size_bytes: metadata.len(),
+                        path: entry.path().to_string_lossy().to_string(),
+                    });
+                }
+            }
+        }
+        infos.sort_by(|a, b| a.date.cmp(&b.date));
+        Ok(infos)
+    }
+
+    /// Updates the status of an alert event across all partitions.
+    /// Returns true if the event was found and updated.
+    pub fn update_alert_status(&self, event_id: &str, status: &str) -> Result<bool> {
+        let conns = self.lock_connections();
+        let now = chrono::Utc::now().timestamp();
+        for conn in conns.values() {
+            let updated = conn.execute(
+                "UPDATE alert_events SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![status, now, event_id],
+            )?;
+            if updated > 0 {
+                return Ok(true);
+            }
+        }
+        // Also scan disk for partitions not yet loaded
+        drop(conns);
+
+        let entries = std::fs::read_dir(&self.data_dir)?;
+        for entry in entries {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(date_str) = name.strip_suffix(".db") {
+                if NaiveDate::parse_from_str(date_str, "%Y-%m-%d").is_ok() {
+                    let mut conns = self.lock_connections();
+                    if !conns.contains_key(date_str) {
+                        let conn = Connection::open(entry.path())?;
+                        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+                        migrate_partition(&conn);
+                        conns.insert(date_str.to_string(), conn);
+                    }
+                    let conn = conns.get(date_str).unwrap();
+                    let updated = conn.execute(
+                        "UPDATE alert_events SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                        rusqlite::params![status, now, event_id],
+                    )?;
+                    if updated > 0 {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
 }
 
 /// Migrate old partition schemas by adding missing columns.
@@ -189,9 +259,15 @@ fn migrate_partition(conn: &Connection) {
     let _ = conn.execute_batch("ALTER TABLE metrics ADD COLUMN id TEXT;");
     let _ = conn.execute_batch("ALTER TABLE metrics ADD COLUMN created_at INTEGER;");
     let _ = conn.execute_batch("ALTER TABLE metrics ADD COLUMN updated_at INTEGER;");
-    // alert_events table: add created_at, updated_at
+    // alert_events table: add created_at, updated_at, status, rule_name, labels, first_triggered_at
     let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN created_at INTEGER;");
     let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN updated_at INTEGER;");
+    let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN status TEXT DEFAULT 'open';");
+    let _ = conn
+        .execute_batch("ALTER TABLE alert_events ADD COLUMN rule_name TEXT NOT NULL DEFAULT '';");
+    let _ = conn
+        .execute_batch("ALTER TABLE alert_events ADD COLUMN labels TEXT NOT NULL DEFAULT '{}';");
+    let _ = conn.execute_batch("ALTER TABLE alert_events ADD COLUMN first_triggered_at INTEGER;");
 }
 
 #[cfg(test)]

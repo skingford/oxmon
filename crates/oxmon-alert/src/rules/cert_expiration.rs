@@ -8,6 +8,7 @@ use oxmon_common::types::{AlertEvent, MetricDataPoint, Severity};
 /// 支持两级阈值：warning（默认 30 天）和 critical（默认 7 天）。
 pub struct CertExpirationRule {
     pub id: String,
+    pub name: String,
     pub metric: String,
     pub agent_pattern: String,
     /// 警告阈值（天数），低于此值触发 Warning 告警
@@ -18,9 +19,16 @@ pub struct CertExpirationRule {
 }
 
 impl CertExpirationRule {
-    pub fn new(id: String, warning_days: i64, critical_days: i64, silence_secs: u64) -> Self {
+    pub fn new(
+        id: String,
+        name: String,
+        warning_days: i64,
+        critical_days: i64,
+        silence_secs: u64,
+    ) -> Self {
         Self {
             id,
+            name,
             metric: "certificate.days_until_expiry".to_string(),
             agent_pattern: "cert-checker".to_string(),
             warning_days,
@@ -43,6 +51,10 @@ impl CertExpirationRule {
 impl AlertRule for CertExpirationRule {
     fn id(&self) -> &str {
         &self.id
+    }
+
+    fn name(&self) -> &str {
+        &self.name
     }
 
     fn metric(&self) -> &str {
@@ -92,6 +104,7 @@ impl AlertRule for CertExpirationRule {
         Some(AlertEvent {
             id: oxmon_common::id::next_id(),
             rule_id: self.id.clone(),
+            rule_name: self.name.clone(),
             agent_id: latest.agent_id.clone(),
             metric_name: self.metric.clone(),
             severity,
@@ -104,6 +117,9 @@ impl AlertRule for CertExpirationRule {
             },
             timestamp: now,
             predicted_breach: None,
+            status: 1,
+            labels: latest.labels.clone(),
+            first_triggered_at: None,
             created_at: now,
             updated_at: now,
         })
@@ -116,7 +132,13 @@ mod tests {
     use std::collections::HashMap;
 
     fn make_rule() -> CertExpirationRule {
-        CertExpirationRule::new("cert-expiry".to_string(), 30, 7, 3600)
+        CertExpirationRule::new(
+            "cert-expiry".to_string(),
+            "证书过期检查".to_string(),
+            30,
+            7,
+            3600,
+        )
     }
 
     fn make_dp(days: f64, domain: &str) -> MetricDataPoint {

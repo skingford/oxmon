@@ -9,6 +9,7 @@ Lightweight server monitoring system built with Rust. Collects system metrics (C
 - [Architecture](#architecture)
 - [Crate Structure](#crate-structure)
 - [Quick Start](#quick-start)
+- [Local Testing (Mock Ingest + API Checks)](#local-testing-mock-ingest--api-checks)
 - [Configuration](#configuration)
 - [Collected Metrics](#collected-metrics)
 - [API Reference](#api-reference)
@@ -100,6 +101,78 @@ pm2 save && pm2 startup
 ```
 
 The agent collects system metrics every 10 seconds (configurable) and reports them to the server via gRPC.
+
+## Local Testing (Mock Ingest + API Checks)
+
+The repository includes three scripts for local integration testing:
+
+- `scripts/mock-report-all.sh`: ingest all mock scenarios (baseline + alert-triggering data)
+- `scripts/mock-query-check.sh`: validate core read APIs and print a summary table
+- `scripts/mock-e2e.sh`: one-command workflow that runs ingest + API checks
+
+### 1) One-command E2E (recommended)
+
+```bash
+# Runs all mock scenarios, then validates API endpoints
+scripts/mock-e2e.sh
+
+# When server has require_agent_auth=true
+scripts/mock-e2e.sh --auto-auth --username admin --password changeme
+```
+
+### 2) Run ingest and checks separately
+
+```bash
+# Step 1: ingest all scenarios
+scripts/mock-report-all.sh --scenario all --agent-count 5
+
+# Step 2: validate metrics / alerts / dashboard endpoints
+scripts/mock-query-check.sh
+```
+
+### 3) Run a single scenario only
+
+```bash
+# Trigger rate_of_change scenario only
+scripts/mock-report-all.sh --scenario rate
+
+# Trigger trend_prediction scenario only
+scripts/mock-report-all.sh --scenario trend
+```
+
+Supported scenarios: `all`, `baseline`, `threshold`, `rate`, `trend`, `cert`.
+
+### 4) Common options
+
+```bash
+# Print batch summaries during ingest
+scripts/mock-report-all.sh --print-payload
+
+# Print raw API responses during validation
+scripts/mock-query-check.sh --verbose
+
+# Select target for /v1/metrics/summary
+scripts/mock-query-check.sh --summary-agent mock-threshold --summary-metric cpu.usage
+```
+
+### 5) Token map file format (optional)
+
+If you don't use `--auto-auth` but server auth is enabled, pass a token mapping file:
+
+```ini
+mock-normal-01=token_xxx
+mock-normal-02=token_yyy
+mock-threshold=token_zzz
+mock-rate=token_aaa
+mock-trend=token_bbb
+cert-checker=token_ccc
+```
+
+Then run:
+
+```bash
+scripts/mock-report-all.sh --auth-token-file ./tokens.env
+```
 
 ## Configuration
 
@@ -199,78 +272,81 @@ critical_days = 7                 # Trigger critical at 7 days before expiry
 silence_secs = 86400
 ```
 
-#### Notification Channels (`[[notification.channels]]`)
+#### Notification Channels (DB-backed, API-managed)
 
-**Email:**
+Notification channels are stored in the database and managed dynamically via REST API. Each channel type supports **multiple instances** (e.g., separate email configs for ops and dev teams). Recipients (email addresses, phone numbers, webhook URLs) are managed independently per channel.
 
-```toml
-[[notification.channels]]
-type = "email"
-min_severity = "warning"          # Minimum severity to trigger
-smtp_host = "smtp.example.com"
-smtp_port = 587
-smtp_username = "alerts@example.com"
-smtp_password = "your-password"
-from = "alerts@example.com"
-recipients = ["admin@example.com", "ops@example.com"]
+**Initial setup** uses the `init-channels` CLI subcommand with a JSON seed file:
+
+```bash
+oxmon-server init-channels config/server.toml config/channels.seed.json
 ```
 
-**Webhook (for Slack / DingTalk / Feishu, etc.):**
+See `config/channels.seed.example.json` for a template. Duplicate channel names are skipped on re-run. After initial setup, use the REST API to manage channels.
 
-```toml
-[[notification.channels]]
-type = "webhook"
-min_severity = "info"
-url = "https://hooks.slack.com/services/xxx/yyy/zzz"
-# Optional: custom body template with {{agent_id}} {{metric}} {{value}} {{severity}} {{message}} variables
-# body_template = '{"text": "[{{severity}}] {{agent_id}}: {{message}}"}'
+Built-in channel types: `email`, `webhook`, `sms`, `dingtalk`, `weixin`.
+
+**Manage channels via API:**
+
+```bash
+# Create a channel
+curl -X POST http://localhost:8080/v1/notifications/channels/config \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ops-email",
+    "channel_type": "email",
+    "description": "Ops team email alerts",
+    "min_severity": "warning",
+    "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":587,\"from_name\":\"oxmon\",\"from_email\":\"alerts@example.com\"}",
+    "recipients": ["ops@example.com", "admin@example.com"]
+  }'
+
+# List channels with recipients
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/channels
+
+# Update recipients
+curl -X PUT http://localhost:8080/v1/notifications/channels/<id>/recipients \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"recipients": ["ops@example.com", "admin@example.com", "oncall@example.com"]}'
+
+# Send test notification
+curl -X POST http://localhost:8080/v1/notifications/channels/<id>/test \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
-**SMS:**
+**Channel config reference:**
 
-```toml
-[[notification.channels]]
-type = "sms"
-min_severity = "critical"
-gateway_url = "https://sms-api.example.com/send"
-api_key = "your-api-key"
-phone_numbers = ["+8613800138000"]
-```
+| Type | Required Config | Recipient Type |
+|------|----------------|----------------|
+| `email` | `smtp_host`, `smtp_port`, `from_name`, `from_email` | Email address |
+| `webhook` | (none) | URL |
+| `sms` | `gateway_url`, `api_key` | Phone number |
+| `dingtalk` | `webhook_url` | Webhook URL |
+| `weixin` | `webhook_url` | Webhook URL |
 
-**DingTalk Robot:**
+DingTalk supports optional `secret` for HMAC-SHA256 signing. Webhook supports optional `body_template` with `{{agent_id}}`, `{{metric}}`, `{{value}}`, `{{severity}}`, `{{message}}` variables.
 
-```toml
-[[notification.channels]]
-type = "dingtalk"
-min_severity = "warning"
-webhook_url = "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
-secret = "SEC_YOUR_SECRET"   # Optional: HMAC-SHA256 signing secret
-```
+> **Plugin System**: Each channel is an independent `ChannelPlugin` with `ChannelRegistry` for dynamic lookup and instantiation. Configuration changes trigger hot-reload — no server restart required.
 
-DingTalk notifications send Markdown-formatted messages containing alert severity, agent, metric, value, threshold, and timestamp. When `secret` is configured, requests are signed with HMAC-SHA256.
+#### Silence Windows (DB-backed, API-managed)
 
-**WeChat Work Robot:**
+Suppress notifications during maintenance windows. Managed via REST API:
 
-```toml
-[[notification.channels]]
-type = "weixin"
-min_severity = "warning"
-webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
-```
+```bash
+# Create a silence window
+curl -X POST http://localhost:8080/v1/notifications/silence-windows \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"start_time": "02:00", "end_time": "04:00", "recurrence": "daily"}'
 
-WeChat Work notifications send Markdown-formatted messages.
+# List silence windows
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/silence-windows
 
-> **Plugin System**: Notification channels are implemented as a plugin architecture. Each channel is an independent `ChannelPlugin`. The server uses `ChannelRegistry` to dynamically look up and instantiate channels — the `type` field in the config maps to the plugin name, and remaining fields are passed directly to the plugin for parsing. Built-in plugins: `email`, `webhook`, `sms`, `dingtalk`, `weixin`.
-
-#### Silence Windows (`[[notification.silence_windows]]`)
-
-Suppress notifications during maintenance windows:
-
-```toml
-[[notification.silence_windows]]
-start_time = "02:00"
-end_time = "04:00"
-recurrence = "daily"
+# Delete a silence window
+curl -X DELETE http://localhost:8080/v1/notifications/silence-windows/<id> \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 #### Alert Aggregation

@@ -78,13 +78,21 @@ The notification system SHALL aggregate multiple similar AlertEvents into a sing
 - **WHEN** only 1 AlertEvent fires and no additional alerts for the same rule occur within the aggregation window
 - **THEN** the system SHALL send a single notification for that alert
 
-### Requirement: Notification channels SHALL be configurable via TOML
-Notification channels and routing rules SHALL be defined in the Server's TOML configuration file.
+### Requirement: Notification channels SHALL be configurable via REST API
+Notification channels SHALL be stored in the database and managed dynamically via REST API. Each channel type supports multiple instances. TOML configuration is only used for first-time seed migration.
 
-#### Scenario: Configure email channel
-- **WHEN** Server starts with an `[[notification.channels]]` section containing type="email", smtp_host, smtp_port, from, recipients, and min_severity
-- **THEN** the system SHALL register this email channel for alert notifications
+#### Scenario: Create notification channel via API
+- **WHEN** a POST request is made to `/v1/notifications/channels/config` with name, channel_type, config_json, and optional recipients
+- **THEN** the system SHALL validate the config against the corresponding plugin, persist the channel, and trigger hot-reload
 
-#### Scenario: Configure Webhook channel
-- **WHEN** Server starts with an `[[notification.channels]]` section containing type="webhook", url, and optional body_template
-- **THEN** the system SHALL register this Webhook channel for alert notifications
+#### Scenario: Manage recipients independently
+- **WHEN** a PUT request is made to `/v1/notifications/channels/{id}/recipients` with a list of recipient values
+- **THEN** the system SHALL replace the channel's recipient list and trigger hot-reload
+
+#### Scenario: First-time TOML migration
+- **WHEN** Server starts and the database has no notification channels configured
+- **THEN** the system SHALL import `[[notification.channels]]` entries from TOML into the database once
+
+#### Scenario: Hot-reload on configuration change
+- **WHEN** a channel is created, updated, or deleted via API
+- **THEN** the NotificationManager SHALL reload all channels from DB using build-then-swap without requiring server restart

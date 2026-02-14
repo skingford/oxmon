@@ -187,44 +187,13 @@ token_expire_secs = 86400
 default_username = "admin"
 default_password = "changeme"
 
-[[alert.rules]]
-name = "high-cpu"
-type = "threshold"
-metric = "cpu.usage"
-agent_pattern = "*"
-operator = "greater_than"
-value = 90.0
-duration_secs = 300
-severity = "critical"
-silence_secs = 600
-
-[[alert.rules]]
-name = "memory-spike"
-type = "rate_of_change"
-metric = "memory.used_percent"
-agent_pattern = "*"
-rate_threshold = 20.0
-window_secs = 300
-severity = "warning"
-silence_secs = 600
-
-[[alert.rules]]
-name = "disk-full-prediction"
-type = "trend_prediction"
-metric = "disk.used_percent"
-agent_pattern = "*"
-predict_threshold = 95.0
-horizon_secs = 86400
-min_data_points = 10
-severity = "info"
-silence_secs = 3600
-
-[[notification.channels]]
-type = "webhook"
-min_severity = "info"
-url = "https://hooks.slack.com/services/xxx/yyy/zzz"
-
-aggregation_window_secs = 60
+# Alert rules and notification channels are now managed via database.
+# Use the following CLI commands or REST API to initialize:
+#   oxmon-server init-rules /etc/oxmon/server.toml /etc/oxmon/rules.seed.json
+#   oxmon-server init-channels /etc/oxmon/server.toml /etc/oxmon/channels.seed.json
+# Or use the REST API:
+#   POST /v1/alerts/rules
+#   POST /v1/notifications/channels
 
 [cert_check]
 enabled = true

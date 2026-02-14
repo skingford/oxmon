@@ -7,6 +7,10 @@ edition.workspace = true
 name = "oxmon-agent"
 path = "src/main.rs"
 
+[[bin]]
+name = "oxmon-mock-report"
+path = "src/bin/oxmon-mock-report.rs"
+
 [lints]
 workspace = true
 

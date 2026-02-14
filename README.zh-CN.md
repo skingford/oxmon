@@ -9,6 +9,7 @@
 - [架构](#架构)
 - [Crate 结构](#crate-结构)
 - [快速开始](#快速开始)
+- [本地联调（模拟上报 + 接口校验）](#本地联调模拟上报--接口校验)
 - [配置说明](#配置说明)
 - [采集指标列表](#采集指标列表)
 - [API Reference](#api-reference)
@@ -100,6 +101,78 @@ pm2 save && pm2 startup
 ```
 
 Agent 每 10 秒（可配置）采集一次系统指标，通过 gRPC 上报给 Server。
+
+## 本地联调（模拟上报 + 接口校验）
+
+仓库内置了 3 个联调脚本：
+
+- `scripts/mock-report-all.sh`：上报全场景测试数据（正常 + 告警触发）
+- `scripts/mock-query-check.sh`：校验核心读取接口并输出摘要表
+- `scripts/mock-e2e.sh`：一键串联“上报 + 校验”
+
+### 1）一键 E2E（推荐）
+
+```bash
+# 默认跑 all 场景，完成上报后自动校验接口
+scripts/mock-e2e.sh
+
+# 服务端开启 require_agent_auth=true 时
+scripts/mock-e2e.sh --auto-auth --username admin --password changeme
+```
+
+### 2）分步执行（便于排查）
+
+```bash
+# 第一步：上报所有场景
+scripts/mock-report-all.sh --scenario all --agent-count 5
+
+# 第二步：校验 metrics / alerts / dashboard
+scripts/mock-query-check.sh
+```
+
+### 3）只跑单一场景
+
+```bash
+# 仅触发 rate_of_change 场景
+scripts/mock-report-all.sh --scenario rate
+
+# 仅触发 trend_prediction 场景
+scripts/mock-report-all.sh --scenario trend
+```
+
+支持场景：`all`、`baseline`、`threshold`、`rate`、`trend`、`cert`。
+
+### 4）常用参数
+
+```bash
+# 上报阶段打印每个批次摘要
+scripts/mock-report-all.sh --print-payload
+
+# 校验阶段打印接口原始响应
+scripts/mock-query-check.sh --verbose
+
+# 指定 metrics/summary 的查询目标
+scripts/mock-query-check.sh --summary-agent mock-threshold --summary-metric cpu.usage
+```
+
+### 5）token 文件格式（可选）
+
+当你不使用 `--auto-auth`，但服务端要求 Agent 认证时，可以传 token 映射文件：
+
+```ini
+mock-normal-01=token_xxx
+mock-normal-02=token_yyy
+mock-threshold=token_zzz
+mock-rate=token_aaa
+mock-trend=token_bbb
+cert-checker=token_ccc
+```
+
+然后执行：
+
+```bash
+scripts/mock-report-all.sh --auth-token-file ./tokens.env
+```
 
 ## 配置说明
 
@@ -199,78 +272,81 @@ critical_days = 7               # 距过期 7 天触发 critical
 silence_secs = 86400
 ```
 
-#### 通知渠道 (`[[notification.channels]]`)
+#### 通知渠道（数据库存储，API 管理）
 
-**邮件通知：**
+通知渠道存储在数据库中，通过 REST API 动态管理。每种渠道类型支持**创建多个实例**（例如：为运维团队和开发团队分别配置不同的邮件渠道）。收件人（邮箱、手机号、Webhook URL）按渠道独立管理。
 
-```toml
-[[notification.channels]]
-type = "email"
-min_severity = "warning"          # 最低触发级别
-smtp_host = "smtp.example.com"
-smtp_port = 587
-smtp_username = "alerts@example.com"
-smtp_password = "your-password"
-from = "alerts@example.com"
-recipients = ["admin@example.com", "ops@example.com"]
+**初始化**使用 `init-channels` CLI 子命令和 JSON 种子文件：
+
+```bash
+oxmon-server init-channels config/server.toml config/channels.seed.json
 ```
 
-**Webhook 通知（适用于 Slack / 钉钉 / 飞书等）：**
+模板文件见 `config/channels.seed.example.json`。重复运行时，同名渠道会被跳过。初始化完成后，使用 REST API 管理渠道。
 
-```toml
-[[notification.channels]]
-type = "webhook"
-min_severity = "info"
-url = "https://hooks.slack.com/services/xxx/yyy/zzz"
-# 可选：自定义 body 模板，支持 {{agent_id}} {{metric}} {{value}} {{severity}} {{message}} 变量
-# body_template = '{"text": "[{{severity}}] {{agent_id}}: {{message}}"}'
+内置渠道类型：`email`、`webhook`、`sms`、`dingtalk`、`weixin`。
+
+**通过 API 管理渠道：**
+
+```bash
+# 创建渠道
+curl -X POST http://localhost:8080/v1/notifications/channels/config \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ops-email",
+    "channel_type": "email",
+    "description": "运维团队邮件告警",
+    "min_severity": "warning",
+    "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":587,\"from_name\":\"oxmon\",\"from_email\":\"alerts@example.com\"}",
+    "recipients": ["ops@example.com", "admin@example.com"]
+  }'
+
+# 列出渠道（含收件人）
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/channels
+
+# 更新收件人
+curl -X PUT http://localhost:8080/v1/notifications/channels/<id>/recipients \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"recipients": ["ops@example.com", "admin@example.com", "oncall@example.com"]}'
+
+# 发送测试通知
+curl -X POST http://localhost:8080/v1/notifications/channels/<id>/test \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
-**短信通知：**
+**各渠道配置参考：**
 
-```toml
-[[notification.channels]]
-type = "sms"
-min_severity = "critical"
-gateway_url = "https://sms-api.example.com/send"
-api_key = "your-api-key"
-phone_numbers = ["+8613800138000"]
-```
+| 类型 | 必填配置 | 收件人类型 |
+|------|---------|-----------|
+| `email` | `smtp_host`, `smtp_port`, `from_name`, `from_email` | 邮箱地址 |
+| `webhook` | （无） | URL |
+| `sms` | `gateway_url`, `api_key` | 手机号 |
+| `dingtalk` | `webhook_url` | Webhook URL |
+| `weixin` | `webhook_url` | Webhook URL |
 
-**钉钉机器人通知：**
+钉钉支持可选的 `secret` 用于 HMAC-SHA256 签名。Webhook 支持可选的 `body_template`，可使用 `{{agent_id}}`、`{{metric}}`、`{{value}}`、`{{severity}}`、`{{message}}` 变量。
 
-```toml
-[[notification.channels]]
-type = "dingtalk"
-min_severity = "warning"
-webhook_url = "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
-secret = "SEC_YOUR_SECRET"   # 可选：HMAC-SHA256 加签密钥
-```
+> **插件系统**：每种渠道是一个独立的 `ChannelPlugin`，通过 `ChannelRegistry` 动态查找和实例化。配置变更触发热重载，无需重启服务。
 
-钉钉通知发送 Markdown 格式消息，包含告警级别、Agent、指标、值、阈值和时间信息。当配置了 `secret` 时，使用 HMAC-SHA256 对请求签名。
+#### 静默窗口（数据库存储，API 管理）
 
-**企业微信机器人通知：**
+在维护时段抑制通知发送，通过 REST API 管理：
 
-```toml
-[[notification.channels]]
-type = "weixin"
-min_severity = "warning"
-webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
-```
+```bash
+# 创建静默窗口
+curl -X POST http://localhost:8080/v1/notifications/silence-windows \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"start_time": "02:00", "end_time": "04:00", "recurrence": "daily"}'
 
-企业微信通知发送 Markdown 格式消息。
+# 列出静默窗口
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/silence-windows
 
-> **插件系统**：通知渠道基于插件架构实现，每种渠道是一个独立的 `ChannelPlugin`。Server 通过 `ChannelRegistry` 动态查找并实例化渠道，配置文件中的 `type` 字段对应插件名称，其余字段直接传给插件解析。内置插件：`email`、`webhook`、`sms`、`dingtalk`、`weixin`。
-
-#### 静默窗口 (`[[notification.silence_windows]]`)
-
-在维护时段抑制通知：
-
-```toml
-[[notification.silence_windows]]
-start_time = "02:00"
-end_time = "04:00"
-recurrence = "daily"
+# 删除静默窗口
+curl -X DELETE http://localhost:8080/v1/notifications/silence-windows/<id> \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 #### 告警聚合

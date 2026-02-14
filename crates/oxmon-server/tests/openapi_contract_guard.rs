@@ -49,6 +49,64 @@ async fn openapi_paths_should_be_covered_by_test_matrix() {
         "GET /v1/certs/status/{domain}",
         "POST /v1/certs/domains/{id}/check",
         "POST /v1/certs/check",
+        // New endpoints: metrics discovery
+        "GET /v1/metrics/names",
+        "GET /v1/metrics/agents",
+        "GET /v1/metrics/summary",
+        // New endpoints: cert history & summary
+        "GET /v1/certs/domains/{id}/history",
+        "GET /v1/certs/summary",
+        // New endpoints: alert rules CRUD
+        "POST /v1/alerts/rules",
+        "GET /v1/alerts/rules/{id}",
+        "GET /v1/alerts/rules/config",
+        "PUT /v1/alerts/rules/{id}",
+        "DELETE /v1/alerts/rules/{id}",
+        "PUT /v1/alerts/rules/{id}/enable",
+        // New endpoints: alert lifecycle
+        "POST /v1/alerts/history/{id}/acknowledge",
+        "POST /v1/alerts/history/{id}/resolve",
+        "GET /v1/alerts/active",
+        "GET /v1/alerts/summary",
+        // New endpoints: notifications
+        "GET /v1/notifications/channels",
+        "GET /v1/notifications/channels/{id}",
+        "POST /v1/notifications/channels/{id}/test",
+        "GET /v1/notifications/channels/config",
+        "GET /v1/notifications/channels/config/{id}",
+        "POST /v1/notifications/channels/config",
+        "PUT /v1/notifications/channels/config/{id}",
+        "DELETE /v1/notifications/channels/config/{id}",
+        "PUT /v1/notifications/channels/{id}/recipients",
+        "GET /v1/notifications/channels/{id}/recipients",
+        "GET /v1/notifications/silence-windows",
+        "POST /v1/notifications/silence-windows",
+        "DELETE /v1/notifications/silence-windows/{id}",
+        // Notification logs
+        "GET /v1/notifications/logs",
+        "GET /v1/notifications/logs/summary",
+        // New endpoints: dashboard
+        "GET /v1/dashboard/overview",
+        // New endpoints: system
+        "GET /v1/system/config",
+        "GET /v1/system/storage",
+        "POST /v1/system/storage/cleanup",
+        // New endpoints: dictionaries
+        "GET /v1/dictionaries/types",
+        "POST /v1/dictionaries/types",
+        "PUT /v1/dictionaries/types/{dict_type}",
+        "DELETE /v1/dictionaries/types/{dict_type}",
+        "GET /v1/dictionaries/type/{dict_type}",
+        "GET /v1/dictionaries/{id}",
+        "POST /v1/dictionaries",
+        "PUT /v1/dictionaries/{id}",
+        "DELETE /v1/dictionaries/{id}",
+        // New endpoints: system configs
+        "GET /v1/system/configs",
+        "GET /v1/system/configs/{id}",
+        "POST /v1/system/configs",
+        "PUT /v1/system/configs/{id}",
+        "DELETE /v1/system/configs/{id}",
     ]
     .into_iter()
     .map(|s| s.to_string())
@@ -123,6 +181,25 @@ async fn openapi_list_query_params_should_be_optional() {
             &["enabled__eq", "domain__contains", "limit", "offset"],
         ),
         ("/v1/certs/status", &["limit", "offset"]),
+        (
+            "/v1/notifications/logs",
+            &[
+                "channel_id",
+                "channel_type",
+                "status",
+                "alert_event_id",
+                "rule_id",
+                "agent_id",
+                "start_time",
+                "end_time",
+                "limit",
+                "offset",
+            ],
+        ),
+        (
+            "/v1/notifications/logs/summary",
+            &["channel_id", "channel_type", "start_time", "end_time"],
+        ),
     ];
 
     for (path, names) in cases {

@@ -68,6 +68,8 @@ impl std::str::FromStr for Severity {
 pub struct AlertEvent {
     pub id: String,
     pub rule_id: String,
+    /// Human-readable rule name (e.g., "生产环境 CPU 过高")
+    pub rule_name: String,
     pub agent_id: String,
     pub metric_name: String,
     pub severity: Severity,
@@ -77,8 +79,39 @@ pub struct AlertEvent {
     pub timestamp: DateTime<Utc>,
     /// For trend prediction rules: predicted time to breach
     pub predicted_breach: Option<DateTime<Utc>>,
+    /// Status: 1=未处理, 2=已确认, 3=已处理
+    pub status: u8,
+    /// Labels from the triggering metric data point (e.g., mount=/data, interface=eth0)
+    pub labels: HashMap<String, String>,
+    /// Timestamp when this alert was first triggered (for recovery tracking)
+    pub first_triggered_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Format labels map into a human-readable string.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::HashMap;
+/// use oxmon_common::types::format_labels;
+///
+/// let mut labels = HashMap::new();
+/// labels.insert("mount".to_string(), "/data".to_string());
+/// labels.insert("device".to_string(), "sda1".to_string());
+/// let s = format_labels(&labels);
+/// // Output contains both key=value pairs separated by ", "
+/// assert!(s.contains("mount=/data"));
+/// assert!(s.contains("device=sda1"));
+/// ```
+pub fn format_labels(labels: &HashMap<String, String>) -> String {
+    if labels.is_empty() {
+        return String::new();
+    }
+    let mut pairs: Vec<String> = labels.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    pairs.sort();
+    pairs.join(", ")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -296,6 +329,46 @@ pub struct CertificateDetails {
     pub created_at: DateTime<Utc>,
     /// 更新时间
     pub updated_at: DateTime<Utc>,
+
+    // ---- 新增字段 ----
+    /// 证书序列号（十六进制）
+    pub serial_number: Option<String>,
+    /// 证书 SHA-256 指纹
+    pub fingerprint_sha256: Option<String>,
+    /// 证书版本（1/2/3）
+    pub version: Option<i32>,
+    /// 签名算法（如 SHA256withRSA）
+    pub signature_algorithm: Option<String>,
+    /// 公钥算法（RSA, ECDSA, Ed25519）
+    pub public_key_algorithm: Option<String>,
+    /// 公钥长度（如 2048, 4096, 256）
+    pub public_key_bits: Option<i32>,
+    /// 主体通用名称
+    pub subject_cn: Option<String>,
+    /// 主体组织
+    pub subject_o: Option<String>,
+    /// 密钥用途（JSON 数组）
+    pub key_usage: Option<Vec<String>>,
+    /// 扩展密钥用途（JSON 数组）
+    pub extended_key_usage: Option<Vec<String>>,
+    /// 是否 CA 证书
+    pub is_ca: Option<bool>,
+    /// 是否通配符证书
+    pub is_wildcard: Option<bool>,
+    /// OCSP 响应器地址（JSON 数组）
+    pub ocsp_urls: Option<Vec<String>>,
+    /// CRL 分发点（JSON 数组）
+    pub crl_urls: Option<Vec<String>>,
+    /// CA 颁发者 URL（JSON 数组）
+    pub ca_issuer_urls: Option<Vec<String>>,
+    /// Certificate Transparency SCT 数量
+    pub sct_count: Option<i32>,
+    /// 协商的 TLS 版本
+    pub tls_version: Option<String>,
+    /// 协商的加密套件
+    pub cipher_suite: Option<String>,
+    /// 证书链深度
+    pub chain_depth: Option<i32>,
 }
 
 /// 证书详情查询过滤器
@@ -355,4 +428,125 @@ pub struct ChangePasswordRequest {
     pub current_password: String,
     /// 新密码（必填）
     pub new_password: String,
+}
+
+// ---- System dictionary types ----
+
+/// 系统字典条目
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DictionaryItem {
+    /// 唯一标识
+    pub id: String,
+    /// 字典类型（如 channel_type, severity, rule_type 等）
+    pub dict_type: String,
+    /// 字典键（英文标识，同一 dict_type 下唯一）
+    pub dict_key: String,
+    /// 显示标签（中文/英文）
+    pub dict_label: String,
+    /// 字典值（可选，用于存放额外值）
+    pub dict_value: Option<String>,
+    /// 排序序号
+    pub sort_order: i32,
+    /// 是否启用
+    pub enabled: bool,
+    /// 是否系统内置（系统内置项不可删除）
+    pub is_system: bool,
+    /// 描述信息
+    pub description: Option<String>,
+    /// 扩展 JSON（可选，用于存放额外配置）
+    pub extra_json: Option<String>,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 更新时间
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 创建字典条目请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct CreateDictionaryRequest {
+    /// 字典类型（必填）
+    pub dict_type: String,
+    /// 字典键（必填，同一 dict_type 下唯一）
+    pub dict_key: String,
+    /// 显示标签（必填）
+    pub dict_label: String,
+    /// 字典值（可选）
+    pub dict_value: Option<String>,
+    /// 排序序号（可选，默认 0）
+    pub sort_order: Option<i32>,
+    /// 是否启用（可选，默认 true）
+    pub enabled: Option<bool>,
+    /// 描述信息（可选）
+    pub description: Option<String>,
+    /// 扩展 JSON（可选）
+    pub extra_json: Option<String>,
+}
+
+/// 更新字典条目请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct UpdateDictionaryRequest {
+    /// 显示标签（可选）
+    pub dict_label: Option<String>,
+    /// 字典值（可选）
+    pub dict_value: Option<Option<String>>,
+    /// 排序序号（可选）
+    pub sort_order: Option<i32>,
+    /// 是否启用（可选）
+    pub enabled: Option<bool>,
+    /// 描述信息（可选）
+    pub description: Option<Option<String>>,
+    /// 扩展 JSON（可选）
+    pub extra_json: Option<Option<String>>,
+}
+
+/// 字典类型摘要
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DictionaryTypeSummary {
+    /// 字典类型
+    pub dict_type: String,
+    /// 字典类型显示标签（中文名称）
+    pub dict_type_label: String,
+    /// 该类型下的条目数量
+    pub count: u64,
+}
+
+/// 字典类型元数据
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DictionaryType {
+    /// 字典类型标识（主键）
+    pub dict_type: String,
+    /// 显示标签（中文名称）
+    pub dict_type_label: String,
+    /// 排序序号
+    pub sort_order: i32,
+    /// 描述信息
+    pub description: Option<String>,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 更新时间
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 创建字典类型请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct CreateDictionaryTypeRequest {
+    /// 字典类型标识（必填，如 channel_type）
+    pub dict_type: String,
+    /// 显示标签（必填，如 "通知渠道类型"）
+    pub dict_type_label: String,
+    /// 排序序号（可选，默认 0）
+    pub sort_order: Option<i32>,
+    /// 描述信息（可选）
+    pub description: Option<String>,
+}
+
+/// 更新字典类型请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct UpdateDictionaryTypeRequest {
+    /// 显示标签（可选）
+    pub dict_type_label: Option<String>,
+    /// 排序序号（可选）
+    pub sort_order: Option<i32>,
+    /// 描述信息（可选）
+    pub description: Option<Option<String>>,
 }

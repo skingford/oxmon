@@ -1,8 +1,8 @@
 use oxmon_common::types::Severity;
 
 pub struct ChannelRoute {
+    pub channel_id: String,
     pub min_severity: Severity,
-    pub channel_index: usize,
 }
 
 impl ChannelRoute {

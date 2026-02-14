@@ -38,6 +38,7 @@ utoipa-swagger-ui = { workspace = true }
 tower-http = { workspace = true }
 jsonwebtoken = { workspace = true }
 rand = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

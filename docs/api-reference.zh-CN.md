@@ -72,6 +72,56 @@ curl http://localhost:8080/v1/agents
 curl http://localhost:8080/v1/agents/web-server-01/latest
 ```
 
+### 指标发现
+
+#### `GET /v1/metrics/names`
+
+获取时间范围内所有不同的指标名称。
+
+| 参数 | 说明 | 必填 |
+|------|------|------|
+| `timestamp__gte` | 时间下界（默认 24 小时前） | 否 |
+| `timestamp__lte` | 时间上界（默认当前） | 否 |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics/names
+```
+
+响应示例：
+
+```json
+["cpu.usage", "cpu.core_usage", "memory.used_percent", "disk.used_percent"]
+```
+
+#### `GET /v1/metrics/agents`
+
+获取时间范围内所有上报过的 Agent ID。
+
+| 参数 | 说明 | 必填 |
+|------|------|------|
+| `timestamp__gte` | 时间下界（默认 24 小时前） | 否 |
+| `timestamp__lte` | 时间上界（默认当前） | 否 |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics/agents
+```
+
+#### `GET /v1/metrics/summary`
+
+获取指标聚合统计（最小值/最大值/平均值/计数）。
+
+| 参数 | 说明 | 必填 |
+|------|------|------|
+| `agent_id` | Agent ID | 是 |
+| `metric_name` | 指标名 | 是 |
+| `timestamp__gte` | 时间下界（默认 1 小时前） | 否 |
+| `timestamp__lte` | 时间上界（默认当前） | 否 |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/v1/metrics/summary?agent_id=web-01&metric_name=cpu.usage"
+```
+
 ### `GET /v1/metrics`
 
 分页查询指标数据（支持按 `agent_id__eq`、`metric_name__eq` 过滤）。
@@ -113,11 +163,13 @@ curl "http://localhost:8080/v1/metrics?limit=50&offset=100"
 ]
 ```
 
-### `GET /v1/alerts/rules`
+### 告警规则管理
 
-列出所有已配置的告警规则。
+#### `GET /v1/alerts/rules`
 
-默认按 `id` 升序，默认分页 `limit=20&offset=0`。
+列出引擎中所有活跃的告警规则。
+
+默认分页 `limit=20&offset=0`。
 
 | 参数 | 说明 | 必填 |
 |------|------|------|
@@ -125,10 +177,83 @@ curl "http://localhost:8080/v1/metrics?limit=50&offset=100"
 | `offset` | 偏移量（默认 0） | 否 |
 
 ```bash
-curl http://localhost:8080/v1/alerts/rules
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/alerts/rules
 ```
 
-### `GET /v1/alerts/history`
+#### `GET /v1/alerts/rules/config`
+
+列出数据库中持久化的告警规则配置。
+
+| 参数 | 说明 | 必填 |
+|------|------|------|
+| `limit` | 每页条数（默认 20） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/alerts/rules/config
+```
+
+#### `GET /v1/alerts/rules/{id}`
+
+获取单条告警规则详情。
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/alerts/rules/<id>
+```
+
+#### `POST /v1/alerts/rules`
+
+创建告警规则。
+
+```bash
+curl -X POST http://localhost:8080/v1/alerts/rules \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "high-cpu",
+    "rule_type": "threshold",
+    "metric": "cpu.usage",
+    "agent_pattern": "*",
+    "severity": "critical",
+    "config_json": "{\"operator\":\"greater_than\",\"value\":90.0,\"duration_secs\":300}",
+    "silence_secs": 600
+  }'
+```
+
+#### `PUT /v1/alerts/rules/{id}`
+
+更新告警规则（部分更新）。
+
+```bash
+curl -X PUT http://localhost:8080/v1/alerts/rules/<id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"severity": "warning", "silence_secs": 1200}'
+```
+
+#### `DELETE /v1/alerts/rules/{id}`
+
+删除告警规则。
+
+```bash
+curl -X DELETE http://localhost:8080/v1/alerts/rules/<id> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+#### `PUT /v1/alerts/rules/{id}/enable`
+
+启用或禁用告警规则。
+
+```bash
+curl -X PUT http://localhost:8080/v1/alerts/rules/<id>/enable \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+```
+
+### 告警历史与生命周期
+
+#### `GET /v1/alerts/history`
 
 查询告警历史。
 
@@ -144,7 +269,60 @@ curl http://localhost:8080/v1/alerts/rules
 | `offset` | 偏移量（默认 0） | 否 |
 
 ```bash
-curl "http://localhost:8080/v1/alerts/history?severity__eq=critical&limit=50"
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/v1/alerts/history?severity__eq=critical&limit=50"
+```
+
+#### `POST /v1/alerts/history/{id}/acknowledge`
+
+标记告警为已确认。
+
+```bash
+curl -X POST http://localhost:8080/v1/alerts/history/<id>/acknowledge \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+#### `POST /v1/alerts/history/{id}/resolve`
+
+标记告警为已解决。
+
+```bash
+curl -X POST http://localhost:8080/v1/alerts/history/<id>/resolve \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+#### `GET /v1/alerts/active`
+
+获取所有活跃（未解决）的告警。
+
+| 参数 | 说明 | 必填 |
+|------|------|------|
+| `limit` | 每页条数（默认 20） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/alerts/active
+```
+
+#### `GET /v1/alerts/summary`
+
+获取最近 24 小时告警统计摘要。
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/alerts/summary
+```
+
+响应示例：
+
+```json
+{
+  "total": 42,
+  "by_severity": {
+    "critical": 3,
+    "warning": 15,
+    "info": 24
+  }
+}
 ```
 
 ### Agent 白名单管理
@@ -392,6 +570,266 @@ curl -X POST http://localhost:8080/v1/certs/domains/<id>/check
 
 ```bash
 curl -X POST http://localhost:8080/v1/certs/check
+```
+
+#### `GET /v1/certs/domains/{id}/history`
+
+获取域名的证书检测历史记录。
+
+| 参数 | 说明 | 必填 |
+|------|------|------|
+| `limit` | 每页条数（默认 20） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/v1/certs/domains/<id>/history
+```
+
+#### `GET /v1/certs/summary`
+
+获取证书健康摘要（域名总数、有效/无效/即将过期数量）。
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/certs/summary
+```
+
+### 通知渠道管理
+
+通知渠道存储在数据库中，通过 REST API 动态管理。每种渠道类型（email、webhook、sms、dingtalk、weixin）支持创建多个实例。收件人按渠道独立管理。初始化可使用 `init-channels` CLI 子命令和 JSON 种子文件（见 `config/channels.seed.example.json`）。
+
+#### `GET /v1/notifications/channels`
+
+列出所有通知渠道（含收件人列表和收件人类型）。
+
+| 参数 | 说明 | 必填 |
+|------|------|------|
+| `limit` | 每页条数（默认 20） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/channels
+```
+
+响应示例：
+
+```json
+[
+  {
+    "id": "ch_01JABCDEF",
+    "name": "ops-email",
+    "channel_type": "email",
+    "description": "运维团队邮件通道",
+    "min_severity": "warning",
+    "enabled": true,
+    "recipient_type": "email",
+    "recipients": ["ops@example.com", "admin@example.com"],
+    "created_at": "2026-02-10T10:00:00Z",
+    "updated_at": "2026-02-10T10:00:00Z"
+  }
+]
+```
+
+#### `GET /v1/notifications/channels/config`
+
+列出持久化的通知渠道配置（原始 DB 行数据）。
+
+| 参数 | 说明 | 必填 |
+|------|------|------|
+| `limit` | 每页条数（默认 20） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/channels/config
+```
+
+#### `POST /v1/notifications/channels/config`
+
+创建通知渠道。`config_json` 字段包含渠道类型特定配置（邮件的 SMTP 设置、短信的网关 URL 等）。创建时可同时设置收件人。
+
+```bash
+curl -X POST http://localhost:8080/v1/notifications/channels/config \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ops-email",
+    "channel_type": "email",
+    "description": "运维团队邮件告警",
+    "min_severity": "warning",
+    "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":587,\"from_name\":\"oxmon\",\"from_email\":\"alerts@example.com\"}",
+    "recipients": ["ops@example.com"]
+  }'
+```
+
+各渠道类型的 `config_json` 字段：
+
+| 类型 | 必填配置 | 可选配置 |
+|------|---------|---------|
+| `email` | `smtp_host`, `smtp_port`, `from_name`, `from_email` | `smtp_username`, `smtp_password` |
+| `webhook` | （无） | `body_template` |
+| `sms` | `gateway_url`, `api_key` | — |
+| `dingtalk` | `webhook_url` | `secret` |
+| `weixin` | `webhook_url` | — |
+
+各渠道对应的收件人类型：
+
+| 渠道 | 收件人类型 | 示例 |
+|------|-----------|------|
+| `email` | 邮箱地址 | `admin@example.com` |
+| `sms` | 手机号 | `+8613800138000` |
+| `webhook` | URL | `https://hooks.slack.com/services/xxx` |
+| `dingtalk` | Webhook URL | `https://oapi.dingtalk.com/robot/send?access_token=...` |
+| `weixin` | Webhook URL | `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...` |
+
+#### `PUT /v1/notifications/channels/config/{id}`
+
+更新通知渠道配置（部分更新）。修改后立即通过热重载生效。
+
+```bash
+curl -X PUT http://localhost:8080/v1/notifications/channels/config/<id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"min_severity": "critical", "enabled": false}'
+```
+
+#### `DELETE /v1/notifications/channels/config/{id}`
+
+删除通知渠道及其收件人。
+
+```bash
+curl -X DELETE http://localhost:8080/v1/notifications/channels/config/<id> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+#### `POST /v1/notifications/channels/{id}/test`
+
+发送测试通知到指定渠道，验证配置是否正常。使用该渠道当前的收件人列表。
+
+```bash
+curl -X POST http://localhost:8080/v1/notifications/channels/<id>/test \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+#### `PUT /v1/notifications/channels/{id}/recipients`
+
+设置（替换）渠道的收件人列表。
+
+```bash
+curl -X PUT http://localhost:8080/v1/notifications/channels/<id>/recipients \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"recipients": ["admin@example.com", "ops@example.com"]}'
+```
+
+#### `GET /v1/notifications/channels/{id}/recipients`
+
+获取渠道的当前收件人列表。
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/v1/notifications/channels/<id>/recipients
+```
+
+### 静默窗口
+
+静默窗口在维护期间抑制通知发送，通过 REST API 管理，存储在数据库中。
+
+#### `GET /v1/notifications/silence-windows`
+
+列出所有静默窗口。
+
+| 参数 | 说明 | 必填 |
+|------|------|------|
+| `limit` | 每页条数（默认 20） | 否 |
+| `offset` | 偏移量（默认 0） | 否 |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/notifications/silence-windows
+```
+
+#### `POST /v1/notifications/silence-windows`
+
+创建静默窗口。
+
+```bash
+curl -X POST http://localhost:8080/v1/notifications/silence-windows \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"start_time": "02:00", "end_time": "04:00", "recurrence": "daily"}'
+```
+
+#### `DELETE /v1/notifications/silence-windows/{id}`
+
+删除静默窗口。
+
+```bash
+curl -X DELETE http://localhost:8080/v1/notifications/silence-windows/<id> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### 仪表盘
+
+#### `GET /v1/dashboard/overview`
+
+获取综合仪表盘概览，包含 Agent 状态、告警摘要、证书健康状态和存储信息。
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/dashboard/overview
+```
+
+响应示例：
+
+```json
+{
+  "active_agents": 5,
+  "total_agents": 8,
+  "alerts_24h": 42,
+  "alerts_by_severity": {"critical": 3, "warning": 15, "info": 24},
+  "cert_summary": {"total_domains": 10, "valid": 8, "invalid": 1, "expiring_soon": 1},
+  "partition_count": 7,
+  "storage_total_bytes": 52428800,
+  "uptime_secs": 86400
+}
+```
+
+### 系统管理
+
+#### `GET /v1/system/config`
+
+获取运行时服务端配置（敏感字段已脱敏）。
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/system/config
+```
+
+#### `GET /v1/system/storage`
+
+获取存储分区信息（文件列表、大小）。
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/system/storage
+```
+
+响应示例：
+
+```json
+{
+  "partitions": [
+    {"date": "2026-02-10", "size_bytes": 8388608},
+    {"date": "2026-02-09", "size_bytes": 7340032}
+  ],
+  "total_partitions": 2,
+  "total_size_bytes": 15728640
+}
+```
+
+#### `POST /v1/system/storage/cleanup`
+
+手动触发按保留策略的存储清理。
+
+```bash
+curl -X POST http://localhost:8080/v1/system/storage/cleanup \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ### API 文档（OpenAPI）

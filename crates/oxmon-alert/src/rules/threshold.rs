@@ -1,6 +1,6 @@
 use crate::AlertRule;
 use chrono::{DateTime, Duration, Utc};
-use oxmon_common::types::{AlertEvent, MetricDataPoint, Severity};
+use oxmon_common::types::{format_labels, AlertEvent, MetricDataPoint, Severity};
 use std::str::FromStr;
 
 #[derive(Debug, Clone)]
@@ -25,6 +25,17 @@ impl FromStr for CompareOp {
     }
 }
 
+impl std::fmt::Display for CompareOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::GreaterThan => write!(f, "greater_than"),
+            Self::LessThan => write!(f, "less_than"),
+            Self::GreaterEqual => write!(f, "greater_equal"),
+            Self::LessEqual => write!(f, "less_equal"),
+        }
+    }
+}
+
 impl CompareOp {
     fn check(&self, value: f64, threshold: f64) -> bool {
         match self {
@@ -38,6 +49,7 @@ impl CompareOp {
 
 pub struct ThresholdRule {
     pub id: String,
+    pub name: String,
     pub metric: String,
     pub agent_pattern: String,
     pub severity: Severity,
@@ -50,6 +62,10 @@ pub struct ThresholdRule {
 impl AlertRule for ThresholdRule {
     fn id(&self) -> &str {
         &self.id
+    }
+
+    fn name(&self) -> &str {
+        &self.name
     }
 
     fn metric(&self) -> &str {
@@ -92,15 +108,23 @@ impl AlertRule for ThresholdRule {
         }
 
         let latest = latest?;
+        let labels_str = format_labels(&latest.labels);
+        let labels_display = if labels_str.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", labels_str)
+        };
         Some(AlertEvent {
             id: oxmon_common::id::next_id(),
             rule_id: self.id.clone(),
+            rule_name: self.name.clone(),
             agent_id: latest.agent_id.clone(),
             metric_name: self.metric.clone(),
             severity: self.severity,
             message: format!(
-                "{} has been {} {:.1} for the configured duration on {}",
+                "{}{} has been {} {:.1} for the configured duration on {}",
                 self.metric,
+                labels_display,
                 op_str(&self.operator),
                 self.value,
                 latest.agent_id,
@@ -109,6 +133,9 @@ impl AlertRule for ThresholdRule {
             threshold: self.value,
             timestamp: now,
             predicted_breach: None,
+            status: 1,
+            labels: latest.labels.clone(),
+            first_triggered_at: None,
             created_at: now,
             updated_at: now,
         })

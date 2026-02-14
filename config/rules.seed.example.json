@@ -1,0 +1,119 @@
+{
+  "rules": [
+    {
+      "name": "CPU 使用率严重告警",
+      "rule_type": "threshold",
+      "metric": "cpu.usage",
+      "agent_pattern": "*",
+      "severity": "critical",
+      "silence_secs": 300,
+      "config": {
+        "operator": "greater_than",
+        "value": 90.0,
+        "duration_secs": 60
+      }
+    },
+    {
+      "name": "CPU 使用率警告",
+      "rule_type": "threshold",
+      "metric": "cpu.usage",
+      "agent_pattern": "*",
+      "severity": "warning",
+      "silence_secs": 300,
+      "config": {
+        "operator": "greater_than",
+        "value": 80.0,
+        "duration_secs": 120
+      }
+    },
+    {
+      "name": "内存使用率严重告警",
+      "rule_type": "threshold",
+      "metric": "memory.usage",
+      "agent_pattern": "*",
+      "severity": "critical",
+      "silence_secs": 300,
+      "config": {
+        "operator": "greater_than",
+        "value": 95.0,
+        "duration_secs": 60
+      }
+    },
+    {
+      "name": "内存使用率警告",
+      "rule_type": "threshold",
+      "metric": "memory.usage",
+      "agent_pattern": "*",
+      "severity": "warning",
+      "silence_secs": 300,
+      "config": {
+        "operator": "greater_than",
+        "value": 85.0,
+        "duration_secs": 120
+      }
+    },
+    {
+      "name": "内存使用率突增",
+      "rule_type": "rate_of_change",
+      "metric": "memory.usage",
+      "agent_pattern": "*",
+      "severity": "warning",
+      "silence_secs": 600,
+      "config": {
+        "rate_threshold": 20.0,
+        "window_secs": 300
+      }
+    },
+    {
+      "name": "磁盘使用率严重告警",
+      "rule_type": "threshold",
+      "metric": "disk.usage",
+      "agent_pattern": "*",
+      "severity": "critical",
+      "silence_secs": 600,
+      "config": {
+        "operator": "greater_than",
+        "value": 95.0,
+        "duration_secs": 0
+      }
+    },
+    {
+      "name": "磁盘使用率警告",
+      "rule_type": "threshold",
+      "metric": "disk.usage",
+      "agent_pattern": "*",
+      "severity": "warning",
+      "silence_secs": 600,
+      "config": {
+        "operator": "greater_than",
+        "value": 85.0,
+        "duration_secs": 0
+      }
+    },
+    {
+      "name": "磁盘空间趋势预测",
+      "rule_type": "trend_prediction",
+      "metric": "disk.usage",
+      "agent_pattern": "*",
+      "severity": "warning",
+      "silence_secs": 3600,
+      "config": {
+        "predict_threshold": 95.0,
+        "horizon_secs": 86400,
+        "min_data_points": 3
+      }
+    },
+    {
+      "name": "SSL 证书即将过期",
+      "rule_type": "cert_expiration",
+      "metric": "cert.expiration",
+      "agent_pattern": "*",
+      "severity": "warning",
+      "silence_secs": 86400,
+      "config": {
+        "warning_days": 30,
+        "critical_days": 7
+      }
+    }
+  ]
+}

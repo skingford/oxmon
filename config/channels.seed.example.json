@@ -1,0 +1,121 @@
+{
+  "channels": [
+    {
+      "name": "默认邮件通知",
+      "channel_type": "email",
+      "description": "SMTP 邮件通知渠道，启用前请先配置系统邮件发送方或填写渠道级 config_json",
+      "min_severity": "warning",
+      "enabled": false,
+      "config": {
+        "smtp_host": "smtp.example.com",
+        "smtp_port": 587,
+        "smtp_username": "alerts@example.com",
+        "smtp_password": "your-password",
+        "from_name": "oxmon",
+        "from_email": "alerts@example.com"
+      },
+      "recipients": [
+        "oncall@example.com"
+      ]
+    },
+    {
+      "name": "默认 Webhook 通知",
+      "channel_type": "webhook",
+      "description": "HTTP Webhook 回调通知，启用前请填写 webhook URL",
+      "min_severity": "warning",
+      "enabled": false,
+      "config": {
+        "body_template": "{\"text\": \"[{{severity}}] {{agent_id}}: {{message}}\"}"
+      },
+      "recipients": [
+        "https://hooks.example.com/alert"
+      ]
+    },
+    {
+      "name": "默认钉钉通知",
+      "channel_type": "dingtalk",
+      "description": "钉钉机器人通知。支持 @ 功能：is_at_all(@ 所有人), at_mobiles(@ 手机号), at_user_ids(@ 用户ID)",
+      "min_severity": "warning",
+      "enabled": false,
+      "config": {
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
+        "secret": "SEC_YOUR_SECRET",
+        "is_at_all": false,
+        "at_mobiles": [],
+        "at_user_ids": []
+      },
+      "recipients": []
+    },
+    {
+      "name": "默认企业微信通知",
+      "channel_type": "weixin",
+      "description": "企业微信机器人通知，启用前请填写 webhook key",
+      "min_severity": "warning",
+      "enabled": false,
+      "config": {
+        "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
+      },
+      "recipients": []
+    },
+    {
+      "name": "默认阿里云短信",
+      "channel_type": "sms_aliyun",
+      "description": "阿里云短信通知，启用前请配置系统短信发送方或填写渠道级 config_json",
+      "min_severity": "critical",
+      "enabled": false,
+      "config": {
+        "provider": "aliyun",
+        "access_key_id": "LTAI5tYOUR_ACCESS_KEY_ID",
+        "access_key_secret": "YOUR_ACCESS_KEY_SECRET",
+        "sign_name": "your_sign_name",
+        "template_code": "SMS_123456789"
+      },
+      "recipients": [
+        "13800138000"
+      ]
+    },
+    {
+      "name": "默认腾讯云短信",
+      "channel_type": "sms_tencent",
+      "description": "腾讯云短信通知，启用前请配置系统短信发送方或填写渠道级 config_json",
+      "min_severity": "critical",
+      "enabled": false,
+      "config": {
+        "provider": "tencent",
+        "secret_id": "YOUR_TENCENT_SECRET_ID",
+        "secret_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "sdk_app_id": "1400123456",
+        "sign_name": "your_sign_name",
+        "template_id": "123456"
+      },
+      "recipients": [
+        "13800138000"
+      ]
+    },
+    {
+      "name": "默认通用短信",
+      "channel_type": "sms_generic",
+      "description": "通用 HTTP 短信网关通知，启用前请填写网关 URL 及参数",
+      "min_severity": "critical",
+      "enabled": false,
+      "config": {
+        "url": "https://sms-gateway.example.com/send",
+        "method": "POST",
+        "headers": {
+          "Authorization": "Bearer YOUR_TOKEN"
+        },
+        "body_template": "{\"phone\": \"{{recipient}}\", \"content\": \"[{{severity}}] {{message}}\"}"
+      },
+      "recipients": [
+        "13800138000"
+      ]
+    }
+  ],
+  "silence_windows": [
+    {
+      "start_time": "02:00",
+      "end_time": "04:00",
+      "recurrence": "daily"
+    }
+  ]
+}

@@ -10,7 +10,9 @@ use oxmon_common::proto::metric_service_server::MetricService;
 use oxmon_common::proto::{MetricBatchProto, MetricDataPointProto, ReportResponse};
 use oxmon_common::types::{AddAgentRequest, LoginRequest};
 use oxmon_notify::manager::NotificationManager;
+use oxmon_notify::plugin::ChannelRegistry;
 use oxmon_server::app;
+use oxmon_server::config::ServerConfig;
 use oxmon_server::grpc;
 use oxmon_server::state::{AgentRegistry, AppState};
 use oxmon_storage::auth::hash_token;
@@ -49,6 +51,7 @@ pub fn build_test_context() -> Result<TestContext> {
 
     let rules: Vec<Box<dyn oxmon_alert::AlertRule>> = vec![Box::new(ThresholdRule {
         id: "test-threshold".to_string(),
+        name: "Test Threshold".to_string(),
         metric: "cpu.usage".to_string(),
         agent_pattern: "*".to_string(),
         severity: "warning".parse().expect("warning should parse"),
@@ -58,8 +61,22 @@ pub fn build_test_context() -> Result<TestContext> {
         silence_secs: 0,
     })];
     let alert_engine = Arc::new(Mutex::new(AlertEngine::new(rules)));
-    let notifier = Arc::new(NotificationManager::new(vec![], vec![], vec![], 0));
+    let notifier = Arc::new(NotificationManager::new(
+        ChannelRegistry::default(),
+        cert_store.clone(),
+        0,
+    ));
     let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(10)));
+
+    let config = ServerConfig {
+        grpc_port: 9090,
+        http_port: 8080,
+        data_dir: temp_dir.path().to_string_lossy().to_string(),
+        retention_days: 7,
+        require_agent_auth: false,
+        cert_check: Default::default(),
+        auth: Default::default(),
+    };
 
     let state = AppState {
         storage,
@@ -71,6 +88,7 @@ pub fn build_test_context() -> Result<TestContext> {
         start_time: Utc::now(),
         jwt_secret: Arc::new("test-secret".to_string()),
         token_expire_secs: 3600,
+        config: Arc::new(config),
     };
 
     let app = app::build_http_app(state.clone());
@@ -323,6 +341,25 @@ pub async fn ensure_cert_domain_with_result(ctx: &TestContext, domain: &str) -> 
         last_checked: Utc::now(),
         created_at: Utc::now(),
         updated_at: Utc::now(),
+        serial_number: None,
+        fingerprint_sha256: None,
+        version: None,
+        signature_algorithm: None,
+        public_key_algorithm: None,
+        public_key_bits: None,
+        subject_cn: None,
+        subject_o: None,
+        key_usage: None,
+        extended_key_usage: None,
+        is_ca: None,
+        is_wildcard: None,
+        ocsp_urls: None,
+        crl_urls: None,
+        ca_issuer_urls: None,
+        sct_count: None,
+        tls_version: None,
+        cipher_suite: None,
+        chain_depth: None,
     };
     ctx.state
         .cert_store

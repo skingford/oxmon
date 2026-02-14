@@ -1,3 +1,4 @@
+use crate::config::ServerConfig;
 use chrono::{DateTime, Duration, Utc};
 use oxmon_alert::engine::AlertEngine;
 use oxmon_common::types::AgentInfo;
@@ -63,4 +64,5 @@ pub struct AppState {
     pub start_time: DateTime<Utc>,
     pub jwt_secret: Arc<String>,
     pub token_expire_secs: u64,
+    pub config: Arc<ServerConfig>,
 }

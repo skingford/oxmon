@@ -13,131 +13,25 @@ data_dir = "data"
 retention_days = 7
 
 # Require agent authentication (default: false)
-# When enabled, agents must provide a valid token in the whitelist
-# Manage whitelist via: POST/GET/DELETE /v1/agents/whitelist
 require_agent_auth = false
 
 # REST API Authentication (JWT)
-# All REST API endpoints (except health check and login) require a valid JWT token.
-# Obtain a token via: POST /v1/auth/login
 [auth]
-# JWT signing secret. If not set, a random secret is generated on each startup
-# (tokens will be invalidated on restart). Set a fixed value for production.
 jwt_secret = "your-secret-key-here"
 token_expire_secs = 86400       # Token validity period (default: 24 hours)
-default_username = "admin"      # Default admin username (created on first startup)
-default_password = "changeme"   # Default admin password (created on first startup)
+default_username = "admin"      # Default admin username
+default_password = "changeme"   # Default admin password (change this!)
 
 # Alert Rules
-# Supported types: "threshold", "rate_of_change", "trend_prediction", "cert_expiration"
-
-[[alert.rules]]
-name = "high-cpu"
-type = "threshold"
-metric = "cpu.usage"
-agent_pattern = "*"
-operator = "greater_than"
-value = 90.0
-duration_secs = 300
-severity = "critical"
-silence_secs = 600
-
-[[alert.rules]]
-name = "memory-spike"
-type = "rate_of_change"
-metric = "memory.used_percent"
-agent_pattern = "*"
-rate_threshold = 20.0
-window_secs = 300
-severity = "warning"
-silence_secs = 600
-
-[[alert.rules]]
-name = "disk-full-prediction"
-type = "trend_prediction"
-metric = "disk.used_percent"
-agent_pattern = "*"
-predict_threshold = 95.0
-horizon_secs = 86400
-min_data_points = 10
-severity = "info"
-silence_secs = 3600
-
-# Certificate expiration alert (uses dedicated cert_expiration rule type)
-# Triggers warning at 30 days, critical at 7 days before expiry
-[[alert.rules]]
-name = "cert-expiry"
-type = "cert_expiration"
-metric = "certificate.days_until_expiry"
-agent_pattern = "cert-checker"
-severity = "critical"
-warning_days = 30
-critical_days = 7
-silence_secs = 86400
-
-# Certificate invalid
-[[alert.rules]]
-name = "cert-invalid"
-type = "threshold"
-metric = "certificate.is_valid"
-agent_pattern = "cert-checker"
-operator = "less_than"
-value = 1.0
-duration_secs = 0
-severity = "critical"
-silence_secs = 3600
+# Managed via REST API or CLI: oxmon-server init-rules <config> <seed.json>
+# See config/rules.seed.example.json for examples
 
 # Notification Channels
-
-[[notification.channels]]
-type = "email"
-min_severity = "warning"
-smtp_host = "smtp.example.com"
-smtp_port = 587
-smtp_username = "alerts@example.com"
-smtp_password = "your-password"
-from = "alerts@example.com"
-recipients = ["admin@example.com"]
-
-[[notification.channels]]
-type = "webhook"
-min_severity = "info"
-url = "https://hooks.slack.com/services/xxx/yyy/zzz"
-# Optional: custom body template (uses {{agent_id}}, {{metric}}, {{value}}, {{severity}}, {{message}})
-# body_template = '{"text": "[{{severity}}] {{agent_id}}: {{message}}"}'
-
-# [[notification.channels]]
-# type = "sms"
-# min_severity = "critical"
-# gateway_url = "https://sms-gateway.example.com/send"
-# api_key = "your-sms-api-key"
-# phone_numbers = ["+8613800138000"]
-
-# [[notification.channels]]
-# type = "dingtalk"
-# min_severity = "warning"
-# webhook_url = "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
-# secret = "SEC_YOUR_SECRET"  # Optional: HMAC-SHA256 signing secret
-
-# [[notification.channels]]
-# type = "weixin"
-# min_severity = "warning"
-# webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
-
-# Silence Windows (suppress notifications during maintenance)
-
-# [[notification.silence_windows]]
-# start_time = "02:00"
-# end_time = "04:00"
-# recurrence = "daily"
-
-# Aggregation window for batching similar alerts (seconds)
-aggregation_window_secs = 60
+# Managed via REST API or CLI: oxmon-server init-channels <config> <seed.json>
+# See config/channels.seed.example.json for examples
+# Supported types: email, webhook, sms_aliyun, sms_tencent, sms_generic, dingtalk, weixin
 
 # Certificate Check Configuration
-# Server periodically checks TLS certificates for monitored domains.
-# Domains are managed via REST API: POST/GET/PUT/DELETE /v1/certs/domains
-
 [cert_check]
 enabled = true
 default_interval_secs = 86400   # Default check interval (24 hours)

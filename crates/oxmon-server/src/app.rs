@@ -19,7 +19,11 @@ use utoipa_swagger_ui::SwaggerUi;
         (name = "Agents", description = "Agent 管理"),
         (name = "Metrics", description = "指标查询"),
         (name = "Alerts", description = "告警规则与历史"),
-        (name = "Certificates", description = "证书监控")
+        (name = "Certificates", description = "证书监控"),
+        (name = "Notifications", description = "通知渠道管理"),
+        (name = "Dashboard", description = "仪表盘概览"),
+        (name = "System", description = "系统管理"),
+        (name = "Dictionaries", description = "系统字典管理")
     ),
     modifiers(&SecurityAddon)
 )]
