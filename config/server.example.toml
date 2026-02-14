@@ -38,3 +38,9 @@ default_interval_secs = 86400   # Default check interval (24 hours)
 tick_secs = 60                  # Scheduler tick interval
 connect_timeout_secs = 10       # TLS connection timeout per domain
 max_concurrent = 10              # Max concurrent TLS connections
+
+# Application ID validation for public routes (health, login)
+# When enabled, all unauthenticated API routes require the ox-app-id header
+[app_id]
+require_app_id = false           # Enable ox-app-id header validation (default: false)
+allowed_app_ids = ["web-console", "mobile-app"]  # Allowed ox-app-id values (empty = accept any non-empty value)

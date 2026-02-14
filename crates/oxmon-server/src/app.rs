@@ -40,6 +40,14 @@ impl utoipa::Modify for SecurityAddon {
                 utoipa::openapi::security::HttpAuthScheme::Bearer,
             )),
         );
+        components.add_security_scheme(
+            "app_id_auth",
+            utoipa::openapi::security::SecurityScheme::ApiKey(
+                utoipa::openapi::security::ApiKey::Header(
+                    utoipa::openapi::security::ApiKeyValue::new("ox-app-id"),
+                ),
+            ),
+        );
     }
 }
 
@@ -63,6 +71,10 @@ pub fn build_http_app(state: AppState) -> Router {
 
     public_router
         .merge(login_router)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::app_id_middleware,
+        ))
         .merge(
             protected_router
                 .merge(cert_router)

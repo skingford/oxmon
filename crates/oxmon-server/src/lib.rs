@@ -7,6 +7,7 @@ pub mod config;
 pub mod dictionary_seed;
 pub mod grpc;
 pub mod logging;
+pub mod middleware;
 pub mod openapi;
 pub mod rule_builder;
 pub mod rule_seed;

@@ -78,16 +78,16 @@ pub async fn jwt_auth_middleware(
 
     let token = match auth_header {
         None => {
-            return auth_error(&trace_id, "UNAUTHORIZED", "missing authorization header");
+            return auth_error(&trace_id, "unauthorized", "missing authorization header");
         }
         Some(header) => {
             if let Some(token) = header.strip_prefix("Bearer ") {
                 if token.is_empty() {
-                    return auth_error(&trace_id, "UNAUTHORIZED", "invalid authorization header");
+                    return auth_error(&trace_id, "unauthorized", "invalid authorization header");
                 }
                 token
             } else {
-                return auth_error(&trace_id, "UNAUTHORIZED", "invalid authorization header");
+                return auth_error(&trace_id, "unauthorized", "invalid authorization header");
             }
         }
     };
@@ -97,16 +97,16 @@ pub async fn jwt_auth_middleware(
             let user = match state.cert_store.get_user_by_username(&claims.username) {
                 Ok(Some(user)) => user,
                 Ok(None) => {
-                    return auth_error(&trace_id, "UNAUTHORIZED", "invalid token");
+                    return auth_error(&trace_id, "unauthorized", "invalid token");
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "Failed to query user for token validation");
-                    return auth_error(&trace_id, "UNAUTHORIZED", "invalid token");
+                    return auth_error(&trace_id, "unauthorized", "invalid token");
                 }
             };
 
             if user.token_version != claims.token_version {
-                return auth_error(&trace_id, "UNAUTHORIZED", "token revoked");
+                return auth_error(&trace_id, "unauthorized", "token revoked");
             }
 
             req.extensions_mut().insert(claims);
@@ -118,22 +118,24 @@ pub async fn jwt_auth_middleware(
             } else {
                 "invalid token"
             };
-            auth_error(&trace_id, "UNAUTHORIZED", msg)
+            auth_error(&trace_id, "unauthorized", msg)
         }
     }
 }
 
 /// 用户登录并获取 JWT。
-/// 鉴权：无需 Bearer Token。
+/// 鉴权：无需 Bearer Token，但需要 ox-app-id 请求头（如果在配置中启用）。
 #[utoipa::path(
     post,
     path = "/v1/auth/login",
     tag = "Auth",
+    security(("app_id_auth" = [])),
     request_body = LoginRequest,
     responses(
         (status = 200, description = "登录结果", body = LoginResponse),
         (status = 400, description = "请求参数错误", body = ApiError),
-        (status = 401, description = "认证失败（用户名或密码错误）", body = ApiError)
+        (status = 401, description = "认证失败（用户名或密码错误）", body = ApiError),
+        (status = 403, description = "缺少或无效的 ox-app-id", body = ApiError)
     )
 )]
 pub async fn login(
@@ -145,7 +147,7 @@ pub async fn login(
         return error_response(
             StatusCode::BAD_REQUEST,
             &trace_id,
-            "BAD_REQUEST",
+            "bad_request",
             "username and password are required",
         );
     }
@@ -156,7 +158,7 @@ pub async fn login(
             return error_response(
                 StatusCode::UNAUTHORIZED,
                 &trace_id,
-                "UNAUTHORIZED",
+                "unauthorized",
                 "invalid credentials",
             );
         }
@@ -165,7 +167,7 @@ pub async fn login(
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "internal error",
             );
         }
@@ -177,7 +179,7 @@ pub async fn login(
             return error_response(
                 StatusCode::UNAUTHORIZED,
                 &trace_id,
-                "UNAUTHORIZED",
+                "unauthorized",
                 "invalid credentials",
             );
         }
@@ -203,7 +205,7 @@ pub async fn login(
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "internal error",
             )
         }
@@ -235,7 +237,7 @@ pub async fn change_password(
         return error_response(
             StatusCode::BAD_REQUEST,
             &trace_id,
-            "BAD_REQUEST",
+            "bad_request",
             "current_password and new_password are required",
         );
     }
@@ -246,7 +248,7 @@ pub async fn change_password(
             return error_response(
                 StatusCode::UNAUTHORIZED,
                 &trace_id,
-                "UNAUTHORIZED",
+                "unauthorized",
                 "invalid credentials",
             );
         }
@@ -255,7 +257,7 @@ pub async fn change_password(
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "internal error",
             );
         }
@@ -267,7 +269,7 @@ pub async fn change_password(
             return error_response(
                 StatusCode::UNAUTHORIZED,
                 &trace_id,
-                "UNAUTHORIZED",
+                "unauthorized",
                 "invalid credentials",
             );
         }
@@ -280,7 +282,7 @@ pub async fn change_password(
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "internal error",
             );
         }
@@ -298,7 +300,7 @@ pub async fn change_password(
         Ok(false) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             &trace_id,
-            "INTERNAL_ERROR",
+            "internal_error",
             "internal error",
         ),
         Err(e) => {
@@ -306,7 +308,7 @@ pub async fn change_password(
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
-                "INTERNAL_ERROR",
+                "internal_error",
                 "internal error",
             )
         }

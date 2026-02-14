@@ -77,6 +77,7 @@ pub fn build_test_context() -> Result<TestContext> {
         agent_collection_interval_secs: 10,
         cert_check: Default::default(),
         auth: Default::default(),
+        app_id: Default::default(),
     };
 
     let state = AppState {
@@ -222,7 +223,7 @@ pub async fn add_whitelist_agent(app: &axum::Router, token: &str, agent_id: &str
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::CREATED);
     body["data"]["token"]
         .as_str()
         .expect("whitelist token should exist")

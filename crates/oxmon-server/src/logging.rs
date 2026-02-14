@@ -88,6 +88,12 @@ pub async fn request_logging(mut req: Request, next: Next) -> Response {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("-")
         .to_string();
+    let app_id = req
+        .headers()
+        .get("ox-app-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-")
+        .to_string();
 
     // Sensitive paths: never log request/response bodies for these
     let is_sensitive = path.starts_with("/v1/auth/") || path.starts_with("/v1/agents/whitelist");
@@ -122,6 +128,7 @@ pub async fn request_logging(mut req: Request, next: Next) -> Response {
             trace_id = %trace_id,
             method = %method,
             path = %url,
+            app_id = %app_id,
             ua = %user_agent,
             "--> request"
         );
@@ -130,6 +137,7 @@ pub async fn request_logging(mut req: Request, next: Next) -> Response {
             trace_id = %trace_id,
             method = %method,
             path = %url,
+            app_id = %app_id,
             body = %req_body_snippet,
             ua = %user_agent,
             "--> request"

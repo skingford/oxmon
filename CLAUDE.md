@@ -58,6 +58,7 @@ Agent (per monitored host)          Server (central)
 - **Agent glob matching**: Alert rules use `glob-match` patterns to target specific agents.
 - **No OpenSSL**: All TLS uses `rustls`/`tokio-rustls`. The `reqwest` dependency uses `rustls-tls` feature. SQLite is bundled.
 - **Agent authentication**: Optional bearer-token auth for gRPC ingestion. Tokens are bcrypt-hashed and stored in the `agent_whitelist` table. Managed via REST API (`/v1/agents/whitelist`). Controlled by `require_agent_auth` config flag.
+- **Application ID validation**: Optional `ox-app-id` header validation for public/auth endpoints (health check, login). Controlled by `require_app_id` config flag (default: false for backward compatibility). When enabled, requests without valid `ox-app-id` are rejected with 403 Forbidden. Supports whitelist validation via `allowed_app_ids` configuration. Does not affect JWT-protected routes. Middleware is in `oxmon-server/src/middleware.rs`.
 - **Certificate details collection**: The cert scheduler uses `CertificateCollector` (DNS resolution + TLS + x509 parsing) to gather detailed cert info (issuer, SANs, chain validation, IPs) stored in `certificate_details` table.
 - **DB-backed notification channels**: Channels are stored in `notification_channels` table with a separate `notification_recipients` table. Each channel type supports multiple instances. Channel configuration (SMTP, SMS API credentials, webhook URLs, etc.) is stored directly in each channel's `config_json` field. `NotificationManager` uses `RwLock<HashMap<String, ChannelInstance>>` with build-then-swap hot-reload via `reload()`. Initial setup via `init-channels` CLI subcommand or REST API (no TOML migration).
 - **Recipient separation**: Recipients (email addresses, phone numbers, webhook URLs) are stored in `notification_recipients` and managed independently per channel via REST API (`/v1/notifications/channels/{id}/recipients`).
@@ -87,3 +88,11 @@ The `init-dictionaries` subcommand reads a JSON seed file (see `config/dictionar
 ## Configuration
 
 Example configs are in `config/agent.example.toml` and `config/server.example.toml`. Parsed via `toml` crate in each binary's `config.rs`. Notification channels are **not** configured in TOML — use `init-channels` CLI or REST API. Alert rules are **not** configured in TOML — use `init-rules` CLI or REST API. Runtime settings (aggregation window, log retention) are **not** configured in TOML — they are stored in the database as `system_configs` with `config_type="runtime"` and can be managed via REST API.
+
+**Application ID validation** is configured in `server.example.toml` under `[app_id]` section:
+```toml
+[app_id]
+require_app_id = false  # Default: false for backward compatibility
+allowed_app_ids = ["web-console", "mobile-app"]  # Whitelist of allowed app IDs
+```
+When `require_app_id = true`, requests to public endpoints (health, login) without valid `ox-app-id` header are rejected with 403. If `allowed_app_ids` is empty, any non-empty value is accepted. If `allowed_app_ids` has entries, the header value must match one of them.

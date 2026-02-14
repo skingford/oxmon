@@ -21,6 +21,8 @@ pub struct ServerConfig {
     pub cert_check: CertCheckConfig,
     #[serde(default)]
     pub auth: AuthConfig,
+    #[serde(default)]
+    pub app_id: AppIdConfig,
 }
 
 // ---- Seed file types (used by `init-channels` CLI subcommand) ----
@@ -263,6 +265,29 @@ fn default_username() -> String {
 
 fn default_password() -> String {
     "changeme".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppIdConfig {
+    /// Whether to require ox-app-id header on public/auth routes (default: false)
+    #[serde(default = "default_require_app_id")]
+    pub require_app_id: bool,
+    /// List of allowed ox-app-id values
+    #[serde(default)]
+    pub allowed_app_ids: Vec<String>,
+}
+
+impl Default for AppIdConfig {
+    fn default() -> Self {
+        Self {
+            require_app_id: default_require_app_id(),
+            allowed_app_ids: Vec::new(),
+        }
+    }
+}
+
+fn default_require_app_id() -> bool {
+    false
 }
 
 impl ServerConfig {
