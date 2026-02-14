@@ -10,14 +10,16 @@ use std::sync::{Arc, Mutex};
 
 pub struct AgentRegistry {
     agents: HashMap<String, DateTime<Utc>>,
-    collection_interval_secs: u64,
+    default_collection_interval_secs: u64,
+    cert_store: Arc<CertStore>,
 }
 
 impl AgentRegistry {
-    pub fn new(collection_interval_secs: u64) -> Self {
+    pub fn new(default_collection_interval_secs: u64, cert_store: Arc<CertStore>) -> Self {
         Self {
             agents: HashMap::new(),
-            collection_interval_secs,
+            default_collection_interval_secs,
+            cert_store,
         }
     }
 
@@ -25,15 +27,27 @@ impl AgentRegistry {
         self.agents.insert(agent_id.to_string(), Utc::now());
     }
 
+    /// 获取 agent 的实际采集间隔，优先使用配置值，否则使用默认值
+    fn get_collection_interval(&self, agent_id: &str) -> u64 {
+        self.cert_store
+            .get_agent_collection_interval(agent_id)
+            .ok()
+            .flatten()
+            .unwrap_or(self.default_collection_interval_secs)
+    }
+
     pub fn list_agents(&self) -> Vec<AgentInfo> {
         let now = Utc::now();
-        let timeout = Duration::seconds((self.collection_interval_secs * 3) as i64);
         self.agents
             .iter()
-            .map(|(id, last_seen)| AgentInfo {
-                agent_id: id.clone(),
-                last_seen: *last_seen,
-                active: now - *last_seen < timeout,
+            .map(|(id, last_seen)| {
+                let interval = self.get_collection_interval(id);
+                let timeout = Duration::seconds((interval * 3) as i64);
+                AgentInfo {
+                    agent_id: id.clone(),
+                    last_seen: *last_seen,
+                    active: now - *last_seen < timeout,
+                }
             })
             .collect()
     }
@@ -44,7 +58,8 @@ impl AgentRegistry {
 
     pub fn get_agent(&self, agent_id: &str) -> Option<AgentInfo> {
         let now = Utc::now();
-        let timeout = Duration::seconds((self.collection_interval_secs * 3) as i64);
+        let interval = self.get_collection_interval(agent_id);
+        let timeout = Duration::seconds((interval * 3) as i64);
         self.agents.get(agent_id).map(|last_seen| AgentInfo {
             agent_id: agent_id.to_string(),
             last_seen: *last_seen,

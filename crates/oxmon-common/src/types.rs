@@ -233,6 +233,8 @@ pub struct AgentWhitelistEntry {
     pub description: Option<String>,
     /// 认证 Token（用于 Agent gRPC 配置）
     pub token: Option<String>,
+    /// 采集间隔（秒），用于判断活跃状态。如果未设置，使用全局配置
+    pub collection_interval_secs: Option<u64>,
 }
 
 /// 添加 Agent 到白名单请求
@@ -242,6 +244,8 @@ pub struct AddAgentRequest {
     pub agent_id: String,
     /// 描述信息（可选）
     pub description: Option<String>,
+    /// 采集间隔（秒），用于判断活跃状态。如果未设置，使用服务器全局配置
+    pub collection_interval_secs: Option<u64>,
 }
 
 /// 添加 Agent 响应（包含生成的 token）
@@ -262,6 +266,8 @@ pub struct AddAgentResponse {
 pub struct UpdateAgentRequest {
     /// 描述信息（可选）
     pub description: Option<String>,
+    /// 采集间隔（秒），用于判断活跃状态。如果未设置，使用服务器全局配置
+    pub collection_interval_secs: Option<u64>,
 }
 
 /// Agent 白名单详情（包含在线状态）
@@ -279,6 +285,8 @@ pub struct AgentWhitelistDetail {
     pub description: Option<String>,
     /// 认证 Token（用于 Agent gRPC 配置）
     pub token: Option<String>,
+    /// 采集间隔（秒），用于判断活跃状态。如果未设置，使用服务器全局配置
+    pub collection_interval_secs: Option<u64>,
     /// 最后上报时间
     pub last_seen: Option<DateTime<Utc>>,
     /// 在线状态（active / inactive / unknown）

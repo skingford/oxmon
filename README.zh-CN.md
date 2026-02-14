@@ -209,6 +209,7 @@ buffer_max_size = 1000
 | `data_dir` | SQLite 数据文件存储目录 | `"data"` |
 | `retention_days` | 数据保留天数，超期自动清理 | `7` |
 | `require_agent_auth` | 是否要求 Agent 认证 | `false` |
+| `agent_collection_interval_secs` | Agent 采集间隔（秒），用于判断活跃状态。超时阈值为此值的 3 倍。应与 Agent 配置的 `collection_interval_secs` 一致 | `10` |
 
 #### 告警规则（数据库存储，API 管理）
 

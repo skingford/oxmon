@@ -89,6 +89,7 @@ async fn add_agent(
             &token,
             &token_hash,
             req.description.as_deref(),
+            req.collection_interval_secs,
         )
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to add agent to whitelist");
@@ -167,6 +168,7 @@ async fn list_whitelist_agents(
                 updated_at: entry.updated_at,
                 description: entry.description,
                 token: None, // Never expose tokens in list responses
+                collection_interval_secs: entry.collection_interval_secs,
                 last_seen: agent_info.as_ref().map(|a| a.last_seen),
                 status: match &agent_info {
                     Some(a) if a.active => "active".to_string(),
@@ -206,7 +208,7 @@ async fn update_agent(
 ) -> impl IntoResponse {
     let updated = match state
         .cert_store
-        .update_agent_whitelist(&id, req.description.as_deref())
+        .update_agent_whitelist(&id, req.description.as_deref(), req.collection_interval_secs)
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to update agent");
             error_response(
@@ -269,6 +271,7 @@ async fn update_agent(
             updated_at: entry.updated_at,
             description: entry.description,
             token: None, // Never expose tokens in update responses
+            collection_interval_secs: entry.collection_interval_secs,
             last_seen: agent_info.as_ref().map(|a| a.last_seen),
             status: match &agent_info {
                 Some(a) if a.active => "active".to_string(),

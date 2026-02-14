@@ -12,6 +12,10 @@ pub struct ServerConfig {
     pub retention_days: u32,
     #[serde(default = "default_require_agent_auth")]
     pub require_agent_auth: bool,
+    /// Agent 采集间隔（秒），用于判断 agent 活跃状态
+    /// 超时阈值 = agent_collection_interval_secs * 3
+    #[serde(default = "default_agent_collection_interval_secs")]
+    pub agent_collection_interval_secs: u64,
 
     #[serde(default)]
     pub cert_check: CertCheckConfig,
@@ -220,6 +224,10 @@ fn default_seed_enabled() -> bool {
 
 fn default_require_agent_auth() -> bool {
     false
+}
+
+fn default_agent_collection_interval_secs() -> u64 {
+    10
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

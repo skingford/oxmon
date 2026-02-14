@@ -345,8 +345,11 @@ async fn run_server(config_path: &str) -> Result<()> {
 
     // Build components
     let storage = Arc::new(SqliteStorageEngine::new(Path::new(&config.data_dir))?);
-    let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(30)));
     let cert_store = Arc::new(CertStore::new(Path::new(&config.data_dir))?);
+    let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(
+        config.agent_collection_interval_secs,
+        cert_store.clone(),
+    )));
 
     // Seed default alert rules (only when DB has none)
     if let Err(e) = rule_seed::init_default_rules(&cert_store) {

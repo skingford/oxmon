@@ -209,6 +209,7 @@ buffer_max_size = 1000
 | `data_dir` | SQLite data file storage directory | `"data"` |
 | `retention_days` | Data retention in days, auto-cleanup when expired | `7` |
 | `require_agent_auth` | Require agent authentication | `false` |
+| `agent_collection_interval_secs` | Agent collection interval (seconds) for determining active status. Timeout threshold is 3x this value. Should match agents' `collection_interval_secs` | `10` |
 
 #### Alert Rules (DB-backed, API-managed)
 

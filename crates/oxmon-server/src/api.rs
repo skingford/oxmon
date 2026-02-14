@@ -249,7 +249,7 @@ struct LatestMetric {
     tag = "Agents",
     security(("bearer_auth" = [])),
     params(
-        ("id" = String, Path, description = "Agent ID（路径参数）")
+        ("id" = String, Path, description = "白名单条目 ID（路径参数）")
     ),
     responses(
         (status = 200, description = "Agent 最新指标数据", body = Vec<LatestMetric>),
@@ -260,11 +260,41 @@ struct LatestMetric {
 async fn agent_latest(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
-    Path(agent_id): Path<String>,
+    Path(id): Path<String>,
 ) -> impl IntoResponse {
-    // Query last 5 minutes of data to get latest values
+    let agent_entry = match state.cert_store.get_agent_by_id(&id) {
+        Ok(Some(entry)) => entry,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                "Agent not found",
+            )
+            .into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, id = %id, "Failed to resolve agent by id");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "INTERNAL_ERROR",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+    let agent_id = agent_entry.agent_id;
+
+    // 根据 agent 的采集间隔动态计算查询时间范围
+    // 使用 collection_interval * 3 作为查询窗口，确保能查到数据
+    let collection_interval = agent_entry
+        .collection_interval_secs
+        .unwrap_or(state.config.agent_collection_interval_secs);
+    let query_window_secs = (collection_interval * 3).max(300); // 最小 5 分钟
+
     let to = Utc::now();
-    let from = to - chrono::Duration::minutes(5);
+    let from = to - chrono::Duration::seconds(query_window_secs as i64);
 
     // All metric names collected by agent
     let metric_names = [
@@ -330,27 +360,13 @@ async fn agent_latest(
     }
 
     if latest.is_empty() {
-        // Check if agent exists in whitelist or registry
-        let in_registry = state
-            .agent_registry
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get_agent(&agent_id)
-            .is_some();
-        let in_whitelist = state
-            .cert_store
-            .get_agent_token_hash(&agent_id)
-            .unwrap_or(None)
-            .is_some();
-        if !in_registry && !in_whitelist {
-            return error_response(
-                StatusCode::NOT_FOUND,
-                &trace_id,
-                "not_found",
-                "Agent not found",
-            )
-            .into_response();
-        }
+        tracing::info!(
+            id = %id,
+            agent_id = %agent_id,
+            from = %from,
+            to = %to,
+            "No latest metrics found in last 5 minutes"
+        );
     }
 
     success_response(StatusCode::OK, &trace_id, latest)

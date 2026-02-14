@@ -191,6 +191,7 @@ async fn whitelist_endpoints_should_cover_sensitive_field_and_crud_paths() {
         Some(make_json_body(&oxmon_common::types::AddAgentRequest {
             agent_id: "agent-wl-1".to_string(),
             description: Some("wl".to_string()),
+            collection_interval_secs: None,
         })),
     )
     .await;

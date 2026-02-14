@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS agent_whitelist (
     token_hash TEXT NOT NULL,
     encrypted_token TEXT,
     description TEXT,
+    collection_interval_secs INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -262,6 +263,9 @@ impl CertStore {
         // 迁移 agent_whitelist：如果旧表缺少 id 列（以 agent_id 为主键），则重建
         Self::migrate_agent_whitelist(&conn)?;
 
+        // 迁移 agent_whitelist：添加 collection_interval_secs 列
+        Self::migrate_agent_whitelist_collection_interval(&conn)?;
+
         // 迁移 certificate_details：如果旧表缺少 id 列（以 domain 为主键），则重建
         Self::migrate_certificate_details(&conn)?;
 
@@ -415,6 +419,38 @@ impl CertStore {
         )?;
 
         tracing::info!("agent_whitelist migration completed");
+        Ok(())
+    }
+
+    /// 迁移 agent_whitelist 表：添加 collection_interval_secs 列
+    fn migrate_agent_whitelist_collection_interval(conn: &Connection) -> Result<()> {
+        // 检查表是否存在
+        let table_exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='agent_whitelist'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        if !table_exists {
+            return Ok(());
+        }
+
+        // 检查是否已有 collection_interval_secs 列
+        let has_col = Self::table_has_column(conn, "agent_whitelist", "collection_interval_secs")?;
+
+        if has_col {
+            // 已经存在，无需迁移
+            return Ok(());
+        }
+
+        tracing::info!("Adding collection_interval_secs column to agent_whitelist table");
+
+        // 添加列
+        conn.execute_batch(
+            "ALTER TABLE agent_whitelist ADD COLUMN collection_interval_secs INTEGER;",
+        )?;
+
+        tracing::info!("agent_whitelist collection_interval_secs column added");
         Ok(())
     }
 
@@ -908,14 +944,15 @@ impl CertStore {
         token: &str,
         token_hash: &str,
         description: Option<&str>,
+        collection_interval_secs: Option<u64>,
     ) -> Result<String> {
         let conn = self.lock_conn();
         let id = oxmon_common::id::next_id();
         let now = Utc::now().timestamp();
         let encrypted_token = self.token_encryptor.encrypt(token)?;
         conn.execute(
-            "INSERT INTO agent_whitelist (id, agent_id, token_hash, created_at, updated_at, description, encrypted_token) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![id, agent_id, token_hash, now, now, description, encrypted_token],
+            "INSERT INTO agent_whitelist (id, agent_id, token_hash, created_at, updated_at, description, encrypted_token, collection_interval_secs) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![id, agent_id, token_hash, now, now, description, encrypted_token, collection_interval_secs.map(|v| v as i64)],
         )?;
         Ok(id)
     }
@@ -959,12 +996,13 @@ impl CertStore {
     ) -> Result<Vec<oxmon_common::types::AgentWhitelistEntry>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, agent_id, created_at, updated_at, description, encrypted_token FROM agent_whitelist ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+            "SELECT id, agent_id, created_at, updated_at, description, encrypted_token, collection_interval_secs FROM agent_whitelist ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
             let created: i64 = row.get(2)?;
             let updated: i64 = row.get(3)?;
             let encrypted_token: Option<String> = row.get(5)?;
+            let collection_interval: Option<i64> = row.get(6)?;
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -972,11 +1010,12 @@ impl CertStore {
                 updated,
                 row.get::<_, Option<String>>(4)?,
                 encrypted_token,
+                collection_interval.map(|v| v as u64),
             ))
         })?;
         let mut agents = Vec::new();
         for row in rows {
-            let (id, agent_id, created, updated, description, encrypted_token) = row?;
+            let (id, agent_id, created, updated, description, encrypted_token, collection_interval_secs) = row?;
             let token = encrypted_token.and_then(|e| self.token_encryptor.decrypt(&e).ok());
             agents.push(oxmon_common::types::AgentWhitelistEntry {
                 id,
@@ -985,6 +1024,7 @@ impl CertStore {
                 updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
                 description,
                 token,
+                collection_interval_secs,
             });
         }
         Ok(agents)
@@ -1023,12 +1063,12 @@ impl CertStore {
         Ok(exists)
     }
 
-    pub fn update_agent_whitelist(&self, id: &str, description: Option<&str>) -> Result<bool> {
+    pub fn update_agent_whitelist(&self, id: &str, description: Option<&str>, collection_interval_secs: Option<u64>) -> Result<bool> {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
         let updated = conn.execute(
-            "UPDATE agent_whitelist SET description = ?2, updated_at = ?3 WHERE id = ?1",
-            rusqlite::params![id, description, now],
+            "UPDATE agent_whitelist SET description = ?2, collection_interval_secs = ?3, updated_at = ?4 WHERE id = ?1",
+            rusqlite::params![id, description, collection_interval_secs.map(|v| v as i64), now],
         )?;
         Ok(updated > 0)
     }
@@ -1051,12 +1091,13 @@ impl CertStore {
     ) -> Result<Option<oxmon_common::types::AgentWhitelistEntry>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, agent_id, created_at, updated_at, description, encrypted_token FROM agent_whitelist WHERE id = ?1",
+            "SELECT id, agent_id, created_at, updated_at, description, encrypted_token, collection_interval_secs FROM agent_whitelist WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![id], |row| {
             let created: i64 = row.get(2)?;
             let updated: i64 = row.get(3)?;
             let encrypted_token: Option<String> = row.get(5)?;
+            let collection_interval: Option<i64> = row.get(6)?;
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -1064,10 +1105,11 @@ impl CertStore {
                 updated,
                 row.get::<_, Option<String>>(4)?,
                 encrypted_token,
+                collection_interval.map(|v| v as u64),
             ))
         })?;
         match rows.next() {
-            Some(Ok((id, agent_id, created, updated, description, encrypted_token))) => {
+            Some(Ok((id, agent_id, created, updated, description, encrypted_token, collection_interval_secs))) => {
                 let token = encrypted_token.and_then(|e| self.token_encryptor.decrypt(&e).ok());
                 Ok(Some(oxmon_common::types::AgentWhitelistEntry {
                     id,
@@ -1076,6 +1118,7 @@ impl CertStore {
                     updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
                     description,
                     token,
+                    collection_interval_secs,
                 }))
             }
             Some(Err(e)) => Err(e.into()),
@@ -2070,6 +2113,23 @@ impl CertStore {
         let count: i64 =
             conn.query_row("SELECT COUNT(*) FROM agent_whitelist", [], |row| row.get(0))?;
         Ok(count as u64)
+    }
+
+    /// 获取 agent 的采集间隔配置
+    pub fn get_agent_collection_interval(&self, agent_id: &str) -> Result<Option<u64>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT collection_interval_secs FROM agent_whitelist WHERE agent_id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![agent_id], |row| {
+            let interval: Option<i64> = row.get(0)?;
+            Ok(interval.map(|v| v as u64))
+        })?;
+        match rows.next() {
+            Some(Ok(interval)) => Ok(interval),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
     }
 
     // ---- Certificate details operations ----

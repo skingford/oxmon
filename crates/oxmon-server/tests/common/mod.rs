@@ -66,7 +66,7 @@ pub fn build_test_context() -> Result<TestContext> {
         cert_store.clone(),
         0,
     ));
-    let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(10)));
+    let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(10, cert_store.clone())));
 
     let config = ServerConfig {
         grpc_port: 9090,
@@ -74,6 +74,7 @@ pub fn build_test_context() -> Result<TestContext> {
         data_dir: temp_dir.path().to_string_lossy().to_string(),
         retention_days: 7,
         require_agent_auth: false,
+        agent_collection_interval_secs: 10,
         cert_check: Default::default(),
         auth: Default::default(),
     };
@@ -214,6 +215,7 @@ pub async fn add_whitelist_agent(app: &axum::Router, token: &str, agent_id: &str
             serde_json::to_value(AddAgentRequest {
                 agent_id: agent_id.to_string(),
                 description: Some("test agent".to_string()),
+                collection_interval_secs: None,
             })
             .expect("add agent request should serialize"),
         ),
