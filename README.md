@@ -298,7 +298,7 @@ curl -X POST http://localhost:8080/v1/notifications/channels/config \
     "channel_type": "email",
     "description": "Ops team email alerts",
     "min_severity": "warning",
-    "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":587,\"from\":\"alerts@example.com\"}",
+    "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":587,\"from_name\":\"oxmon\",\"from_email\":\"alerts@example.com\"}",
     "recipients": ["ops@example.com", "admin@example.com"]
   }'
 
@@ -320,7 +320,7 @@ curl -X POST http://localhost:8080/v1/notifications/channels/<id>/test \
 
 | Type | Required Config | Recipient Type |
 |------|----------------|----------------|
-| `email` | `smtp_host`, `smtp_port`, `from` | Email address |
+| `email` | `smtp_host`, `smtp_port`, `from_name`, `from_email` | Email address |
 | `webhook` | (none) | URL |
 | `sms` | `gateway_url`, `api_key` | Phone number |
 | `dingtalk` | `webhook_url` | Webhook URL |

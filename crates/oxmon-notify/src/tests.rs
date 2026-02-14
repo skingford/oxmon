@@ -126,7 +126,9 @@ fn dingtalk_plugin_validates_config() {
 
     // Missing required webhook_url
     let invalid = serde_json::json!({});
-    assert!(registry.create_channel("dingtalk", "dt-3", &invalid).is_err());
+    assert!(registry
+        .create_channel("dingtalk", "dt-3", &invalid)
+        .is_err());
 }
 
 #[test]
@@ -177,7 +179,8 @@ fn email_plugin_validates_config() {
     let valid = serde_json::json!({
         "smtp_host": "smtp.example.com",
         "smtp_port": 587,
-        "from": "test@example.com"
+        "from_name": "oxmon",
+        "from_email": "test@example.com"
     });
     assert!(registry.create_channel("email", "em-1", &valid).is_ok());
 
@@ -197,7 +200,9 @@ fn webhook_plugin_validates_config() {
     let valid_template = serde_json::json!({
         "body_template": "{\"text\": \"{{message}}\"}"
     });
-    assert!(registry.create_channel("webhook", "wh-2", &valid_template).is_ok());
+    assert!(registry
+        .create_channel("webhook", "wh-2", &valid_template)
+        .is_ok());
 }
 
 #[test]
@@ -249,14 +254,18 @@ fn sms_plugin_validates_aliyun_config() {
         "template_param": "{\"code\":\"1234\"}",
         "endpoint": "dysmsapi.aliyuncs.com"
     });
-    assert!(registry.create_channel("sms", "sms-ali-2", &valid_full).is_ok());
+    assert!(registry
+        .create_channel("sms", "sms-ali-2", &valid_full)
+        .is_ok());
 
     // missing required field
     let invalid = serde_json::json!({
         "provider": "aliyun",
         "access_key_id": "LTAI5tXXXXXX"
     });
-    assert!(registry.create_channel("sms", "sms-ali-3", &invalid).is_err());
+    assert!(registry
+        .create_channel("sms", "sms-ali-3", &invalid)
+        .is_err());
 }
 
 #[test]
@@ -278,7 +287,9 @@ fn sms_plugin_validates_tencent_config() {
         "provider": "tencent",
         "secret_id": "AKIDxxxxxxxx"
     });
-    assert!(registry.create_channel("sms", "sms-tc-2", &invalid).is_err());
+    assert!(registry
+        .create_channel("sms", "sms-tc-2", &invalid)
+        .is_err());
 }
 
 #[test]
@@ -372,7 +383,9 @@ fn is_meaningful_config_null() {
 
 #[test]
 fn is_meaningful_config_with_fields() {
-    assert!(is_meaningful_config(&serde_json::json!({"smtp_host": "mail.example.com"})));
+    assert!(is_meaningful_config(
+        &serde_json::json!({"smtp_host": "mail.example.com"})
+    ));
 }
 
 #[test]

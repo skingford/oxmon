@@ -298,7 +298,7 @@ curl -X POST http://localhost:8080/v1/notifications/channels/config \
     "channel_type": "email",
     "description": "运维团队邮件告警",
     "min_severity": "warning",
-    "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":587,\"from\":\"alerts@example.com\"}",
+    "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":587,\"from_name\":\"oxmon\",\"from_email\":\"alerts@example.com\"}",
     "recipients": ["ops@example.com", "admin@example.com"]
   }'
 
@@ -320,7 +320,7 @@ curl -X POST http://localhost:8080/v1/notifications/channels/<id>/test \
 
 | 类型 | 必填配置 | 收件人类型 |
 |------|---------|-----------|
-| `email` | `smtp_host`, `smtp_port`, `from` | 邮箱地址 |
+| `email` | `smtp_host`, `smtp_port`, `from_name`, `from_email` | 邮箱地址 |
 | `webhook` | （无） | URL |
 | `sms` | `gateway_url`, `api_key` | 手机号 |
 | `dingtalk` | `webhook_url` | Webhook URL |

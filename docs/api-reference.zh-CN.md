@@ -656,7 +656,7 @@ curl -X POST http://localhost:8080/v1/notifications/channels/config \
     "channel_type": "email",
     "description": "运维团队邮件告警",
     "min_severity": "warning",
-    "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":587,\"from\":\"alerts@example.com\"}",
+    "config_json": "{\"smtp_host\":\"smtp.example.com\",\"smtp_port\":587,\"from_name\":\"oxmon\",\"from_email\":\"alerts@example.com\"}",
     "recipients": ["ops@example.com"]
   }'
 ```
@@ -665,7 +665,7 @@ curl -X POST http://localhost:8080/v1/notifications/channels/config \
 
 | 类型 | 必填配置 | 可选配置 |
 |------|---------|---------|
-| `email` | `smtp_host`, `smtp_port`, `from` | `smtp_username`, `smtp_password` |
+| `email` | `smtp_host`, `smtp_port`, `from_name`, `from_email` | `smtp_username`, `smtp_password` |
 | `webhook` | （无） | `body_template` |
 | `sms` | `gateway_url`, `api_key` | — |
 | `dingtalk` | `webhook_url` | `secret` |

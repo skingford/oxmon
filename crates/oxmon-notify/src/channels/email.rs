@@ -14,7 +14,8 @@ use tracing;
 pub struct EmailChannel {
     instance_id: String,
     transport: AsyncSmtpTransport<Tokio1Executor>,
-    from: String,
+    from_name: String,
+    from_email: String,
 }
 
 impl EmailChannel {
@@ -24,7 +25,8 @@ impl EmailChannel {
         smtp_port: u16,
         username: Option<&str>,
         password: Option<&str>,
-        from: &str,
+        from_name: &str,
+        from_email: &str,
     ) -> Result<Self> {
         let mut builder = AsyncSmtpTransport::<Tokio1Executor>::relay(smtp_host)?.port(smtp_port);
 
@@ -36,7 +38,8 @@ impl EmailChannel {
         Ok(Self {
             instance_id: instance_id.to_string(),
             transport,
-            from: from.to_string(),
+            from_name: from_name.to_string(),
+            from_email: from_email.to_string(),
         })
     }
 
@@ -90,7 +93,8 @@ impl NotificationChannel for EmailChannel {
 
         // 记录 request_body（邮件内容）
         let request_body = serde_json::json!({
-            "from": self.from,
+            "from_name": self.from_name,
+            "from_email": self.from_email,
             "subject": subject,
             "body": body,
         });
@@ -111,8 +115,9 @@ impl NotificationChannel for EmailChannel {
         let mut recipient_results = Vec::new();
 
         for recipient in recipients {
+            let from_address = format!("{} <{}>", self.from_name, self.from_email);
             let email = Message::builder()
-                .from(self.from.parse()?)
+                .from(from_address.parse()?)
                 .to(recipient.parse()?)
                 .subject(&subject)
                 .header(ContentType::TEXT_PLAIN)
@@ -185,7 +190,8 @@ struct EmailConfig {
     smtp_port: u16,
     smtp_username: Option<String>,
     smtp_password: Option<String>,
-    from: String,
+    from_name: String,
+    from_email: String,
 }
 
 pub struct EmailPlugin;
@@ -218,7 +224,8 @@ impl ChannelPlugin for EmailPlugin {
             cfg.smtp_port,
             cfg.smtp_username.as_deref(),
             cfg.smtp_password.as_deref(),
-            &cfg.from,
+            &cfg.from_name,
+            &cfg.from_email,
         )?;
         Ok(Box::new(channel))
     }
