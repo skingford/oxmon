@@ -152,6 +152,9 @@ fn dingtalk_hmac_signing_produces_correct_url_format() {
         "test-instance",
         "https://oapi.dingtalk.com/robot/send?access_token=test",
         Some("SEC_test_secret".to_string()),
+        false,
+        vec![],
+        vec![],
     );
     let signed_url = channel.sign_url("https://oapi.dingtalk.com/robot/send?access_token=test");
     assert!(signed_url.contains("&timestamp="));
@@ -167,9 +170,101 @@ fn dingtalk_no_secret_returns_url_unchanged() {
         "test-instance",
         "https://oapi.dingtalk.com/robot/send?access_token=test",
         None,
+        false,
+        vec![],
+        vec![],
     );
     let url = "https://oapi.dingtalk.com/robot/send?access_token=test";
     assert_eq!(channel.sign_url(url), url);
+}
+
+#[test]
+fn dingtalk_plugin_validates_at_config() {
+    let registry = crate::plugin::ChannelRegistry::default();
+
+    // 测试 @ 所有人配置
+    let at_all_config = serde_json::json!({
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test",
+        "secret": "SEC_test",
+        "is_at_all": true
+    });
+    assert!(registry.create_channel("dingtalk", "dt-1", &at_all_config).is_ok());
+
+    // 测试 @ 手机号配置
+    let at_mobiles_config = serde_json::json!({
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test",
+        "at_mobiles": ["13800138000", "13900139000"]
+    });
+    assert!(registry.create_channel("dingtalk", "dt-2", &at_mobiles_config).is_ok());
+
+    // 测试 @ 用户ID配置
+    let at_user_ids_config = serde_json::json!({
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test",
+        "at_user_ids": ["user001", "user002"]
+    });
+    assert!(registry.create_channel("dingtalk", "dt-3", &at_user_ids_config).is_ok());
+
+    // 测试混合配置
+    let mixed_config = serde_json::json!({
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test",
+        "secret": "SEC_test",
+        "is_at_all": false,
+        "at_mobiles": ["13800138000"],
+        "at_user_ids": ["user001"]
+    });
+    assert!(registry.create_channel("dingtalk", "dt-4", &mixed_config).is_ok());
+
+    // 测试默认配置(不包含 @ 字段)
+    let default_config = serde_json::json!({
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test"
+    });
+    assert!(registry.create_channel("dingtalk", "dt-5", &default_config).is_ok());
+}
+
+#[test]
+fn dingtalk_channel_stores_at_config() {
+    // 验证可以创建包含 @ 配置的钉钉通道
+    // 测试 @ 所有人
+    let _channel_at_all = crate::channels::dingtalk::DingTalkChannel::new(
+        "test-at-all",
+        "https://oapi.dingtalk.com/robot/send?access_token=test",
+        Some("SEC_test".to_string()),
+        true,
+        vec![],
+        vec![],
+    );
+
+    // 测试 @ 手机号
+    let _channel_at_mobiles = crate::channels::dingtalk::DingTalkChannel::new(
+        "test-at-mobiles",
+        "https://oapi.dingtalk.com/robot/send?access_token=test",
+        None,
+        false,
+        vec!["13800138000".to_string(), "13900139000".to_string()],
+        vec![],
+    );
+
+    // 测试 @ 用户ID
+    let _channel_at_users = crate::channels::dingtalk::DingTalkChannel::new(
+        "test-at-users",
+        "https://oapi.dingtalk.com/robot/send?access_token=test",
+        None,
+        false,
+        vec![],
+        vec!["user001".to_string(), "user002".to_string()],
+    );
+
+    // 测试混合使用手机号和用户ID
+    let _channel_mixed = crate::channels::dingtalk::DingTalkChannel::new(
+        "test-mixed",
+        "https://oapi.dingtalk.com/robot/send?access_token=test",
+        Some("SEC_test".to_string()),
+        false,
+        vec!["13800138000".to_string()],
+        vec!["manager001".to_string()],
+    );
+
+    // 能成功创建说明配置正确
 }
 
 #[test]

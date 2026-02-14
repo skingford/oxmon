@@ -307,6 +307,21 @@ impl CertStore {
         conn.execute_batch(SYSTEM_DICTIONARIES_SCHEMA)?;
         conn.execute_batch(DICTIONARY_TYPES_SCHEMA)?;
         conn.execute_batch(NOTIFICATION_LOGS_SCHEMA)?;
+        // 迁移：为已有的 notification_logs 表补充新增列
+        for col in &[
+            "severity TEXT NOT NULL DEFAULT 'info'",
+            "http_status_code INTEGER",
+            "response_body TEXT",
+            "request_body TEXT",
+            "retry_count INTEGER NOT NULL DEFAULT 0",
+            "recipient_details TEXT",
+            "api_message_id TEXT",
+            "api_error_code TEXT",
+        ] {
+            let _ = conn.execute_batch(&format!(
+                "ALTER TABLE notification_logs ADD COLUMN {col};"
+            ));
+        }
 
         // 迁移：为已有的 notification_channels 表添加 description 列
         let _ =
@@ -3242,6 +3257,41 @@ mod tests {
         let searched = store.query_domains(None, Some("example"), 100, 0).unwrap();
         assert_eq!(searched.len(), 1);
         assert_eq!(searched[0].domain, "example.com");
+    }
+
+    #[test]
+    fn test_migrate_legacy_notification_logs_columns() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("cert.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE notification_logs (
+                id TEXT PRIMARY KEY,
+                alert_event_id TEXT NOT NULL,
+                rule_id TEXT NOT NULL,
+                rule_name TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                channel_name TEXT NOT NULL,
+                channel_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error_message TEXT,
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                recipient_count INTEGER NOT NULL DEFAULT 0,
+                severity TEXT NOT NULL DEFAULT 'info',
+                created_at INTEGER NOT NULL
+            );
+        ",
+        )
+        .unwrap();
+        drop(conn);
+
+        let store = CertStore::new(dir.path()).unwrap();
+        let logs = store
+            .list_notification_logs(&NotificationLogFilter::default(), 10, 0)
+            .unwrap();
+        assert!(logs.is_empty());
     }
 
     #[test]

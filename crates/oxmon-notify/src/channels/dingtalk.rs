@@ -26,15 +26,28 @@ pub struct DingTalkChannel {
     client: reqwest::Client,
     webhook_url: String,
     secret: Option<String>,
+    is_at_all: bool,
+    at_mobiles: Vec<String>,
+    at_user_ids: Vec<String>,
 }
 
 impl DingTalkChannel {
-    pub fn new(instance_id: &str, webhook_url: &str, secret: Option<String>) -> Self {
+    pub fn new(
+        instance_id: &str,
+        webhook_url: &str,
+        secret: Option<String>,
+        is_at_all: bool,
+        at_mobiles: Vec<String>,
+        at_user_ids: Vec<String>,
+    ) -> Self {
         Self {
             instance_id: instance_id.to_string(),
             client: reqwest::Client::new(),
             webhook_url: webhook_url.to_string(),
             secret,
+            is_at_all,
+            at_mobiles,
+            at_user_ids,
         }
     }
 
@@ -56,7 +69,10 @@ impl DingTalkChannel {
         format!("{}&timestamp={}&sign={}", base_url, timestamp, sign_encoded)
     }
 
-    fn format_markdown(alert: &AlertEvent) -> (String, String) {
+    fn format_markdown(
+        &self,
+        alert: &AlertEvent,
+    ) -> (String, String) {
         let status_tag = if alert.status == 3 { "[RECOVERED]" } else { "" };
         let rule_display = if alert.rule_name.is_empty() {
             alert.metric_name.clone()
@@ -78,6 +94,22 @@ impl DingTalkChannel {
         } else {
             format!("\n- **Rule**: {}", alert.rule_name)
         };
+
+        // 构建 @ 标记文本
+        let mut at_text = String::new();
+        if self.is_at_all {
+            at_text.push_str(" @所有人");
+        } else {
+            // @ 指定手机号
+            for mobile in &self.at_mobiles {
+                at_text.push_str(&format!(" @{}", mobile));
+            }
+            // @ 指定用户ID
+            for user_id in &self.at_user_ids {
+                at_text.push_str(&format!(" @{}", user_id));
+            }
+        }
+
         let text = format!(
             "### {title}\n\n\
              - **Severity**: {severity}{rule_line}\n\
@@ -86,7 +118,7 @@ impl DingTalkChannel {
              - **Value**: {value:.2}\n\
              - **Threshold**: {threshold:.2}\n\
              - **Time**: {time}\n\n\
-             > {message}",
+             > {message}{at_text}",
             title = title,
             severity = alert.severity,
             rule_line = rule_line,
@@ -97,6 +129,7 @@ impl DingTalkChannel {
             threshold = alert.threshold,
             time = alert.timestamp.to_rfc3339(),
             message = alert.message,
+            at_text = at_text,
         );
         (title, text)
     }
@@ -205,13 +238,28 @@ impl DingTalkChannel {
 #[async_trait]
 impl NotificationChannel for DingTalkChannel {
     async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<SendResponse> {
-        let (title, text) = Self::format_markdown(alert);
+        let (title, text) = self.format_markdown(alert);
+
+        // 构建 at 字段
+        let mut at_obj = serde_json::json!({
+            "isAtAll": self.is_at_all
+        });
+
+        if !self.at_mobiles.is_empty() {
+            at_obj["atMobiles"] = serde_json::json!(self.at_mobiles);
+        }
+
+        if !self.at_user_ids.is_empty() {
+            at_obj["atUserIds"] = serde_json::json!(self.at_user_ids);
+        }
+
         let payload = serde_json::json!({
             "msgtype": "markdown",
             "markdown": {
                 "title": title,
                 "text": text,
-            }
+            },
+            "at": at_obj
         });
 
         let payload_json = serde_json::to_string(&payload).unwrap_or_default();
@@ -292,6 +340,12 @@ impl NotificationChannel for DingTalkChannel {
 struct DingTalkConfig {
     webhook_url: String,
     secret: Option<String>,
+    #[serde(default)]
+    is_at_all: bool,
+    #[serde(default)]
+    at_mobiles: Vec<String>,
+    #[serde(default)]
+    at_user_ids: Vec<String>,
 }
 
 pub struct DingTalkPlugin;
@@ -322,6 +376,9 @@ impl ChannelPlugin for DingTalkPlugin {
             instance_id,
             &cfg.webhook_url,
             cfg.secret,
+            cfg.is_at_all,
+            cfg.at_mobiles,
+            cfg.at_user_ids,
         )))
     }
 

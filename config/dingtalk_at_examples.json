@@ -1,0 +1,122 @@
+{
+  "channels": [
+    {
+      "name": "钉钉-不@任何人",
+      "channel_type": "dingtalk",
+      "description": "默认行为,不 @ 任何人",
+      "min_severity": "info",
+      "enabled": true,
+      "config": {
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
+        "secret": "SEC_YOUR_SECRET"
+      },
+      "recipients": []
+    },
+    {
+      "name": "钉钉-@所有人(紧急)",
+      "channel_type": "dingtalk",
+      "description": "Critical 级别告警,@ 所有人",
+      "min_severity": "critical",
+      "enabled": true,
+      "config": {
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
+        "secret": "SEC_YOUR_SECRET",
+        "is_at_all": true
+      },
+      "recipients": []
+    },
+    {
+      "name": "钉钉-@指定手机号",
+      "channel_type": "dingtalk",
+      "description": "@ 运维团队成员(通过手机号)",
+      "min_severity": "warning",
+      "enabled": true,
+      "config": {
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
+        "secret": "SEC_YOUR_SECRET",
+        "is_at_all": false,
+        "at_mobiles": [
+          "13800138000",
+          "13900139000"
+        ]
+      },
+      "recipients": []
+    },
+    {
+      "name": "钉钉-@指定用户ID",
+      "channel_type": "dingtalk",
+      "description": "@ 开发团队成员(通过用户ID)",
+      "min_severity": "warning",
+      "enabled": true,
+      "config": {
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
+        "secret": "SEC_YOUR_SECRET",
+        "is_at_all": false,
+        "at_user_ids": [
+          "manager001",
+          "dev001",
+          "dev002"
+        ]
+      },
+      "recipients": []
+    },
+    {
+      "name": "钉钉-混合@(手机+ID)",
+      "channel_type": "dingtalk",
+      "description": "同时使用手机号和用户ID",
+      "min_severity": "warning",
+      "enabled": true,
+      "config": {
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
+        "secret": "SEC_YOUR_SECRET",
+        "is_at_all": false,
+        "at_mobiles": [
+          "13800138000"
+        ],
+        "at_user_ids": [
+          "manager001"
+        ]
+      },
+      "recipients": []
+    },
+    {
+      "name": "钉钉-值班组(工作日)",
+      "channel_type": "dingtalk",
+      "description": "工作日值班组,@ 当前值班人员",
+      "min_severity": "error",
+      "enabled": true,
+      "config": {
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
+        "secret": "SEC_YOUR_SECRET",
+        "is_at_all": false,
+        "at_mobiles": [
+          "13800138001"
+        ]
+      },
+      "recipients": []
+    },
+    {
+      "name": "钉钉-值班组(周末)",
+      "channel_type": "dingtalk",
+      "description": "周末值班组,@ 当前值班人员",
+      "min_severity": "error",
+      "enabled": false,
+      "config": {
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
+        "secret": "SEC_YOUR_SECRET",
+        "is_at_all": false,
+        "at_mobiles": [
+          "13800138002"
+        ]
+      },
+      "recipients": []
+    }
+  ],
+  "silence_windows": [
+    {
+      "start_time": "02:00",
+      "end_time": "04:00",
+      "recurrence": "daily"
+    }
+  ]
+}

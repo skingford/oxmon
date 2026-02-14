@@ -39,7 +39,10 @@
       "enabled": false,
       "config": {
         "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
-        "secret": "SEC_YOUR_SECRET"
+        "secret": "SEC_YOUR_SECRET",
+        "is_at_all": false,
+        "at_mobiles": [],
+        "at_user_ids": []
       },
       "recipients": []
     },
