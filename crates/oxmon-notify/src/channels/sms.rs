@@ -1,5 +1,5 @@
 use crate::plugin::ChannelPlugin;
-use crate::NotificationChannel;
+use crate::{NotificationChannel, SendResponse};
 use anyhow::Result;
 use async_trait::async_trait;
 use base64::Engine;
@@ -477,9 +477,12 @@ impl SmsChannel {
 
 #[async_trait]
 impl NotificationChannel for SmsChannel {
-    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<()> {
+    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<SendResponse> {
+        // TODO: 完善 SMS 渠道的详细响应记录
+        let response = SendResponse::default();
+
         if recipients.is_empty() {
-            return Ok(());
+            return Ok(response);
         }
 
         match &self.provider {
@@ -531,7 +534,9 @@ impl NotificationChannel for SmsChannel {
                 )
                 .await
             }
-        }
+        }?;
+
+        Ok(response)
     }
 
     fn channel_type(&self) -> &str {

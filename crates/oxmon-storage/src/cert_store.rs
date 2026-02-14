@@ -229,7 +229,14 @@ CREATE TABLE IF NOT EXISTS notification_logs (
     duration_ms INTEGER NOT NULL DEFAULT 0,
     recipient_count INTEGER NOT NULL DEFAULT 0,
     severity TEXT NOT NULL DEFAULT 'info',
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    http_status_code INTEGER,
+    response_body TEXT,
+    request_body TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    recipient_details TEXT,
+    api_message_id TEXT,
+    api_error_code TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_notif_logs_created_at ON notification_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_notif_logs_channel_id ON notification_logs(channel_id);
@@ -312,6 +319,15 @@ impl CertStore {
         let _ = conn.execute_batch(
             "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;",
         );
+
+        // 迁移：为已有的 notification_logs 表添加响应详情字段
+        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN http_status_code INTEGER;");
+        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN response_body TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN request_body TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;");
+        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN recipient_details TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN api_message_id TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN api_error_code TEXT;");
 
         let token_encryptor = TokenEncryptor::load_or_create(data_dir)?;
         tracing::info!(path = %db_path.display(), "Initialized cert store");
@@ -1694,8 +1710,8 @@ impl CertStore {
     pub fn insert_notification_log(&self, log: &NotificationLogRow) -> Result<()> {
         let conn = self.lock_conn();
         conn.execute(
-            "INSERT INTO notification_logs (id, alert_event_id, rule_id, rule_name, agent_id, channel_id, channel_name, channel_type, status, error_message, duration_ms, recipient_count, severity, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO notification_logs (id, alert_event_id, rule_id, rule_name, agent_id, channel_id, channel_name, channel_type, status, error_message, duration_ms, recipient_count, severity, created_at, http_status_code, response_body, request_body, retry_count, recipient_details, api_message_id, api_error_code)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
             rusqlite::params![
                 log.id,
                 log.alert_event_id,
@@ -1711,6 +1727,13 @@ impl CertStore {
                 log.recipient_count,
                 log.severity,
                 log.created_at.timestamp(),
+                log.http_status_code,
+                log.response_body,
+                log.request_body,
+                log.retry_count,
+                log.recipient_details,
+                log.api_message_id,
+                log.api_error_code,
             ],
         )?;
         Ok(())
@@ -1725,7 +1748,7 @@ impl CertStore {
         let conn = self.lock_conn();
         let (where_clause, params) = Self::build_notification_log_where(filter);
         let sql = format!(
-            "SELECT id, alert_event_id, rule_id, rule_name, agent_id, channel_id, channel_name, channel_type, status, error_message, duration_ms, recipient_count, severity, created_at
+            "SELECT id, alert_event_id, rule_id, rule_name, agent_id, channel_id, channel_name, channel_type, status, error_message, duration_ms, recipient_count, severity, created_at, http_status_code, response_body, request_body, retry_count, recipient_details, api_message_id, api_error_code
              FROM notification_logs {where_clause} ORDER BY created_at DESC LIMIT ?{} OFFSET ?{}",
             params.len() + 1,
             params.len() + 2,
@@ -1834,6 +1857,13 @@ impl CertStore {
             recipient_count: row.get(11)?,
             severity: row.get(12)?,
             created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+            http_status_code: row.get(14)?,
+            response_body: row.get(15)?,
+            request_body: row.get(16)?,
+            retry_count: row.get(17)?,
+            recipient_details: row.get(18)?,
+            api_message_id: row.get(19)?,
+            api_error_code: row.get(20)?,
         })
     }
 
@@ -3006,6 +3036,13 @@ pub struct NotificationLogRow {
     pub recipient_count: i32,
     pub severity: String,
     pub created_at: DateTime<Utc>,
+    pub http_status_code: Option<i32>,
+    pub response_body: Option<String>,
+    pub request_body: Option<String>,
+    pub retry_count: i32,
+    pub recipient_details: Option<String>,
+    pub api_message_id: Option<String>,
+    pub api_error_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

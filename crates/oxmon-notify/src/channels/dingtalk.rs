@@ -1,5 +1,5 @@
 use crate::plugin::ChannelPlugin;
-use crate::NotificationChannel;
+use crate::{NotificationChannel, RecipientResult, SendResponse};
 use anyhow::Result;
 use async_trait::async_trait;
 use base64::Engine;
@@ -11,6 +11,24 @@ use sha2::Sha256;
 use tracing;
 
 type HmacSha256 = Hmac<Sha256>;
+
+const MAX_BODY_LENGTH: usize = 4000;
+
+fn truncate_string(s: String, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s
+    } else {
+        format!("{}... [truncated]", &s[..max_len])
+    }
+}
+
+struct SendResult {
+    status_code: Option<u16>,
+    response_body: Option<String>,
+    error_code: Option<String>,
+    retries: u32,
+    error: Option<anyhow::Error>,
+}
 
 pub struct DingTalkChannel {
     instance_id: String,
@@ -92,9 +110,15 @@ impl DingTalkChannel {
         (title, text)
     }
 
-    async fn send_to_url(&self, url: &str, payload: &Value) -> Result<()> {
+    async fn send_to_url(&self, url: &str, payload: &Value) -> SendResult {
         let mut last_err = None;
+        let mut status_code: Option<u16> = None;
+        let mut response_body: Option<String> = None;
+        let mut error_code: Option<String> = None;
+        let mut attempts = 0u32;
+
         for attempt in 0..3u32 {
+            attempts = attempt + 1;
             match self
                 .client
                 .post(url)
@@ -103,64 +127,92 @@ impl DingTalkChannel {
                 .send()
                 .await
             {
-                Ok(resp) if resp.status().is_success() => {
-                    match resp.json::<Value>().await {
-                        Ok(body) => {
-                            if body.get("errcode").and_then(|v| v.as_i64()) == Some(0) {
-                                return Ok(());
-                            }
-                            let errmsg = body
-                                .get("errmsg")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("unknown");
-                            tracing::warn!(
-                                attempt = attempt + 1,
-                                errmsg = errmsg,
-                                "DingTalk API returned error, retrying"
-                            );
-                            last_err = Some(anyhow::anyhow!("DingTalk error: {errmsg}"));
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                attempt = attempt + 1,
-                                error = %e,
-                                "Failed to parse DingTalk response, retrying"
-                            );
-                            last_err = Some(e.into());
-                        }
-                    }
-                }
                 Ok(resp) => {
-                    let status = resp.status();
-                    tracing::warn!(
-                        attempt = attempt + 1,
-                        status = %status,
-                        "DingTalk webhook returned HTTP error, retrying"
-                    );
-                    last_err = Some(anyhow::anyhow!("HTTP {status}"));
+                    status_code = Some(resp.status().as_u16());
+                    if resp.status().is_success() {
+                        match resp.json::<Value>().await {
+                            Ok(body) => {
+                                let body_str = truncate_string(serde_json::to_string(&body).unwrap_or_default(), MAX_BODY_LENGTH);
+                                response_body = Some(body_str);
+
+                                let errcode = body.get("errcode").and_then(|v| v.as_i64());
+                                if errcode == Some(0) {
+                                    return SendResult {
+                                        status_code,
+                                        response_body,
+                                        error_code: None,
+                                        retries: attempts.saturating_sub(1),
+                                        error: None,
+                                    };
+                                }
+
+                                let errmsg = body
+                                    .get("errmsg")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown");
+                                error_code = errcode.map(|c| c.to_string());
+                                tracing::warn!(
+                                    attempt = attempts,
+                                    errmsg = errmsg,
+                                    "DingTalk API returned error, retrying"
+                                );
+                                last_err = Some(anyhow::anyhow!("DingTalk error: {errmsg}"));
+                            }
+                            Err(e) => {
+                                response_body = Some(format!("[Failed to parse response: {}]", e));
+                                tracing::warn!(
+                                    attempt = attempts,
+                                    error = %e,
+                                    "Failed to parse DingTalk response, retrying"
+                                );
+                                last_err = Some(e.into());
+                            }
+                        }
+                    } else {
+                        let status = resp.status();
+                        response_body = match resp.text().await {
+                            Ok(text) => Some(truncate_string(text, MAX_BODY_LENGTH)),
+                            Err(_) => Some("[Failed to read response body]".to_string()),
+                        };
+                        tracing::warn!(
+                            attempt = attempts,
+                            status = %status,
+                            "DingTalk webhook returned HTTP error, retrying"
+                        );
+                        last_err = Some(anyhow::anyhow!("HTTP {status}"));
+                    }
                 }
                 Err(e) => {
                     tracing::warn!(
-                        attempt = attempt + 1,
+                        attempt = attempts,
                         error = %e,
                         "DingTalk webhook request failed, retrying"
                     );
                     last_err = Some(e.into());
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt))).await;
+            if attempt < 2 {
+                tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt))).await;
+            }
         }
 
-        if let Some(e) = last_err {
+        if let Some(ref e) = last_err {
             tracing::error!(error = %e, "DingTalk notification failed after 3 retries");
         }
-        Ok(())
+
+        SendResult {
+            status_code,
+            response_body,
+            error_code,
+            retries: attempts.saturating_sub(1),
+            error: last_err,
+        }
     }
 }
 
 #[async_trait]
 impl NotificationChannel for DingTalkChannel {
-    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<()> {
+    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<SendResponse> {
         let (title, text) = Self::format_markdown(alert);
         let payload = serde_json::json!({
             "msgtype": "markdown",
@@ -170,19 +222,58 @@ impl NotificationChannel for DingTalkChannel {
             }
         });
 
+        let request_body = truncate_string(serde_json::to_string(&payload).unwrap_or_default(), MAX_BODY_LENGTH);
+        let mut response = SendResponse {
+            request_body: Some(request_body),
+            ..Default::default()
+        };
+
+        let mut recipient_results = Vec::new();
+        let mut total_retries = 0u32;
+        let mut last_status: Option<u16> = None;
+        let mut last_response_body: Option<String> = None;
+        let mut last_error_code: Option<String> = None;
+
         if recipients.is_empty() {
             // 使用 config 中的默认 webhook_url
             let url = self.sign_url(&self.webhook_url);
-            self.send_to_url(&url, &payload).await?;
+            let result = self.send_to_url(&url, &payload).await;
+
+            total_retries += result.retries;
+            last_status = result.status_code;
+            last_response_body = result.response_body.clone();
+            last_error_code = result.error_code.clone();
+
+            recipient_results.push(RecipientResult {
+                recipient: self.webhook_url.clone(),
+                status: if result.error.is_none() { "success".to_string() } else { "failed".to_string() },
+                error: result.error.as_ref().map(|e| e.to_string()),
+            });
         } else {
             // recipients 是额外的 webhook URL 列表
             for webhook in recipients {
                 let url = self.sign_url(webhook);
-                self.send_to_url(&url, &payload).await?;
+                let result = self.send_to_url(&url, &payload).await;
+
+                total_retries += result.retries;
+                last_status = result.status_code;
+                last_response_body = result.response_body.clone();
+                last_error_code = result.error_code.clone();
+
+                recipient_results.push(RecipientResult {
+                    recipient: webhook.clone(),
+                    status: if result.error.is_none() { "success".to_string() } else { "failed".to_string() },
+                    error: result.error.as_ref().map(|e| e.to_string()),
+                });
             }
         }
 
-        Ok(())
+        response.retry_count = total_retries;
+        response.recipient_results = recipient_results;
+        response.http_status = last_status;
+        response.response_body = last_response_body;
+        response.api_error_code = last_error_code;
+        Ok(response)
     }
 
     fn channel_type(&self) -> &str {

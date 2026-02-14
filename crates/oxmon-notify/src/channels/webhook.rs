@@ -1,11 +1,21 @@
 use crate::plugin::ChannelPlugin;
-use crate::NotificationChannel;
+use crate::{NotificationChannel, RecipientResult, SendResponse};
 use anyhow::Result;
 use async_trait::async_trait;
 use oxmon_common::types::AlertEvent;
 use serde::Deserialize;
 use serde_json::Value;
 use tracing;
+
+const MAX_BODY_LENGTH: usize = 4000;
+
+fn truncate_string(s: String, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s
+    } else {
+        format!("{}... [truncated]", &s[..max_len])
+    }
+}
 
 pub struct WebhookChannel {
     instance_id: String,
@@ -57,16 +67,28 @@ impl WebhookChannel {
 
 #[async_trait]
 impl NotificationChannel for WebhookChannel {
-    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<()> {
+    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<SendResponse> {
+        let mut response = SendResponse {
+            retry_count: 0,
+            request_body: Some(truncate_string(self.render_body(alert), MAX_BODY_LENGTH)),
+            ..Default::default()
+        };
+
         if recipients.is_empty() {
-            return Ok(());
+            return Ok(response);
         }
 
         let body = self.render_body(alert);
+        let mut total_retries = 0u32;
+        let mut recipient_results = Vec::new();
+        let mut last_status: Option<u16> = None;
+        let mut last_response_body: Option<String> = None;
 
         for url in recipients {
             let mut last_err = None;
+            let mut attempts = 0u32;
             for attempt in 0..3u32 {
+                attempts = attempt + 1;
                 match self
                     .client
                     .post(url.as_str())
@@ -75,37 +97,66 @@ impl NotificationChannel for WebhookChannel {
                     .send()
                     .await
                 {
-                    Ok(resp) if resp.status().is_success() => {
-                        last_err = None;
-                        break;
-                    }
                     Ok(resp) => {
                         let status = resp.status();
-                        tracing::warn!(
-                            attempt = attempt + 1,
-                            status = %status,
-                            "Webhook returned non-success status, retrying"
-                        );
-                        last_err = Some(anyhow::anyhow!("HTTP {status}"));
+                        last_status = Some(status.as_u16());
+
+                        // 尝试读取响应 body（限制大小）
+                        let resp_body = match resp.text().await {
+                            Ok(text) => truncate_string(text, MAX_BODY_LENGTH),
+                            Err(e) => format!("[Failed to read response body: {}]", e),
+                        };
+                        last_response_body = Some(resp_body.clone());
+
+                        if status.is_success() {
+                            last_err = None;
+                            break;
+                        } else {
+                            tracing::warn!(
+                                attempt = attempts,
+                                status = %status,
+                                "Webhook returned non-success status, retrying"
+                            );
+                            last_err = Some(anyhow::anyhow!("HTTP {status}: {}", resp_body));
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(
-                            attempt = attempt + 1,
+                            attempt = attempts,
                             error = %e,
                             "Webhook send failed, retrying"
                         );
                         last_err = Some(e.into());
                     }
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt))).await;
+                if attempt < 2 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt))).await;
+                }
             }
+
+            total_retries += attempts.saturating_sub(1);
 
             if let Some(e) = last_err {
                 tracing::error!(url = %url, error = %e, "Webhook failed after 3 retries");
+                recipient_results.push(RecipientResult {
+                    recipient: url.clone(),
+                    status: "failed".to_string(),
+                    error: Some(e.to_string()),
+                });
+            } else {
+                recipient_results.push(RecipientResult {
+                    recipient: url.clone(),
+                    status: "success".to_string(),
+                    error: None,
+                });
             }
         }
 
-        Ok(())
+        response.retry_count = total_retries;
+        response.recipient_results = recipient_results;
+        response.http_status = last_status;
+        response.response_body = last_response_body;
+        Ok(response)
     }
 
     fn channel_type(&self) -> &str {

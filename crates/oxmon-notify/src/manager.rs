@@ -9,6 +9,25 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::Instant;
 use tracing;
 
+const MAX_BODY_LENGTH: usize = 4000;
+
+/// 截断字符串到指定长度
+fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}... [truncated]", &s[..max_len])
+    }
+}
+
+/// 将接收者结果列表序列化为 JSON 字符串
+fn serialize_recipient_results(response: &SendResponse) -> Option<String> {
+    if response.recipient_results.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&response.recipient_results).ok()
+}
+
 pub struct SilenceWindow {
     pub start: NaiveTime,
     pub end: NaiveTime,
@@ -41,6 +60,26 @@ struct AggregationEntry {
     first_seen: DateTime<Utc>,
 }
 
+/// 单个接收者的发送结果
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RecipientResult {
+    pub recipient: String,
+    pub status: String,  // "success" | "failed"
+    pub error: Option<String>,
+}
+
+/// 通知发送的详细响应信息
+#[derive(Debug, Clone, Default)]
+pub struct SendResponse {
+    pub http_status: Option<u16>,
+    pub response_body: Option<String>,
+    pub request_body: Option<String>,
+    pub retry_count: u32,
+    pub recipient_results: Vec<RecipientResult>,
+    pub api_message_id: Option<String>,
+    pub api_error_code: Option<String>,
+}
+
 /// 通知发送结果上下文，用于记录日志。
 pub struct SendLogContext<'a> {
     pub channel_id: &'a str,
@@ -48,6 +87,7 @@ pub struct SendLogContext<'a> {
     pub channel_type: &'a str,
     pub duration_ms: i64,
     pub recipient_count: i32,
+    pub response: Option<SendResponse>,
 }
 
 pub struct NotificationManager {
@@ -286,14 +326,18 @@ impl NotificationManager {
             let result = instance.channel.send(event, &instance.recipients).await;
             let duration_ms = start.elapsed().as_millis() as i64;
 
-            if let Err(ref e) = result {
-                tracing::error!(
-                    channel_id = %channel_id,
-                    channel_type = %instance.channel_type,
-                    error = %e,
-                    "Failed to send notification"
-                );
-            }
+            let (send_result, response) = match result {
+                Ok(resp) => (Ok(()), Some(resp)),
+                Err(e) => {
+                    tracing::error!(
+                        channel_id = %channel_id,
+                        channel_type = %instance.channel_type,
+                        error = %e,
+                        "Failed to send notification"
+                    );
+                    (Err(anyhow::anyhow!("{e}")), None)
+                }
+            };
 
             let ctx = SendLogContext {
                 channel_id,
@@ -301,8 +345,8 @@ impl NotificationManager {
                 channel_type: &instance.channel_type,
                 duration_ms,
                 recipient_count: instance.recipients.len() as i32,
+                response,
             };
-            let send_result = result.map(|_| ()).map_err(|e| anyhow::anyhow!("{e}"));
             Self::record_send_log(&self.cert_store, event, &ctx, &send_result);
         }
     }
@@ -321,6 +365,22 @@ impl NotificationManager {
             Err(e) => ("failed", Some(e.to_string())),
         };
 
+        // 从 SendResponse 提取详细信息
+        let (http_status, response_body, request_body, retry_count, recipient_details, api_message_id, api_error_code) =
+            if let Some(ref resp) = ctx.response {
+                (
+                    resp.http_status.map(|s| s as i32),
+                    resp.response_body.as_ref().map(|s| truncate_string(s, MAX_BODY_LENGTH)),
+                    resp.request_body.as_ref().map(|s| truncate_string(s, MAX_BODY_LENGTH)),
+                    resp.retry_count as i32,
+                    serialize_recipient_results(resp),
+                    resp.api_message_id.clone(),
+                    resp.api_error_code.clone(),
+                )
+            } else {
+                (None, None, None, 0, None, None, None)
+            };
+
         let log = NotificationLogRow {
             id: oxmon_common::id::next_id(),
             alert_event_id: event.id.clone(),
@@ -336,6 +396,13 @@ impl NotificationManager {
             recipient_count: ctx.recipient_count,
             severity: event.severity.to_string(),
             created_at: Utc::now(),
+            http_status_code: http_status,
+            response_body,
+            request_body,
+            retry_count,
+            recipient_details,
+            api_message_id,
+            api_error_code,
         };
 
         if let Err(e) = cert_store.insert_notification_log(&log) {

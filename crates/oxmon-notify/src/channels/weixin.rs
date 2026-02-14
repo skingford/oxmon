@@ -1,5 +1,5 @@
 use crate::plugin::ChannelPlugin;
-use crate::NotificationChannel;
+use crate::{NotificationChannel, SendResponse};
 use anyhow::Result;
 use async_trait::async_trait;
 use oxmon_common::types::AlertEvent;
@@ -131,7 +131,10 @@ impl WeixinChannel {
 
 #[async_trait]
 impl NotificationChannel for WeixinChannel {
-    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<()> {
+    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<SendResponse> {
+        // TODO: 完善 Weixin 渠道的详细响应记录
+        let response = SendResponse::default();
+
         let content = Self::format_markdown(alert);
         let payload = serde_json::json!({
             "msgtype": "markdown",
@@ -148,7 +151,7 @@ impl NotificationChannel for WeixinChannel {
             }
         }
 
-        Ok(())
+        Ok(response)
     }
 
     fn channel_type(&self) -> &str {

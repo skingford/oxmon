@@ -931,6 +931,13 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
         recipient_count: 2,
         severity: "warning".to_string(),
         created_at: now,
+        http_status_code: None,
+        response_body: None,
+        request_body: None,
+        retry_count: 0,
+        recipient_details: None,
+        api_message_id: None,
+        api_error_code: None,
     };
     ctx.state.cert_store.insert_notification_log(&log1).unwrap();
 
@@ -949,6 +956,13 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
         recipient_count: 1,
         severity: "critical".to_string(),
         created_at: now,
+        http_status_code: Some(500),
+        response_body: Some("Internal Server Error".to_string()),
+        request_body: Some("{\"test\":\"data\"}".to_string()),
+        retry_count: 2,
+        recipient_details: Some("[{\"recipient\":\"https://example.com\",\"status\":\"failed\"}]".to_string()),
+        api_message_id: None,
+        api_error_code: None,
     };
     ctx.state.cert_store.insert_notification_log(&log2).unwrap();
 

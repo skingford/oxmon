@@ -1,5 +1,5 @@
 use crate::plugin::ChannelPlugin;
-use crate::NotificationChannel;
+use crate::{NotificationChannel, RecipientResult, SendResponse};
 use anyhow::Result;
 use async_trait::async_trait;
 use lettre::message::header::ContentType;
@@ -70,9 +70,14 @@ impl EmailChannel {
 
 #[async_trait]
 impl NotificationChannel for EmailChannel {
-    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<()> {
+    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<SendResponse> {
+        let mut response = SendResponse {
+            retry_count: 0,
+            ..Default::default()
+        };
+
         if recipients.is_empty() {
-            return Ok(());
+            return Ok(response);
         }
 
         let status_tag = if alert.status == 3 { "[RECOVERED]" } else { "" };
@@ -87,6 +92,9 @@ impl NotificationChannel for EmailChannel {
         );
         let body = Self::format_body(alert);
 
+        let mut total_retries = 0u32;
+        let mut recipient_results = Vec::new();
+
         for recipient in recipients {
             let email = Message::builder()
                 .from(self.from.parse()?)
@@ -96,7 +104,9 @@ impl NotificationChannel for EmailChannel {
                 .body(body.clone())?;
 
             let mut last_err = None;
+            let mut attempts = 0u32;
             for attempt in 0..3 {
+                attempts = attempt + 1;
                 match self.transport.send(email.clone()).await {
                     Ok(_) => {
                         last_err = None;
@@ -104,26 +114,43 @@ impl NotificationChannel for EmailChannel {
                     }
                     Err(e) => {
                         tracing::warn!(
-                            attempt = attempt + 1,
+                            attempt = attempts,
                             recipient = %recipient,
                             error = %e,
                             "Email send failed, retrying"
                         );
                         last_err = Some(e);
-                        tokio::time::sleep(std::time::Duration::from_millis(
-                            100 * 2u64.pow(attempt),
-                        ))
-                        .await;
+                        if attempt < 2 {
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                100 * 2u64.pow(attempt),
+                            ))
+                            .await;
+                        }
                     }
                 }
             }
 
+            total_retries += attempts.saturating_sub(1);
+
             if let Some(e) = last_err {
                 tracing::error!(recipient = %recipient, error = %e, "Email send failed after 3 retries");
+                recipient_results.push(RecipientResult {
+                    recipient: recipient.clone(),
+                    status: "failed".to_string(),
+                    error: Some(e.to_string()),
+                });
+            } else {
+                recipient_results.push(RecipientResult {
+                    recipient: recipient.clone(),
+                    status: "success".to_string(),
+                    error: None,
+                });
             }
         }
 
-        Ok(())
+        response.retry_count = total_retries;
+        response.recipient_results = recipient_results;
+        Ok(response)
     }
 
     fn channel_type(&self) -> &str {

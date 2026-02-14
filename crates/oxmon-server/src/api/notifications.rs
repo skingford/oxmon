@@ -186,13 +186,18 @@ async fn test_channel(
     let duration_ms = start.elapsed().as_millis() as i64;
 
     // 记录通知发送日志（测试通知也纳入日志记录）
-    let send_result = result.as_ref().map(|_| ()).map_err(|e| anyhow::anyhow!("{e}"));
+    let (send_result, response) = match &result {
+        Ok(resp) => (Ok(()), Some(resp.clone())),
+        Err(e) => (Err(anyhow::anyhow!("{e}")), None),
+    };
+
     let ctx = oxmon_notify::manager::SendLogContext {
         channel_id: &ch.id,
         channel_name: &ch.name,
         channel_type: &ch.channel_type,
         duration_ms,
         recipient_count: recipients.len() as i32,
+        response,
     };
     oxmon_notify::manager::NotificationManager::record_send_log(
         state.notifier.cert_store(),
@@ -202,7 +207,7 @@ async fn test_channel(
     );
 
     match result {
-        Ok(()) => success_empty_response(StatusCode::OK, &trace_id, "Test notification sent"),
+        Ok(_) => success_empty_response(StatusCode::OK, &trace_id, "Test notification sent"),
         Err(e) => {
             tracing::error!(error = %e, "Test notification failed");
             error_response(
@@ -748,6 +753,13 @@ struct NotificationLogItem {
     recipient_count: i32,
     severity: String,
     created_at: String,
+    http_status_code: Option<i32>,
+    response_body: Option<String>,
+    request_body: Option<String>,
+    retry_count: i32,
+    recipient_details: Option<String>,
+    api_message_id: Option<String>,
+    api_error_code: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -820,6 +832,13 @@ async fn list_notification_logs(
                     recipient_count: r.recipient_count,
                     severity: r.severity,
                     created_at: r.created_at.to_rfc3339(),
+                    http_status_code: r.http_status_code,
+                    response_body: r.response_body,
+                    request_body: r.request_body,
+                    retry_count: r.retry_count,
+                    recipient_details: r.recipient_details,
+                    api_message_id: r.api_message_id,
+                    api_error_code: r.api_error_code,
                 })
                 .collect();
             success_response(
