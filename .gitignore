@@ -29,3 +29,5 @@ data/
 # Local config files (may contain secrets)
 config/server.toml
 config/agent.toml
+
+.env

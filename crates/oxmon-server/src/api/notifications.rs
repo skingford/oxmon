@@ -392,8 +392,23 @@ async fn update_channel_config(
     Path(id): Path<String>,
     Json(update): Json<NotificationChannelUpdate>,
 ) -> impl IntoResponse {
+    // 如果提供了 recipients，先保存以便后续更新
+    let recipients_to_update = update.recipients.clone();
+
     match state.cert_store.update_notification_channel(&id, &update) {
         Ok(Some(ch)) => {
+            // 如果提供了 recipients，同时更新收件人列表
+            if let Some(recipients) = recipients_to_update {
+                if let Err(e) = state.cert_store.set_channel_recipients(&id, &recipients) {
+                    tracing::warn!(
+                        channel_id = %id,
+                        error = %e,
+                        "Failed to update recipients during channel config update"
+                    );
+                    // 收件人更新失败不影响通道配置更新成功
+                }
+            }
+
             if let Err(e) = state.notifier.reload().await {
                 tracing::warn!(error = %e, "Failed to reload channels after update");
             }

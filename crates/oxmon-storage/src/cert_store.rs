@@ -2944,6 +2944,8 @@ pub struct NotificationChannelUpdate {
     pub min_severity: Option<String>,
     pub enabled: Option<bool>,
     pub config_json: Option<String>,
+    /// 可选：同时更新收件人列表（会替换现有收件人）
+    pub recipients: Option<Vec<String>>,
 }
 
 /// 系统配置行（发送方配置：SMTP、短信供应商等）
