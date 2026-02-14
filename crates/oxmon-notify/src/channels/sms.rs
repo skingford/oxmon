@@ -1,5 +1,6 @@
 use crate::plugin::ChannelPlugin;
-use crate::{NotificationChannel, SendResponse};
+use crate::utils::{truncate_string, MAX_BODY_LENGTH};
+use crate::{NotificationChannel, RecipientResult, SendResponse};
 use anyhow::Result;
 use async_trait::async_trait;
 use base64::Engine;
@@ -10,6 +11,17 @@ use serde_json::Value;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use tracing;
+
+/// 单个手机号的发送结果
+struct PhoneSendResult {
+    phone: String,
+    status_code: Option<u16>,
+    response_body: Option<String>,
+    message_id: Option<String>,
+    error_code: Option<String>,
+    retries: u32,
+    error: Option<anyhow::Error>,
+}
 
 // ── Provider configs ──
 
@@ -119,8 +131,9 @@ impl SmsChannel {
         api_key: &str,
         alert: &AlertEvent,
         recipients: &[String],
-    ) -> Result<()> {
+    ) -> Vec<PhoneSendResult> {
         let message = Self::format_message(alert);
+        let mut results = Vec::new();
 
         for phone in recipients {
             let payload = serde_json::json!({
@@ -129,7 +142,12 @@ impl SmsChannel {
             });
 
             let mut last_err = None;
+            let mut status_code: Option<u16> = None;
+            let mut response_body: Option<String> = None;
+            let mut attempts = 0u32;
+
             for attempt in 0..3u32 {
+                attempts = attempt + 1;
                 match self
                     .client
                     .post(gateway_url)
@@ -138,29 +156,54 @@ impl SmsChannel {
                     .send()
                     .await
                 {
-                    Ok(resp) if resp.status().is_success() => {
-                        last_err = None;
-                        break;
-                    }
                     Ok(resp) => {
+                        status_code = Some(resp.status().as_u16());
                         let status = resp.status();
-                        tracing::warn!(attempt = attempt + 1, phone = %phone, status = %status, "SMS gateway returned error, retrying");
-                        last_err = Some(anyhow::anyhow!("HTTP {status}"));
+
+                        // 读取响应 body
+                        let body_text = match resp.text().await {
+                            Ok(text) => text,
+                            Err(e) => {
+                                last_err = Some(e.into());
+                                continue;
+                            }
+                        };
+                        response_body = Some(truncate_string(&body_text, MAX_BODY_LENGTH));
+
+                        if status.is_success() {
+                            last_err = None;
+                            break;
+                        } else {
+                            tracing::warn!(attempt = attempts, phone = %phone, status = %status, "SMS gateway returned error, retrying");
+                            last_err = Some(anyhow::anyhow!("HTTP {status}: {}", body_text));
+                        }
                     }
                     Err(e) => {
-                        tracing::warn!(attempt = attempt + 1, phone = %phone, error = %e, "SMS send failed, retrying");
+                        tracing::warn!(attempt = attempts, phone = %phone, error = %e, "SMS send failed, retrying");
                         last_err = Some(e.into());
                     }
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt)))
-                    .await;
+                if attempt < 2 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt)))
+                        .await;
+                }
             }
 
-            if let Some(e) = last_err {
+            if let Some(ref e) = last_err {
                 tracing::error!(phone = %phone, error = %e, "SMS failed after 3 retries");
             }
+
+            results.push(PhoneSendResult {
+                phone: phone.clone(),
+                status_code,
+                response_body,
+                message_id: None, // Generic provider 不返回 message_id
+                error_code: None,
+                retries: attempts.saturating_sub(1),
+                error: last_err,
+            });
         }
-        Ok(())
+        results
     }
 
     // ── Aliyun ──
@@ -223,8 +266,9 @@ impl SmsChannel {
         endpoint: &str,
         alert: &AlertEvent,
         recipients: &[String],
-    ) -> Result<()> {
+    ) -> Vec<PhoneSendResult> {
         let message = Self::format_message(alert);
+        let mut results = Vec::new();
 
         for phone in recipients {
             let nonce = format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
@@ -261,46 +305,82 @@ impl SmsChannel {
             let url = format!("https://{}/?{}", endpoint, qs);
 
             let mut last_err = None;
+            let mut status_code: Option<u16> = None;
+            let mut response_body: Option<String> = None;
+            let mut message_id: Option<String> = None;
+            let mut error_code: Option<String> = None;
+            let mut attempts = 0u32;
+
             for attempt in 0..3u32 {
+                attempts = attempt + 1;
                 match self.client.get(&url).send().await {
-                    Ok(resp) if resp.status().is_success() => {
-                        match resp.json::<serde_json::Value>().await {
-                            Ok(body) => {
-                                if body.get("Code").and_then(|v: &Value| v.as_str()) == Some("OK") {
-                                    last_err = None;
-                                    break;
+                    Ok(resp) => {
+                        status_code = Some(resp.status().as_u16());
+                        let status = resp.status();
+
+                        if status.is_success() {
+                            match resp.json::<serde_json::Value>().await {
+                                Ok(body) => {
+                                    let body_json = serde_json::to_string(&body).unwrap_or_default();
+                                    response_body = Some(truncate_string(&body_json, MAX_BODY_LENGTH));
+
+                                    let code = body.get("Code").and_then(|v: &Value| v.as_str());
+                                    if code == Some("OK") {
+                                        // 提取 BizId 作为 message_id
+                                        message_id = body.get("BizId").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                        last_err = None;
+                                        break;
+                                    }
+
+                                    error_code = code.map(|s| s.to_string());
+                                    let errmsg = body
+                                        .get("Message")
+                                        .and_then(|v: &Value| v.as_str())
+                                        .unwrap_or("unknown");
+                                    tracing::warn!(attempt = attempts, phone = %phone, error = errmsg, "Aliyun SMS API error, retrying");
+                                    last_err = Some(anyhow::anyhow!("Aliyun SMS error: {errmsg}"));
                                 }
-                                let errmsg = body
-                                    .get("Message")
-                                    .and_then(|v: &Value| v.as_str())
-                                    .unwrap_or("unknown");
-                                tracing::warn!(attempt = attempt + 1, phone = %phone, error = errmsg, "Aliyun SMS API error, retrying");
-                                last_err = Some(anyhow::anyhow!("Aliyun SMS error: {errmsg}"));
+                                Err(e) => {
+                                    response_body = Some(format!("[Failed to parse response: {}]", e));
+                                    last_err = Some(anyhow::anyhow!("Aliyun SMS response parse error: {e}"));
+                                }
                             }
-                            Err(e) => {
-                                last_err = Some(anyhow::anyhow!("Aliyun SMS response parse error: {e}"));
-                            }
+                        } else {
+                            let body_text = match resp.text().await {
+                                Ok(text) => truncate_string(&text, MAX_BODY_LENGTH),
+                                Err(_) => "[Failed to read response body]".to_string(),
+                            };
+                            response_body = Some(body_text.clone());
+                            tracing::warn!(attempt = attempts, phone = %phone, status = %status, "Aliyun SMS HTTP error, retrying");
+                            last_err = Some(anyhow::anyhow!("HTTP {status}"));
                         }
                     }
-                    Ok(resp) => {
-                        let status = resp.status();
-                        tracing::warn!(attempt = attempt + 1, phone = %phone, status = %status, "Aliyun SMS HTTP error, retrying");
-                        last_err = Some(anyhow::anyhow!("HTTP {status}"));
-                    }
                     Err(e) => {
-                        tracing::warn!(attempt = attempt + 1, phone = %phone, error = %e, "Aliyun SMS request failed, retrying");
+                        tracing::warn!(attempt = attempts, phone = %phone, error = %e, "Aliyun SMS request failed, retrying");
                         last_err = Some(anyhow::anyhow!("Aliyun SMS request error: {e}"));
                     }
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt)))
-                    .await;
+                if attempt < 2 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt)))
+                        .await;
+                }
             }
 
-            if let Some(e) = last_err {
+            if let Some(ref e) = last_err {
                 tracing::error!(phone = %phone, error = %e, "Aliyun SMS failed after 3 retries");
             }
+
+            results.push(PhoneSendResult {
+                phone: phone.clone(),
+                status_code,
+                response_body,
+                message_id,
+                error_code,
+                retries: attempts.saturating_sub(1),
+                error: last_err,
+            });
         }
-        Ok(())
+        results
     }
 
     // ── Tencent ──
@@ -382,7 +462,7 @@ impl SmsChannel {
         region: &str,
         alert: &AlertEvent,
         recipients: &[String],
-    ) -> Result<()> {
+    ) -> Vec<PhoneSendResult> {
         // Build template params: if user provided custom ones, use them; otherwise use alert message
         let tpl_params = if template_params.is_empty() {
             let msg = Self::format_message(alert);
@@ -419,7 +499,15 @@ impl SmsChannel {
         let url = format!("https://{}", endpoint);
 
         let mut last_err = None;
+        let mut status_code: Option<u16> = None;
+        let mut response_body: Option<String> = None;
+        let mut request_id: Option<String> = None;
+        let mut error_code: Option<String> = None;
+        let mut send_status_set: Option<Vec<Value>> = None;
+        let mut attempts = 0u32;
+
         for attempt in 0..3u32 {
+            attempts = attempt + 1;
             match self
                 .client
                 .post(&url)
@@ -434,42 +522,120 @@ impl SmsChannel {
                 .send()
                 .await
             {
-                Ok(resp) if resp.status().is_success() => {
-                    match resp.json::<serde_json::Value>().await {
-                        Ok(body) => {
-                            if body.pointer("/Response/Error").is_none() {
-                                last_err = None;
-                                break;
+                Ok(resp) => {
+                    status_code = Some(resp.status().as_u16());
+                    let status = resp.status();
+
+                    if status.is_success() {
+                        match resp.json::<serde_json::Value>().await {
+                            Ok(body) => {
+                                let body_json = serde_json::to_string(&body).unwrap_or_default();
+                                response_body = Some(truncate_string(&body_json, MAX_BODY_LENGTH));
+
+                                // 提取 RequestId
+                                request_id = body.pointer("/Response/RequestId")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+
+                                if body.pointer("/Response/Error").is_none() {
+                                    // 成功，提取 SendStatusSet
+                                    if let Some(arr) = body.pointer("/Response/SendStatusSet").and_then(|v| v.as_array()) {
+                                        send_status_set = Some(arr.clone());
+                                    }
+                                    last_err = None;
+                                    break;
+                                }
+
+                                error_code = body.pointer("/Response/Error/Code")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+
+                                let errmsg = body
+                                    .pointer("/Response/Error/Message")
+                                    .and_then(|v: &Value| v.as_str())
+                                    .unwrap_or("unknown");
+                                tracing::warn!(attempt = attempts, error = errmsg, "Tencent SMS API error, retrying");
+                                last_err = Some(anyhow::anyhow!("Tencent SMS error: {errmsg}"));
                             }
-                            let errmsg = body
-                                .pointer("/Response/Error/Message")
-                                .and_then(|v: &Value| v.as_str())
-                                .unwrap_or("unknown");
-                            tracing::warn!(attempt = attempt + 1, error = errmsg, "Tencent SMS API error, retrying");
-                            last_err = Some(anyhow::anyhow!("Tencent SMS error: {errmsg}"));
+                            Err(e) => {
+                                response_body = Some(format!("[Failed to parse response: {}]", e));
+                                last_err = Some(anyhow::anyhow!("Tencent SMS response parse error: {e}"));
+                            }
                         }
-                        Err(e) => {
-                            last_err = Some(anyhow::anyhow!("Tencent SMS response parse error: {e}"));
-                        }
+                    } else {
+                        let body_text = match resp.text().await {
+                            Ok(text) => truncate_string(&text, MAX_BODY_LENGTH),
+                            Err(_) => "[Failed to read response body]".to_string(),
+                        };
+                        response_body = Some(body_text);
+                        tracing::warn!(attempt = attempts, status = %status, "Tencent SMS HTTP error, retrying");
+                        last_err = Some(anyhow::anyhow!("HTTP {status}"));
                     }
                 }
-                Ok(resp) => {
-                    let status = resp.status();
-                    tracing::warn!(attempt = attempt + 1, status = %status, "Tencent SMS HTTP error, retrying");
-                    last_err = Some(anyhow::anyhow!("HTTP {status}"));
-                }
                 Err(e) => {
-                    tracing::warn!(attempt = attempt + 1, error = %e, "Tencent SMS request failed, retrying");
+                    tracing::warn!(attempt = attempts, error = %e, "Tencent SMS request failed, retrying");
                     last_err = Some(anyhow::anyhow!("Tencent SMS request error: {e}"));
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt))).await;
+            if attempt < 2 {
+                tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt))).await;
+            }
         }
 
-        if let Some(e) = last_err {
+        if let Some(ref e) = last_err {
             tracing::error!(error = %e, "Tencent SMS failed after 3 retries");
         }
-        Ok(())
+
+        // 构建每个手机号的结果
+        let mut results = Vec::new();
+
+        if let Some(status_set) = send_status_set {
+            // 解析 SendStatusSet，为每个手机号创建结果
+            for (idx, phone) in recipients.iter().enumerate() {
+                if let Some(status_obj) = status_set.get(idx) {
+                    let code = status_obj.get("Code").and_then(|v| v.as_str()).unwrap_or("");
+                    let msg_id = status_obj.get("SerialNo").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let is_success = code == "Ok";
+
+                    results.push(PhoneSendResult {
+                        phone: phone.clone(),
+                        status_code,
+                        response_body: response_body.clone(),
+                        message_id: msg_id,
+                        error_code: if is_success { None } else { Some(code.to_string()) },
+                        retries: attempts.saturating_sub(1),
+                        error: if is_success { None } else { Some(anyhow::anyhow!("Tencent SMS error: {}", code)) },
+                    });
+                } else {
+                    // 状态集合中没有对应的项
+                    results.push(PhoneSendResult {
+                        phone: phone.clone(),
+                        status_code,
+                        response_body: response_body.clone(),
+                        message_id: request_id.clone(),
+                        error_code: None,
+                        retries: attempts.saturating_sub(1),
+                        error: None,
+                    });
+                }
+            }
+        } else {
+            // 没有 SendStatusSet（失败情况），为所有手机号创建失败结果
+            let err_msg = last_err.as_ref().map(|e| e.to_string());
+            for phone in recipients {
+                results.push(PhoneSendResult {
+                    phone: phone.clone(),
+                    status_code,
+                    response_body: response_body.clone(),
+                    message_id: request_id.clone(),
+                    error_code: error_code.clone(),
+                    retries: attempts.saturating_sub(1),
+                    error: err_msg.as_ref().map(|s| anyhow::anyhow!("{}", s)),
+                });
+            }
+        }
+
+        results
     }
 }
 
@@ -478,14 +644,11 @@ impl SmsChannel {
 #[async_trait]
 impl NotificationChannel for SmsChannel {
     async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<SendResponse> {
-        // TODO: 完善 SMS 渠道的详细响应记录
-        let response = SendResponse::default();
-
         if recipients.is_empty() {
-            return Ok(response);
+            return Ok(SendResponse::default());
         }
 
-        match &self.provider {
+        let phone_results = match &self.provider {
             SmsProvider::Generic {
                 gateway_url,
                 api_key,
@@ -534,9 +697,49 @@ impl NotificationChannel for SmsChannel {
                 )
                 .await
             }
-        }?;
+        };
 
-        Ok(response)
+        // 转换 PhoneSendResult 为 SendResponse
+        let mut total_retries = 0u32;
+        let mut recipient_results = Vec::new();
+        let mut last_status: Option<u16> = None;
+        let mut last_response_body: Option<String> = None;
+        let mut last_message_id: Option<String> = None;
+        let mut last_error_code: Option<String> = None;
+        let mut has_error = false;
+
+        for phone_result in phone_results {
+            total_retries += phone_result.retries;
+            last_status = phone_result.status_code.or(last_status);
+            last_response_body = phone_result.response_body.or(last_response_body.clone());
+            last_message_id = phone_result.message_id.or(last_message_id.clone());
+            last_error_code = phone_result.error_code.or(last_error_code.clone());
+
+            recipient_results.push(RecipientResult {
+                recipient: phone_result.phone,
+                status: if phone_result.error.is_none() { "success".to_string() } else { "failed".to_string() },
+                error: phone_result.error.as_ref().map(|e| e.to_string()),
+            });
+
+            if phone_result.error.is_some() {
+                has_error = true;
+            }
+        }
+
+        // 如果所有接收者都失败，返回错误
+        if has_error && recipient_results.iter().all(|r| r.status == "failed") {
+            return Err(anyhow::anyhow!("All SMS recipients failed"));
+        }
+
+        Ok(SendResponse {
+            http_status: last_status,
+            response_body: last_response_body,
+            request_body: None, // SMS 请求 body 较敏感，不记录
+            retry_count: total_retries,
+            recipient_results,
+            api_message_id: last_message_id,
+            api_error_code: last_error_code,
+        })
     }
 
     fn channel_type(&self) -> &str {
