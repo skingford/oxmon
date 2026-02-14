@@ -1,4 +1,5 @@
 use crate::plugin::ChannelPlugin;
+use crate::utils::{truncate_string, MAX_BODY_LENGTH};
 use crate::{NotificationChannel, RecipientResult, SendResponse};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -11,16 +12,6 @@ use sha2::Sha256;
 use tracing;
 
 type HmacSha256 = Hmac<Sha256>;
-
-const MAX_BODY_LENGTH: usize = 4000;
-
-fn truncate_string(s: String, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s
-    } else {
-        format!("{}... [truncated]", &s[..max_len])
-    }
-}
 
 struct SendResult {
     status_code: Option<u16>,
@@ -132,7 +123,8 @@ impl DingTalkChannel {
                     if resp.status().is_success() {
                         match resp.json::<Value>().await {
                             Ok(body) => {
-                                let body_str = truncate_string(serde_json::to_string(&body).unwrap_or_default(), MAX_BODY_LENGTH);
+                                let body_json = serde_json::to_string(&body).unwrap_or_default();
+                                let body_str = truncate_string(&body_json, MAX_BODY_LENGTH);
                                 response_body = Some(body_str);
 
                                 let errcode = body.get("errcode").and_then(|v| v.as_i64());
@@ -171,7 +163,7 @@ impl DingTalkChannel {
                     } else {
                         let status = resp.status();
                         response_body = match resp.text().await {
-                            Ok(text) => Some(truncate_string(text, MAX_BODY_LENGTH)),
+                            Ok(text) => Some(truncate_string(&text, MAX_BODY_LENGTH)),
                             Err(_) => Some("[Failed to read response body]".to_string()),
                         };
                         tracing::warn!(
@@ -222,7 +214,8 @@ impl NotificationChannel for DingTalkChannel {
             }
         });
 
-        let request_body = truncate_string(serde_json::to_string(&payload).unwrap_or_default(), MAX_BODY_LENGTH);
+        let payload_json = serde_json::to_string(&payload).unwrap_or_default();
+        let request_body = truncate_string(&payload_json, MAX_BODY_LENGTH);
         let mut response = SendResponse {
             request_body: Some(request_body),
             ..Default::default()

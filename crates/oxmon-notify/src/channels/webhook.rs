@@ -1,4 +1,5 @@
 use crate::plugin::ChannelPlugin;
+use crate::utils::{truncate_string, MAX_BODY_LENGTH};
 use crate::{NotificationChannel, RecipientResult, SendResponse};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -6,16 +7,6 @@ use oxmon_common::types::AlertEvent;
 use serde::Deserialize;
 use serde_json::Value;
 use tracing;
-
-const MAX_BODY_LENGTH: usize = 4000;
-
-fn truncate_string(s: String, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s
-    } else {
-        format!("{}... [truncated]", &s[..max_len])
-    }
-}
 
 pub struct WebhookChannel {
     instance_id: String,
@@ -68,9 +59,10 @@ impl WebhookChannel {
 #[async_trait]
 impl NotificationChannel for WebhookChannel {
     async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<SendResponse> {
+        let body = self.render_body(alert);
         let mut response = SendResponse {
             retry_count: 0,
-            request_body: Some(truncate_string(self.render_body(alert), MAX_BODY_LENGTH)),
+            request_body: Some(truncate_string(&body, MAX_BODY_LENGTH)),
             ..Default::default()
         };
 
@@ -103,7 +95,7 @@ impl NotificationChannel for WebhookChannel {
 
                         // 尝试读取响应 body（限制大小）
                         let resp_body = match resp.text().await {
-                            Ok(text) => truncate_string(text, MAX_BODY_LENGTH),
+                            Ok(text) => truncate_string(&text, MAX_BODY_LENGTH),
                             Err(e) => format!("[Failed to read response body: {}]", e),
                         };
                         last_response_body = Some(resp_body.clone());

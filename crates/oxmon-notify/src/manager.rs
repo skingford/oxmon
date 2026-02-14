@@ -1,4 +1,5 @@
 use crate::plugin::ChannelRegistry;
+use crate::utils::{redact_json_string, truncate_string, MAX_BODY_LENGTH};
 use crate::NotificationChannel;
 use chrono::{DateTime, Duration, NaiveTime, Utc};
 use oxmon_common::types::AlertEvent;
@@ -8,17 +9,6 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::Instant;
 use tracing;
-
-const MAX_BODY_LENGTH: usize = 4000;
-
-/// 截断字符串到指定长度
-fn truncate_string(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}... [truncated]", &s[..max_len])
-    }
-}
 
 /// 将接收者结果列表序列化为 JSON 字符串
 fn serialize_recipient_results(response: &SendResponse) -> Option<String> {
@@ -368,10 +358,16 @@ impl NotificationManager {
         // 从 SendResponse 提取详细信息
         let (http_status, response_body, request_body, retry_count, recipient_details, api_message_id, api_error_code) =
             if let Some(ref resp) = ctx.response {
+                // 脱敏并截断 request_body
+                let redacted_request = resp.request_body.as_ref().map(|s| {
+                    let redacted = redact_json_string(s);
+                    truncate_string(&redacted, MAX_BODY_LENGTH)
+                });
+
                 (
                     resp.http_status.map(|s| s as i32),
                     resp.response_body.as_ref().map(|s| truncate_string(s, MAX_BODY_LENGTH)),
-                    resp.request_body.as_ref().map(|s| truncate_string(s, MAX_BODY_LENGTH)),
+                    redacted_request,
                     resp.retry_count as i32,
                     serialize_recipient_results(resp),
                     resp.api_message_id.clone(),

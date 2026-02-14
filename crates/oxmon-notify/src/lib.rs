@@ -9,6 +9,7 @@ pub mod channels;
 pub mod manager;
 pub mod plugin;
 pub mod routing;
+pub mod utils;
 
 #[cfg(test)]
 mod tests;

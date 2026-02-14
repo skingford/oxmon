@@ -320,15 +320,6 @@ impl CertStore {
             "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;",
         );
 
-        // 迁移：为已有的 notification_logs 表添加响应详情字段
-        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN http_status_code INTEGER;");
-        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN response_body TEXT;");
-        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN request_body TEXT;");
-        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;");
-        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN recipient_details TEXT;");
-        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN api_message_id TEXT;");
-        let _ = conn.execute_batch("ALTER TABLE notification_logs ADD COLUMN api_error_code TEXT;");
-
         let token_encryptor = TokenEncryptor::load_or_create(data_dir)?;
         tracing::info!(path = %db_path.display(), "Initialized cert store");
         Ok(Self {
