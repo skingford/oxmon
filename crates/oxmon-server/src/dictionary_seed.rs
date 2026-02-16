@@ -174,6 +174,16 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ("system.load_5", "5分钟负载", "系统5分钟平均负载"),
         ("system.load_15", "15分钟负载", "系统15分钟平均负载"),
         ("system.uptime", "系统运行时长", "系统启动后运行秒数"),
+        (
+            "certificate.days_until_expiry",
+            "证书剩余天数",
+            "SSL/TLS 证书距离过期的天数",
+        ),
+        (
+            "certificate.is_valid",
+            "证书是否有效",
+            "SSL/TLS 证书链校验结果，有效为 1.0，无效为 0.0",
+        ),
     ] {
         order += 1;
         items.push(make_system_item(
