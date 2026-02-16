@@ -28,6 +28,8 @@ async fn openapi_paths_should_be_covered_by_test_matrix() {
         "POST /v1/auth/password",
         "GET /v1/agents",
         "GET /v1/agents/{id}",
+        "PUT /v1/agents/{id}",
+        "DELETE /v1/agents/{id}",
         "GET /v1/agents/{id}/latest",
         "GET /v1/metrics",
         "GET /v1/alerts/rules",

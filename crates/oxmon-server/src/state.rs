@@ -44,6 +44,7 @@ impl AgentRegistry {
                 let interval = self.get_collection_interval(id);
                 let timeout = Duration::seconds((interval * 3) as i64);
                 AgentInfo {
+                    id: String::new(),
                     agent_id: id.clone(),
                     last_seen: *last_seen,
                     active: now - *last_seen < timeout,
@@ -63,6 +64,7 @@ impl AgentRegistry {
         let interval = self.get_collection_interval(agent_id);
         let timeout = Duration::seconds((interval * 3) as i64);
         self.agents.get(agent_id).map(|last_seen| AgentInfo {
+            id: String::new(),
             agent_id: agent_id.to_string(),
             last_seen: *last_seen,
             active: now - *last_seen < timeout,

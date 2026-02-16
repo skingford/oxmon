@@ -797,11 +797,11 @@ impl CertStore {
         let count: i64 = conn.query_row(
             "SELECT COUNT(*)
              FROM (
-                 SELECT MAX(id) AS max_id
+                 SELECT domain_id, MAX(checked_at) AS max_checked
                  FROM cert_check_results
                  GROUP BY domain_id
              ) latest
-             INNER JOIN cert_check_results r ON r.id = latest.max_id
+             INNER JOIN cert_check_results r ON r.domain_id = latest.domain_id AND r.checked_at = latest.max_checked
              INNER JOIN cert_domains d ON d.id = r.domain_id AND d.enabled = 1",
             [],
             |row| row.get(0),
@@ -819,12 +819,12 @@ impl CertStore {
             "SELECT r.id, r.domain_id, r.domain, r.is_valid, r.chain_valid, r.not_before, r.not_after, r.days_until_expiry, r.issuer, r.subject, r.san_list, r.resolved_ips, r.error, r.checked_at, r.created_at, r.updated_at
              FROM cert_check_results r
              INNER JOIN (
-                 SELECT MAX(id) AS max_id
+                 SELECT domain_id, MAX(checked_at) AS max_checked
                  FROM cert_check_results
                  GROUP BY domain_id
-             ) latest ON r.id = latest.max_id
+             ) latest ON r.domain_id = latest.domain_id AND r.checked_at = latest.max_checked
              INNER JOIN cert_domains d ON d.id = r.domain_id AND d.enabled = 1
-             ORDER BY r.created_at DESC
+             ORDER BY r.checked_at DESC
              LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
@@ -2340,26 +2340,38 @@ impl CertStore {
         Ok(updated > 0)
     }
 
+    /// 根据数据库 id 删除 agents 表记录
+    pub fn delete_agent_from_db(&self, id: &str) -> Result<bool> {
+        let conn = self.lock_conn();
+        let deleted = conn.execute(
+            "DELETE FROM agents WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        Ok(deleted > 0)
+    }
+
     /// 从数据库查询 agent 列表（支持分页）
     pub fn list_agents_from_db(&self, limit: usize, offset: usize) -> Result<Vec<oxmon_common::types::AgentInfo>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT agent_id, last_seen, collection_interval_secs, description FROM agents ORDER BY last_seen DESC LIMIT ?1 OFFSET ?2",
+            "SELECT id, agent_id, last_seen, collection_interval_secs, description FROM agents ORDER BY last_seen DESC LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
-            let agent_id: String = row.get(0)?;
-            let last_seen: i64 = row.get(1)?;
-            let interval: Option<i64> = row.get(2)?;
-            let description: Option<String> = row.get(3)?;
-            Ok((agent_id, last_seen, interval.map(|v| v as u64), description))
+            let id: String = row.get(0)?;
+            let agent_id: String = row.get(1)?;
+            let last_seen: i64 = row.get(2)?;
+            let interval: Option<i64> = row.get(3)?;
+            let description: Option<String> = row.get(4)?;
+            Ok((id, agent_id, last_seen, interval.map(|v| v as u64), description))
         })?;
 
         let mut agents = Vec::new();
         for row in rows {
-            let (agent_id, last_seen_ts, collection_interval_secs, description) = row?;
+            let (id, agent_id, last_seen_ts, collection_interval_secs, description) = row?;
             let last_seen = DateTime::from_timestamp(last_seen_ts, 0).unwrap_or_default();
 
             agents.push(oxmon_common::types::AgentInfo {
+                id,
                 agent_id,
                 last_seen,
                 active: false, // 稍后在 API 层计算
@@ -2400,7 +2412,7 @@ impl CertStore {
         let mut stmt = conn.prepare(
             "SELECT id, agent_id, first_seen, last_seen, collection_interval_secs, description, created_at, updated_at
              FROM agents
-             WHERE id = ?1 OR agent_id = ?1",
+             WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![id], |row| {
             let first_seen: i64 = row.get(2)?;

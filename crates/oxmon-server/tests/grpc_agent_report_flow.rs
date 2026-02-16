@@ -38,10 +38,26 @@ async fn grpc_report_should_write_metrics_and_be_queryable_via_rest() {
     let items = body["data"]["items"].as_array().expect("data.items should be array");
     assert!(!items.is_empty());
 
+    // 先通过列表接口获取 agent 的数据库 id
     let (status, body, _) = request_no_body(
         &ctx.app,
         "GET",
-        "/v1/agents/agent-grpc-1/latest",
+        "/v1/agents?limit=100&offset=0",
+        Some(&http_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let agents = body["data"]["items"].as_array().expect("agents list");
+    let agent_db_id = agents
+        .iter()
+        .find(|a| a["agent_id"].as_str() == Some("agent-grpc-1"))
+        .and_then(|a| a["id"].as_str())
+        .expect("agent-grpc-1 should have a database id");
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        &format!("/v1/agents/{agent_db_id}/latest"),
         Some(&http_token),
     )
     .await;

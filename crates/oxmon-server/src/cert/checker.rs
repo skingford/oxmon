@@ -1,8 +1,9 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use oxmon_common::types::CertCheckResult;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::ClientConfig;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
@@ -38,7 +39,7 @@ pub async fn check_certificate(
             subject: result.subject,
             san_list: result.san_list,
             resolved_ips: ips_field,
-            error: None,
+            error: result.error,
             checked_at: now,
             created_at: now,
             updated_at: now,
@@ -86,56 +87,157 @@ struct CertInfo {
     issuer: Option<String>,
     subject: Option<String>,
     san_list: Option<Vec<String>>,
+    error: Option<String>,
+}
+
+/// 捕获验证结果但不中断握手的自定义验证器。
+/// 包装真实的 WebPKI 验证器，将验证错误存入共享状态，但始终返回 Ok 以保证握手完成。
+#[derive(Debug)]
+struct CaptureVerifier {
+    inner: Arc<rustls::crypto::CryptoProvider>,
+    root_store: Arc<rustls::RootCertStore>,
+    verify_error: Arc<Mutex<Option<String>>>,
+}
+
+impl CaptureVerifier {
+    fn new(root_store: rustls::RootCertStore) -> (Arc<Self>, Arc<Mutex<Option<String>>>) {
+        let verify_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let verifier = Arc::new(Self {
+            inner: provider,
+            root_store: Arc::new(root_store),
+            verify_error: Arc::clone(&verify_error),
+        });
+        (verifier, verify_error)
+    }
+}
+
+impl ServerCertVerifier for CaptureVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        server_name: &rustls::pki_types::ServerName<'_>,
+        ocsp_response: &[u8],
+        now: rustls::pki_types::UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        // 用真实的 WebPKI 验证器执行验证
+        let real_verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
+            Arc::clone(&self.root_store),
+            Arc::clone(&self.inner),
+        )
+        .build()
+        .map_err(|e| rustls::Error::General(format!("Failed to build verifier: {e}")))?;
+
+        match real_verifier.verify_server_cert(
+            end_entity,
+            intermediates,
+            server_name,
+            ocsp_response,
+            now,
+        ) {
+            Ok(verified) => {
+                // 验证通过，清除错误
+                if let Ok(mut err) = self.verify_error.lock() {
+                    *err = None;
+                }
+                Ok(verified)
+            }
+            Err(e) => {
+                // 验证失败，捕获错误但允许握手继续
+                if let Ok(mut err) = self.verify_error.lock() {
+                    *err = Some(format!("{e}"));
+                }
+                Ok(ServerCertVerified::assertion())
+            }
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.inner.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.inner.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.inner
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
 }
 
 async fn do_check(domain: &str, port: i32, timeout_secs: u64) -> Result<CertInfo> {
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-    // Build config that captures certificates but still verifies
-    let config = ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-    let connector = TlsConnector::from(Arc::new(config));
-
     let addr = format!("{domain}:{port}");
     let server_name = rustls::pki_types::ServerName::try_from(domain.to_string())
         .map_err(|e| anyhow::anyhow!("Invalid domain name: {e}"))?;
 
-    // Connect with timeout
+    // 构建捕获验证结果的验证器：只需一次 TLS 握手即可同时获取证书信息和验证状态
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let (capture_verifier, verify_error) = CaptureVerifier::new(root_store);
+
+    let config = ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(capture_verifier)
+        .with_no_client_auth();
+    let connector = TlsConnector::from(Arc::new(config));
+
+    // TCP 连接
     let tcp = tokio::time::timeout(Duration::from_secs(timeout_secs), TcpStream::connect(&addr))
         .await
         .map_err(|_| anyhow::anyhow!("Connection timed out after {timeout_secs}s"))?
         .map_err(|e| anyhow::anyhow!("TCP connection failed: {e}"))?;
 
-    // TLS handshake - if chain is invalid, rustls will return an error
-    let tls_stream = match tokio::time::timeout(
+    // TLS 握手（验证失败不会中断，错误被捕获到 verify_error 中）
+    let tls_stream = tokio::time::timeout(
         Duration::from_secs(timeout_secs),
         connector.connect(server_name, tcp),
     )
     .await
-    {
-        Ok(Ok(stream)) => stream,
-        Ok(Err(_)) => {
-            // TLS error - might be invalid chain, expired cert, etc.
-            return Ok(CertInfo {
-                is_valid: false,
-                chain_valid: false,
-                not_before: None,
-                not_after: None,
-                days_until_expiry: None,
-                issuer: None,
-                subject: None,
-                san_list: None,
-            });
-        }
-        Err(_) => {
-            return Err(anyhow::anyhow!("TLS handshake timed out"));
-        }
-    };
+    .map_err(|_| anyhow::anyhow!("TLS handshake timed out"))?
+    .map_err(|e| anyhow::anyhow!("TLS handshake failed: {e}"))?;
 
-    // Extract peer certificates
+    // 提取验证结果
+    let captured_error = verify_error
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+
+    let chain_valid = captured_error.is_none();
+    let error = captured_error.map(|e| format!("TLS verification failed: {e}"));
+
     let (_io, conn) = tls_stream.into_inner();
+    extract_cert_info_from_conn(&conn, chain_valid, error)
+}
+
+/// 从 TLS 连接中提取证书信息
+fn extract_cert_info_from_conn(
+    conn: &rustls::ClientConnection,
+    chain_valid: bool,
+    error: Option<String>,
+) -> Result<CertInfo> {
     let certs = conn
         .peer_certificates()
         .ok_or_else(|| anyhow::anyhow!("No peer certificates"))?;
@@ -157,7 +259,7 @@ async fn do_check(domain: &str, port: i32, timeout_secs: u64) -> Result<CertInfo
     let not_after =
         DateTime::from_timestamp(not_after_time.unix_timestamp(), 0).unwrap_or_default();
     let days_until_expiry = (not_after - now).num_days();
-    let is_valid = now >= not_before && now <= not_after;
+    let is_valid = now >= not_before && now <= not_after && chain_valid;
 
     let issuer = Some(cert.issuer().to_string());
     let subject = Some(cert.subject().to_string());
@@ -181,7 +283,7 @@ async fn do_check(domain: &str, port: i32, timeout_secs: u64) -> Result<CertInfo
 
     Ok(CertInfo {
         is_valid,
-        chain_valid: true,
+        chain_valid,
         not_before: Some(not_before),
         not_after: Some(not_after),
         days_until_expiry: Some(days_until_expiry),
@@ -192,5 +294,6 @@ async fn do_check(domain: &str, port: i32, timeout_secs: u64) -> Result<CertInfo
         } else {
             Some(san_list)
         },
+        error,
     })
 }

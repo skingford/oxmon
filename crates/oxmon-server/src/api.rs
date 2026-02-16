@@ -15,6 +15,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::{DateTime, Utc};
+use oxmon_common::types::UpdateAgentRequest;
 use oxmon_storage::StorageEngine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -325,7 +326,7 @@ async fn list_agents(
             let active = now - agent_info.last_seen < timeout;
 
             AgentResponse {
-                id: whitelist_entry.as_ref().map(|e| e.id.clone()),
+                id: Some(agent_info.id),
                 agent_id: agent_info.agent_id,
                 last_seen: Some(agent_info.last_seen),
                 status: if active {
@@ -423,6 +424,173 @@ async fn get_agent(
     )
 }
 
+/// 更新指定 Agent 的信息（描述、采集间隔）。
+/// 支持通过 agent_id 或数据库 id 查询。如果 Agent 同时在白名单中，同步更新白名单。
+#[utoipa::path(
+    put,
+    path = "/v1/agents/{id}",
+    request_body = UpdateAgentRequest,
+    tag = "Agents",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Agent ID 或数据库 ID")
+    ),
+    responses(
+        (status = 200, description = "更新成功", body = IdResponse),
+        (status = 401, description = "未认证", body = ApiError),
+        (status = 404, description = "Agent 不存在", body = ApiError),
+        (status = 500, description = "服务器错误", body = ApiError)
+    )
+)]
+async fn update_agent_info(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateAgentRequest>,
+) -> impl IntoResponse {
+    // 查找 agent
+    let agent_entry = match state.cert_store.get_agent_by_id_or_agent_id(&id).map_err(|e| {
+        tracing::error!(error = %e, "Failed to query agent");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
+            "internal_error",
+            "Database error",
+        )
+    }) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                &format!("Agent '{}' not found", id),
+            )
+        }
+        Err(resp) => return resp,
+    };
+
+    // 更新 agents 表
+    if let Err(resp) = state
+        .cert_store
+        .update_agent_config(
+            &agent_entry.agent_id,
+            req.collection_interval_secs.map(Some),
+            req.description.as_deref().map(Some),
+        )
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to update agent config");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        })
+    {
+        return resp;
+    }
+
+    // 如果 agent 在白名单中，同步更新白名单表
+    if let Ok(Some(whitelist_entry)) = state.cert_store.get_agent_by_agent_id(&agent_entry.agent_id)
+    {
+        if let Err(e) = state
+            .cert_store
+            .update_agent_whitelist(&whitelist_entry.id, req.description.as_deref().map(Some))
+        {
+            tracing::warn!(error = %e, agent_id = %agent_entry.agent_id, "Failed to sync whitelist description");
+        }
+    }
+
+    tracing::info!(id = %agent_entry.id, agent_id = %agent_entry.agent_id, "Agent info updated");
+
+    success_id_response(StatusCode::OK, &trace_id, agent_entry.id)
+}
+
+/// 删除指定 Agent 记录。
+/// 支持通过 agent_id 或数据库 id 查询。同时清理白名单和内存注册表。
+#[utoipa::path(
+    delete,
+    path = "/v1/agents/{id}",
+    tag = "Agents",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Agent ID 或数据库 ID")
+    ),
+    responses(
+        (status = 200, description = "删除成功", body = IdResponse),
+        (status = 401, description = "未认证", body = ApiError),
+        (status = 404, description = "Agent 不存在", body = ApiError),
+        (status = 500, description = "服务器错误", body = ApiError)
+    )
+)]
+async fn delete_agent_record(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    // 查找 agent
+    let agent_entry = match state.cert_store.get_agent_by_id_or_agent_id(&id).map_err(|e| {
+        tracing::error!(error = %e, "Failed to query agent");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
+            "internal_error",
+            "Database error",
+        )
+    }) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                &format!("Agent '{}' not found", id),
+            )
+        }
+        Err(resp) => return resp,
+    };
+
+    // 如果 agent 在白名单中，先删除白名单条目
+    if let Ok(Some(whitelist_entry)) = state.cert_store.get_agent_by_agent_id(&agent_entry.agent_id)
+    {
+        if let Err(e) = state
+            .cert_store
+            .delete_agent_from_whitelist(&whitelist_entry.id)
+        {
+            tracing::warn!(error = %e, agent_id = %agent_entry.agent_id, "Failed to delete agent from whitelist");
+        }
+    }
+
+    // 从 agents 表删除
+    if let Err(resp) = state
+        .cert_store
+        .delete_agent_from_db(&agent_entry.id)
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to delete agent from database");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        })
+    {
+        return resp;
+    }
+
+    // 从内存注册表中移除
+    state
+        .agent_registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove_agent(&agent_entry.agent_id);
+
+    tracing::info!(id = %agent_entry.id, agent_id = %agent_entry.agent_id, "Agent deleted");
+
+    success_id_response(StatusCode::OK, &trace_id, agent_entry.id)
+}
+
 /// 最新指标数据
 #[derive(Serialize, ToSchema)]
 struct LatestMetric {
@@ -457,12 +625,34 @@ async fn agent_latest(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    // 直接按 agent.id 查询最新一条指标，不区分是否在白名单。
+    // 先将数据库 id 解析为 agent_id，因为 metrics 按 agent_id 存储
+    let agent_entry = match state.cert_store.get_agent_by_id_or_agent_id(&id).map_err(|e| {
+        tracing::error!(error = %e, "Failed to query agent");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
+            "internal_error",
+            "Database error",
+        )
+    }) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                &format!("Agent '{}' not found", id),
+            )
+            .into_response()
+        }
+        Err(resp) => return resp.into_response(),
+    };
+
     let from = DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_default();
     let to = Utc::now();
     let rows = match state
         .storage
-        .query_metrics_paginated(from, to, Some(&id), None, 1, 0)
+        .query_metrics_paginated(from, to, Some(&agent_entry.agent_id), None, 1, 0)
     {
         Ok(rows) => rows,
         Err(err) => {
@@ -839,7 +1029,7 @@ pub fn protected_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(crate::auth::change_password))
         .routes(routes!(list_agents))
-        .routes(routes!(get_agent))
+        .routes(routes!(get_agent, update_agent_info, delete_agent_record))
         .routes(routes!(agent_latest))
         .routes(routes!(query_all_metrics))
         .routes(routes!(metric_names))

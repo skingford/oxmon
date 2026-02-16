@@ -116,6 +116,8 @@ pub fn format_labels(labels: &HashMap<String, String>) -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentInfo {
+    /// 数据库 ID（agents 表主键）
+    pub id: String,
     pub agent_id: String,
     pub last_seen: DateTime<Utc>,
     pub active: bool,
