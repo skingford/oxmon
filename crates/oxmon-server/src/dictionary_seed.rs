@@ -145,6 +145,7 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ("memory.total_bytes", "总内存", "总内存字节数"),
         ("memory.available_bytes", "可用内存", "可用内存字节数"),
         ("disk.usage", "磁盘使用率", "磁盘使用百分比"),
+        ("disk.used_percent", "磁盘使用百分比", "磁盘已用空间占总空间百分比"),
         ("disk.used_bytes", "已用磁盘", "已使用磁盘字节数"),
         ("disk.total_bytes", "磁盘总量", "磁盘总容量字节数"),
         ("disk.available_bytes", "可用磁盘", "可用磁盘字节数"),
