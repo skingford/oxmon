@@ -1,5 +1,5 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response, success_empty_response, success_paginated_response, success_response};
+use crate::api::{error_response, success_id_response, success_paginated_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use oxmon_common::types::{
-    CreateDictionaryRequest, CreateDictionaryTypeRequest, DictionaryItem, DictionaryType,
+    CreateDictionaryRequest, CreateDictionaryTypeRequest, DictionaryItem,
     DictionaryTypeSummary, UpdateDictionaryRequest, UpdateDictionaryTypeRequest,
 };
 use serde::Deserialize;
@@ -178,7 +178,7 @@ async fn get_dictionary(
     security(("bearer_auth" = [])),
     request_body = CreateDictionaryRequest,
     responses(
-        (status = 201, description = "字典条目已创建", body = DictionaryItem),
+        (status = 201, description = "字典条目已创建", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 409, description = "dict_type + dict_key 重复", body = crate::api::ApiError)
     )
@@ -193,7 +193,7 @@ async fn create_dictionary(
         tracing::warn!(error = %e, dict_type = %req.dict_type, "Failed to auto-ensure dictionary type");
     }
     match state.cert_store.insert_dictionary(&req) {
-        Ok(item) => success_response(StatusCode::CREATED, &trace_id, item),
+        Ok(item) => success_id_response(StatusCode::CREATED, &trace_id, item.id),
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("UNIQUE constraint") {
@@ -227,7 +227,7 @@ async fn create_dictionary(
     params(("id" = String, Path, description = "字典条目 ID")),
     request_body = UpdateDictionaryRequest,
     responses(
-        (status = 200, description = "字典条目已更新", body = DictionaryItem),
+        (status = 200, description = "字典条目已更新", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "条目不存在", body = crate::api::ApiError)
     )
@@ -239,7 +239,7 @@ async fn update_dictionary(
     Json(req): Json<UpdateDictionaryRequest>,
 ) -> impl IntoResponse {
     match state.cert_store.update_dictionary(&id, &req) {
-        Ok(Some(item)) => success_response(StatusCode::OK, &trace_id, item),
+        Ok(Some(item)) => success_id_response(StatusCode::OK, &trace_id, item.id),
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,
@@ -268,7 +268,7 @@ async fn update_dictionary(
     security(("bearer_auth" = [])),
     params(("id" = String, Path, description = "字典条目 ID")),
     responses(
-        (status = 200, description = "字典条目已删除"),
+        (status = 200, description = "字典条目已删除", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 403, description = "系统内置项不可删除", body = crate::api::ApiError),
         (status = 404, description = "条目不存在", body = crate::api::ApiError)
@@ -293,7 +293,7 @@ async fn delete_dictionary(
             }
             match state.cert_store.delete_dictionary(&id) {
                 Ok(true) => {
-                    success_empty_response(StatusCode::OK, &trace_id, "Dictionary item deleted")
+                    success_id_response(StatusCode::OK, &trace_id, id)
                 }
                 Ok(false) => error_response(
                     StatusCode::NOT_FOUND,
@@ -342,7 +342,7 @@ async fn delete_dictionary(
     security(("bearer_auth" = [])),
     request_body = CreateDictionaryTypeRequest,
     responses(
-        (status = 201, description = "字典类型已创建", body = DictionaryType),
+        (status = 201, description = "字典类型已创建", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 409, description = "字典类型已存在", body = crate::api::ApiError)
     )
@@ -353,7 +353,7 @@ async fn create_dict_type(
     Json(req): Json<CreateDictionaryTypeRequest>,
 ) -> impl IntoResponse {
     match state.cert_store.insert_dictionary_type(&req) {
-        Ok(item) => success_response(StatusCode::CREATED, &trace_id, item),
+        Ok(item) => success_id_response(StatusCode::CREATED, &trace_id, item.dict_type),
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("UNIQUE constraint") {
@@ -387,7 +387,7 @@ async fn create_dict_type(
     params(("dict_type" = String, Path, description = "字典类型标识")),
     request_body = UpdateDictionaryTypeRequest,
     responses(
-        (status = 200, description = "字典类型已更新", body = DictionaryType),
+        (status = 200, description = "字典类型已更新", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "字典类型不存在", body = crate::api::ApiError)
     )
@@ -399,7 +399,7 @@ async fn update_dict_type(
     Json(req): Json<UpdateDictionaryTypeRequest>,
 ) -> impl IntoResponse {
     match state.cert_store.update_dictionary_type(&dict_type, &req) {
-        Ok(Some(item)) => success_response(StatusCode::OK, &trace_id, item),
+        Ok(Some(item)) => success_id_response(StatusCode::OK, &trace_id, item.dict_type),
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,
@@ -428,7 +428,7 @@ async fn update_dict_type(
     security(("bearer_auth" = [])),
     params(("dict_type" = String, Path, description = "字典类型标识")),
     responses(
-        (status = 200, description = "字典类型已删除"),
+        (status = 200, description = "字典类型已删除", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "字典类型不存在", body = crate::api::ApiError)
     )
@@ -439,7 +439,7 @@ async fn delete_dict_type(
     Path(dict_type): Path<String>,
 ) -> impl IntoResponse {
     match state.cert_store.delete_dictionary_type(&dict_type) {
-        Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "Dictionary type deleted"),
+        Ok(true) => success_id_response(StatusCode::OK, &trace_id, dict_type),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,

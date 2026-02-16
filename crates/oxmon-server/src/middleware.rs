@@ -51,7 +51,7 @@ pub async fn app_id_middleware(
                 "missing ox-app-id header",
             )
         }
-        Some(id) if id.is_empty() => {
+        Some("") => {
             tracing::warn!(
                 trace_id = %trace_id,
                 "Request rejected: empty ox-app-id header"

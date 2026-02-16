@@ -1051,13 +1051,27 @@ impl CertStore {
         Ok(exists)
     }
 
-    pub fn update_agent_whitelist(&self, id: &str, description: Option<&str>) -> Result<bool> {
+    /// 更新 agent 白名单条目
+    /// - `description`: None = 不修改; Some(None) = 设为 NULL; Some(Some(v)) = 设为 v
+    pub fn update_agent_whitelist(&self, id: &str, description: Option<Option<&str>>) -> Result<bool> {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
-        let updated = conn.execute(
-            "UPDATE agent_whitelist SET description = ?2, updated_at = ?3 WHERE id = ?1",
-            rusqlite::params![id, description, now],
-        )?;
+
+        // 动态构建 SQL，只更新传入的字段
+        let mut sql = String::from("UPDATE agent_whitelist SET updated_at = ?1");
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
+        let mut param_idx = 2;
+
+        if let Some(desc) = description {
+            sql.push_str(&format!(", description = ?{}", param_idx));
+            params.push(Box::new(desc.map(|s| s.to_string())));
+            param_idx += 1;
+        }
+
+        sql.push_str(&format!(" WHERE id = ?{}", param_idx));
+        params.push(Box::new(id.to_string()));
+
+        let updated = conn.execute(&sql, rusqlite::params_from_iter(params.iter().map(|b| b.as_ref())))?;
         Ok(updated > 0)
     }
 
@@ -2291,23 +2305,38 @@ impl CertStore {
     }
 
     /// 更新 agent 配置（采集间隔和描述）
+    /// - `collection_interval_secs`: None = 不修改; Some(None) = 设为 NULL; Some(Some(v)) = 设为 v
+    /// - `description`: None = 不修改; Some(None) = 设为 NULL; Some(Some(v)) = 设为 v
     pub fn update_agent_config(
         &self,
         agent_id: &str,
-        collection_interval_secs: Option<u64>,
-        description: Option<&str>,
+        collection_interval_secs: Option<Option<u64>>,
+        description: Option<Option<&str>>,
     ) -> Result<bool> {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
-        let updated = conn.execute(
-            "UPDATE agents SET collection_interval_secs = ?1, description = ?2, updated_at = ?3 WHERE agent_id = ?4",
-            rusqlite::params![
-                collection_interval_secs.map(|v| v as i64),
-                description,
-                now,
-                agent_id
-            ],
-        )?;
+
+        // 动态构建 SQL，只更新传入的字段
+        let mut sql = String::from("UPDATE agents SET updated_at = ?1");
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
+        let mut param_idx = 2;
+
+        if let Some(interval) = collection_interval_secs {
+            sql.push_str(&format!(", collection_interval_secs = ?{}", param_idx));
+            params.push(Box::new(interval.map(|v| v as i64)));
+            param_idx += 1;
+        }
+
+        if let Some(desc) = description {
+            sql.push_str(&format!(", description = ?{}", param_idx));
+            params.push(Box::new(desc.map(|s| s.to_string())));
+            param_idx += 1;
+        }
+
+        sql.push_str(&format!(" WHERE agent_id = ?{}", param_idx));
+        params.push(Box::new(agent_id.to_string()));
+
+        let updated = conn.execute(&sql, rusqlite::params_from_iter(params.iter().map(|b| b.as_ref())))?;
         Ok(updated > 0)
     }
 

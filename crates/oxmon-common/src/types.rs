@@ -581,3 +581,39 @@ pub struct UpdateDictionaryTypeRequest {
     /// 描述信息（可选）
     pub description: Option<Option<String>>,
 }
+
+/// 更新告警规则请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct UpdateAlertRuleRequest {
+    /// 规则名称（可选）
+    pub name: Option<String>,
+    /// 监控指标（可选）
+    pub metric: Option<String>,
+    /// Agent匹配模式（可选）
+    pub agent_pattern: Option<String>,
+    /// 告警级别（可选）
+    pub severity: Option<String>,
+    /// 是否启用（可选）
+    pub enabled: Option<bool>,
+    /// 规则配置JSON（可选）
+    pub config_json: Option<String>,
+    /// 静默时间（秒）（可选）
+    pub silence_secs: Option<u64>,
+}
+
+/// 更新通知渠道请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct UpdateNotificationChannelRequest {
+    /// 渠道名称（可选）
+    pub name: Option<String>,
+    /// 描述信息（可选）
+    pub description: Option<String>,
+    /// 最小告警级别（可选）
+    pub min_severity: Option<String>,
+    /// 是否启用（可选）
+    pub enabled: Option<bool>,
+    /// 渠道配置JSON（可选）
+    pub config_json: Option<String>,
+    /// 收件人列表（可选，会替换现有收件人）
+    pub recipients: Option<Vec<String>>,
+}

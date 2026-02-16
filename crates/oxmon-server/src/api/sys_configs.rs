@@ -1,5 +1,5 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response, success_empty_response, success_paginated_response, success_response};
+use crate::api::{error_response, success_paginated_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
@@ -192,7 +192,7 @@ async fn get_system_config(
     security(("bearer_auth" = [])),
     request_body = CreateSystemConfigRequest,
     responses(
-        (status = 201, description = "系统配置已创建", body = SystemConfigResponse),
+        (status = 201, description = "系统配置已创建", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 409, description = "config_key 已存在", body = crate::api::ApiError)
     )
@@ -254,7 +254,7 @@ async fn create_system_config(
     };
 
     match state.cert_store.insert_system_config(&row) {
-        Ok(inserted) => success_response(StatusCode::CREATED, &trace_id, row_to_response(inserted)),
+        Ok(inserted) => crate::api::success_id_response(StatusCode::CREATED, &trace_id, inserted.id),
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("UNIQUE constraint") {
@@ -288,7 +288,7 @@ async fn create_system_config(
     params(("id" = String, Path, description = "系统配置 ID")),
     request_body = UpdateSystemConfigRequest,
     responses(
-        (status = 200, description = "系统配置已更新", body = SystemConfigResponse),
+        (status = 200, description = "系统配置已更新", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "系统配置不存在", body = crate::api::ApiError)
     )
@@ -312,7 +312,7 @@ async fn update_system_config(
             if let Err(e) = state.notifier.reload().await {
                 tracing::warn!(error = %e, "Failed to reload channels after system config update");
             }
-            success_response(StatusCode::OK, &trace_id, row_to_response(row))
+            crate::api::success_id_response(StatusCode::OK, &trace_id, row.id)
         }
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
@@ -342,7 +342,7 @@ async fn update_system_config(
     security(("bearer_auth" = [])),
     params(("id" = String, Path, description = "系统配置 ID")),
     responses(
-        (status = 200, description = "系统配置已删除"),
+        (status = 200, description = "系统配置已删除", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "系统配置不存在", body = crate::api::ApiError),
         (status = 409, description = "有渠道引用此系统配置", body = crate::api::ApiError)
@@ -354,7 +354,7 @@ async fn delete_system_config(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.cert_store.delete_system_config(&id) {
-        Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "System config deleted"),
+        Ok(true) => crate::api::success_id_response(StatusCode::OK, &trace_id, id),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,

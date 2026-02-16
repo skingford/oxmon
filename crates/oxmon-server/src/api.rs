@@ -67,6 +67,13 @@ where
     pub offset: usize,
 }
 
+/// 变更操作响应（创建/更新/删除）
+#[derive(Serialize, ToSchema)]
+pub struct IdResponse {
+    /// 资源 ID
+    pub id: String,
+}
+
 pub fn success_response<T>(status: StatusCode, trace_id: &str, data: T) -> Response
 where
     T: Serialize,
@@ -117,6 +124,10 @@ where
             offset,
         },
     )
+}
+
+pub fn success_id_response(status: StatusCode, trace_id: &str, id: String) -> Response {
+    success_response(status, trace_id, IdResponse { id })
 }
 
 fn to_custom_error_code(code: &str) -> i32 {

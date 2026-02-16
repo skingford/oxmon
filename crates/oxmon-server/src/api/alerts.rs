@@ -1,5 +1,5 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response, success_empty_response, success_paginated_response, success_response};
+use crate::api::{error_response, success_paginated_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
@@ -7,7 +7,8 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use chrono::{DateTime, Utc};
-use oxmon_storage::cert_store::{AlertRuleRow, AlertRuleUpdate};
+use oxmon_common::types::UpdateAlertRuleRequest;
+use oxmon_storage::cert_store::AlertRuleRow;
 use oxmon_storage::StorageEngine;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -223,7 +224,7 @@ fn default_enabled() -> bool {
     security(("bearer_auth" = [])),
     request_body = CreateAlertRuleRequest,
     responses(
-        (status = 201, description = "告警规则已创建", body = AlertRuleDetailResponse),
+        (status = 201, description = "告警规则已创建", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError)
     )
 )]
@@ -253,10 +254,10 @@ async fn create_alert_rule(
             {
                 tracing::error!(error = %e, "Failed to reload alert engine after rule creation");
             }
-            success_response(
+            crate::api::success_id_response(
                 StatusCode::CREATED,
                 &trace_id,
-                AlertRuleDetailResponse::from(rule),
+                rule.id,
             )
         }
         Err(e) => {
@@ -290,9 +291,9 @@ async fn create_alert_rule(
     tag = "Alerts",
     security(("bearer_auth" = [])),
     params(("id" = String, Path, description = "告警规则 ID")),
-    request_body = serde_json::Value,
+    request_body = UpdateAlertRuleRequest,
     responses(
-        (status = 200, description = "告警规则已更新", body = AlertRuleDetailResponse),
+        (status = 200, description = "告警规则已更新", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "规则不存在", body = crate::api::ApiError)
     )
@@ -301,8 +302,19 @@ async fn update_alert_rule(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(update): Json<AlertRuleUpdate>,
+    Json(req): Json<UpdateAlertRuleRequest>,
 ) -> impl IntoResponse {
+    // 转换为存储层的更新类型
+    let update = oxmon_storage::cert_store::AlertRuleUpdate {
+        name: req.name,
+        metric: req.metric,
+        agent_pattern: req.agent_pattern,
+        severity: req.severity,
+        enabled: req.enabled,
+        config_json: req.config_json,
+        silence_secs: req.silence_secs,
+    };
+
     match state.cert_store.update_alert_rule(&id, &update) {
         Ok(Some(rule)) => {
             if let Err(e) =
@@ -310,10 +322,10 @@ async fn update_alert_rule(
             {
                 tracing::error!(error = %e, "Failed to reload alert engine after rule update");
             }
-            success_response(
+            crate::api::success_id_response(
                 StatusCode::OK,
                 &trace_id,
-                AlertRuleDetailResponse::from(rule),
+                rule.id,
             )
         }
         Ok(None) => error_response(
@@ -344,7 +356,7 @@ async fn update_alert_rule(
     security(("bearer_auth" = [])),
     params(("id" = String, Path, description = "告警规则 ID")),
     responses(
-        (status = 200, description = "告警规则已删除"),
+        (status = 200, description = "告警规则已删除", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "规则不存在", body = crate::api::ApiError)
     )
@@ -361,7 +373,7 @@ async fn delete_alert_rule(
             {
                 tracing::error!(error = %e, "Failed to reload alert engine after rule deletion");
             }
-            success_empty_response(StatusCode::OK, &trace_id, "Rule deleted")
+            crate::api::success_id_response(StatusCode::OK, &trace_id, id)
         }
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
@@ -397,7 +409,7 @@ struct EnableRequest {
     params(("id" = String, Path, description = "告警规则 ID")),
     request_body = EnableRequest,
     responses(
-        (status = 200, description = "告警规则状态已更新", body = AlertRuleDetailResponse),
+        (status = 200, description = "告警规则状态已更新", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "规则不存在", body = crate::api::ApiError)
     )
@@ -418,10 +430,10 @@ async fn set_alert_rule_enabled(
                     "Failed to reload alert engine after rule enable/disable"
                 );
             }
-            success_response(
+            crate::api::success_id_response(
                 StatusCode::OK,
                 &trace_id,
-                AlertRuleDetailResponse::from(rule),
+                rule.id,
             )
         }
         Ok(None) => error_response(
@@ -653,7 +665,7 @@ async fn get_alert_event(
     security(("bearer_auth" = [])),
     params(("id" = String, Path, description = "告警事件 ID")),
     responses(
-        (status = 200, description = "告警已确认"),
+        (status = 200, description = "告警已确认", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "告警不存在", body = crate::api::ApiError)
     )
@@ -664,7 +676,7 @@ async fn acknowledge_alert(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.storage.acknowledge_alert(&id) {
-        Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "Alert acknowledged"),
+        Ok(true) => crate::api::success_id_response(StatusCode::OK, &trace_id, id),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,
@@ -693,7 +705,7 @@ async fn acknowledge_alert(
     security(("bearer_auth" = [])),
     params(("id" = String, Path, description = "告警事件 ID")),
     responses(
-        (status = 200, description = "告警已解决"),
+        (status = 200, description = "告警已解决", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "告警不存在", body = crate::api::ApiError)
     )
@@ -704,7 +716,7 @@ async fn resolve_alert(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.storage.resolve_alert(&id) {
-        Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "Alert resolved"),
+        Ok(true) => crate::api::success_id_response(StatusCode::OK, &trace_id, id),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,

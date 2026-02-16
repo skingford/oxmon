@@ -1,5 +1,5 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response, success_empty_response, success_paginated_response, success_response};
+use crate::api::{error_response, success_id_response, success_paginated_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::response::IntoResponse;
@@ -121,12 +121,13 @@ async fn add_agent(
     }
 
     // 更新 agents 表的配置（collection_interval_secs）
+    // 创建操作总是设置所有字段，因此用 Some(...) 包装
     if let Err(resp) = state
         .cert_store
         .update_agent_config(
             &req.agent_id,
-            req.collection_interval_secs,
-            req.description.as_deref(),
+            Some(req.collection_interval_secs),
+            Some(req.description.as_deref()),
         )
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to update agent config");
@@ -311,7 +312,7 @@ async fn get_whitelist_agent(
         ("id" = String, Path, description = "白名单条目 ID（路径参数）")
     ),
     responses(
-        (status = 200, description = "更新白名单 Agent 结果", body = AgentWhitelistDetail),
+        (status = 200, description = "更新白名单 Agent 结果", body = crate::api::IdResponse),
         (status = 401, description = "未认证"),
         (status = 404, description = "Agent 不存在"),
         (status = 500, description = "服务器错误")
@@ -346,10 +347,10 @@ async fn update_agent(
         Err(resp) => return resp,
     };
 
-    // 更新白名单表（只更新 description）
+    // 更新白名单表（只更新 description，如果传入的话）
     if let Err(resp) = state
         .cert_store
-        .update_agent_whitelist(&id, req.description.as_deref())
+        .update_agent_whitelist(&id, req.description.as_deref().map(Some))
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to update agent whitelist");
             error_response(
@@ -363,13 +364,13 @@ async fn update_agent(
         return resp;
     }
 
-    // 更新 agents 表（collection_interval_secs 和 description）
+    // 更新 agents 表（只更新传入的字段）
     if let Err(resp) = state
         .cert_store
         .update_agent_config(
             &entry.agent_id,
-            req.collection_interval_secs,
-            req.description.as_deref(),
+            req.collection_interval_secs.map(Some),
+            req.description.as_deref().map(Some),
         )
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to update agent config");
@@ -384,55 +385,9 @@ async fn update_agent(
         return resp;
     }
 
-    // 重新查询获取完整信息
-    let entry = match state.cert_store.get_agent_by_id(&id).map_err(|e| {
-        tracing::error!(error = %e, "Failed to query agent");
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &trace_id,
-            "internal_error",
-            "Database error",
-        )
-    }) {
-        Ok(Some(v)) => v,
-        Ok(None) => {
-            return error_response(
-                StatusCode::NOT_FOUND,
-                &trace_id,
-                "not_found",
-                &format!("Agent with id '{}' not found", id),
-            )
-        }
-        Err(resp) => return resp,
-    };
-
-    let registry = state
-        .agent_registry
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let agent_info = registry.get_agent(&entry.agent_id);
-
     tracing::info!(id = %id, agent_id = %entry.agent_id, "Agent whitelist entry updated");
 
-    success_response(
-        StatusCode::OK,
-        &trace_id,
-        AgentWhitelistDetail {
-            id: entry.id,
-            agent_id: entry.agent_id,
-            created_at: entry.created_at,
-            updated_at: entry.updated_at,
-            description: entry.description,
-            token: None, // Never expose tokens in update responses
-            collection_interval_secs: entry.collection_interval_secs,
-            last_seen: agent_info.as_ref().map(|a| a.last_seen),
-            status: match &agent_info {
-                Some(a) if a.active => "active".to_string(),
-                Some(_) => "inactive".to_string(),
-                None => "unknown".to_string(),
-            },
-        },
-    )
+    success_id_response(StatusCode::OK, &trace_id, id)
 }
 
 /// 重新生成白名单 Agent 的认证 Token（按 ID）。
@@ -533,7 +488,7 @@ async fn regenerate_token(
         ("id" = String, Path, description = "白名单条目 ID（路径参数）")
     ),
     responses(
-        (status = 200, description = "删除成功"),
+        (status = 200, description = "删除成功", body = crate::api::IdResponse),
         (status = 401, description = "未认证"),
         (status = 404, description = "Agent 不存在"),
         (status = 500, description = "服务器错误")
@@ -604,7 +559,7 @@ async fn delete_agent(
         registry = deleted_from_registry,
         "Agent removed"
     );
-    success_empty_response(StatusCode::OK, &trace_id, "success")
+    success_id_response(StatusCode::OK, &trace_id, id)
 }
 
 pub fn whitelist_routes() -> OpenApiRouter<AppState> {

@@ -1,5 +1,5 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response as common_error_response, success_empty_response, success_paginated_response, success_response};
+use crate::api::{error_response as common_error_response, success_id_response, success_paginated_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
@@ -29,7 +29,7 @@ use super::collector::CertificateCollector;
     security(("bearer_auth" = [])),
     request_body = CreateDomainRequest,
     responses(
-        (status = 201, description = "新增监控域名结果", body = CertDomain),
+        (status = 201, description = "新增监控域名结果", body = crate::api::IdResponse),
         (status = 400, description = "请求参数错误", body = crate::api::ApiError),
         (status = 401, description = "未授权", body = crate::api::ApiError),
         (status = 409, description = "域名已存在", body = crate::api::ApiError)
@@ -86,7 +86,7 @@ async fn create_domain(
     }
 
     match state.cert_store.insert_domain(&req) {
-        Ok(domain) => success_response(StatusCode::CREATED, &trace_id, domain),
+        Ok(domain) => success_id_response(StatusCode::CREATED, &trace_id, domain.id),
         Err(e) => {
             tracing::error!(error = %e, "Storage operation failed");
             common_error_response(
@@ -109,7 +109,7 @@ async fn create_domain(
     security(("bearer_auth" = [])),
     request_body = BatchCreateDomainsRequest,
     responses(
-        (status = 201, description = "批量新增监控域名结果", body = Vec<CertDomain>),
+        (status = 201, description = "批量新增监控域名结果", body = Vec<crate::api::IdResponse>),
         (status = 400, description = "请求参数错误", body = crate::api::ApiError),
         (status = 401, description = "未授权", body = crate::api::ApiError),
         (status = 409, description = "域名重复", body = crate::api::ApiError)
@@ -153,7 +153,10 @@ async fn create_domains_batch(
     }
 
     match state.cert_store.insert_domains_batch(&req.domains) {
-        Ok(domains) => success_response(StatusCode::CREATED, &trace_id, domains),
+        Ok(domains) => {
+            let ids: Vec<crate::api::IdResponse> = domains.into_iter().map(|d| crate::api::IdResponse { id: d.id }).collect();
+            success_response(StatusCode::CREATED, &trace_id, ids)
+        }
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("UNIQUE constraint") {
@@ -345,7 +348,7 @@ async fn get_domain(
     ),
     request_body = UpdateDomainRequest,
     responses(
-        (status = 200, description = "更新监控域名结果", body = CertDomain),
+        (status = 200, description = "更新监控域名结果", body = crate::api::IdResponse),
         (status = 400, description = "请求参数错误", body = crate::api::ApiError),
         (status = 401, description = "未授权", body = crate::api::ApiError),
         (status = 404, description = "域名不存在", body = crate::api::ApiError)
@@ -376,7 +379,7 @@ async fn update_domain(
         req.check_interval_secs,
         req.note,
     ) {
-        Ok(Some(domain)) => success_response(StatusCode::OK, &trace_id, domain),
+        Ok(Some(domain)) => success_id_response(StatusCode::OK, &trace_id, domain.id),
         Ok(None) => common_error_response(
             StatusCode::NOT_FOUND,
             &trace_id,
@@ -408,7 +411,7 @@ async fn update_domain(
         ("id" = String, Path, description = "监控域名 ID（路径参数）")
     ),
     responses(
-        (status = 200, description = "删除成功"),
+        (status = 200, description = "删除成功", body = crate::api::IdResponse),
         (status = 401, description = "未授权", body = crate::api::ApiError),
         (status = 404, description = "域名不存在", body = crate::api::ApiError)
     )
@@ -419,7 +422,7 @@ async fn delete_domain(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.cert_store.delete_domain(&id) {
-        Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "Deleted"),
+        Ok(true) => success_id_response(StatusCode::OK, &trace_id, id),
         Ok(false) => common_error_response(
             StatusCode::NOT_FOUND,
             &trace_id,

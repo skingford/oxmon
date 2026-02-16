@@ -6,8 +6,9 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
+use oxmon_common::types::UpdateNotificationChannelRequest;
 use oxmon_storage::cert_store::{
-    NotificationChannelRow, NotificationChannelUpdate, NotificationLogFilter, SilenceWindowRow,
+    NotificationChannelRow, NotificationLogFilter, SilenceWindowRow,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -336,7 +337,7 @@ fn default_min_severity() -> String {
     security(("bearer_auth" = [])),
     request_body = CreateChannelRequest,
     responses(
-        (status = 201, description = "通知渠道已创建", body = ChannelOverview),
+        (status = 201, description = "通知渠道已创建", body = crate::api::IdResponse),
         (status = 400, description = "请求参数错误", body = crate::api::ApiError),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 409, description = "渠道名称已存在", body = crate::api::ApiError)
@@ -402,7 +403,7 @@ async fn create_channel(
 
     let channel_id = row.id.clone();
     match state.cert_store.insert_notification_channel(&row) {
-        Ok(ch) => {
+        Ok(_ch) => {
             // 写入收件人
             if !req.recipients.is_empty() {
                 let _ = state
@@ -413,8 +414,8 @@ async fn create_channel(
             if let Err(e) = state.notifier.reload().await {
                 tracing::warn!(error = %e, "Failed to reload channels after create");
             }
-            // 返回完整的渠道信息（含收件人）
-            success_response(StatusCode::CREATED, &trace_id, build_channel_overview(&state, ch))
+            // 返回渠道 ID
+            crate::api::success_id_response(StatusCode::CREATED, &trace_id, channel_id)
         }
         Err(e) => {
             let msg = e.to_string();
@@ -447,9 +448,9 @@ async fn create_channel(
     tag = "Notifications",
     security(("bearer_auth" = [])),
     params(("id" = String, Path, description = "渠道 ID")),
-    request_body = serde_json::Value,
+    request_body = UpdateNotificationChannelRequest,
     responses(
-        (status = 200, description = "通知渠道已更新", body = ChannelOverview),
+        (status = 200, description = "通知渠道已更新", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "渠道不存在", body = crate::api::ApiError)
     )
@@ -458,13 +459,23 @@ async fn update_channel(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(update): Json<NotificationChannelUpdate>,
+    Json(req): Json<UpdateNotificationChannelRequest>,
 ) -> impl IntoResponse {
     // 如果提供了 recipients，先保存以便后续更新
-    let recipients_to_update = update.recipients.clone();
+    let recipients_to_update = req.recipients.clone();
+
+    // 转换为存储层的更新类型
+    let update = oxmon_storage::cert_store::NotificationChannelUpdate {
+        name: req.name,
+        description: req.description,
+        min_severity: req.min_severity,
+        enabled: req.enabled,
+        config_json: req.config_json,
+        recipients: req.recipients,
+    };
 
     match state.cert_store.update_notification_channel(&id, &update) {
-        Ok(Some(ch)) => {
+        Ok(Some(_ch)) => {
             // 如果提供了 recipients，同时更新收件人列表
             if let Some(recipients) = recipients_to_update {
                 if let Err(e) = state.cert_store.set_channel_recipients(&id, &recipients) {
@@ -480,8 +491,8 @@ async fn update_channel(
             if let Err(e) = state.notifier.reload().await {
                 tracing::warn!(error = %e, "Failed to reload channels after update");
             }
-            // 返回完整的渠道信息（含收件人）
-            success_response(StatusCode::OK, &trace_id, build_channel_overview(&state, ch))
+            // 返回渠道 ID
+            crate::api::success_id_response(StatusCode::OK, &trace_id, id)
         }
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
@@ -511,7 +522,7 @@ async fn update_channel(
     security(("bearer_auth" = [])),
     params(("id" = String, Path, description = "渠道 ID")),
     responses(
-        (status = 200, description = "通知渠道已删除"),
+        (status = 200, description = "通知渠道已删除", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "渠道不存在", body = crate::api::ApiError)
     )
@@ -526,7 +537,7 @@ async fn delete_channel(
             if let Err(e) = state.notifier.reload().await {
                 tracing::warn!(error = %e, "Failed to reload channels after delete");
             }
-            success_empty_response(StatusCode::OK, &trace_id, "Channel deleted")
+            crate::api::success_id_response(StatusCode::OK, &trace_id, id)
         }
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
@@ -616,7 +627,7 @@ struct CreateSilenceWindowRequest {
     security(("bearer_auth" = [])),
     request_body = CreateSilenceWindowRequest,
     responses(
-        (status = 201, description = "静默窗口已创建", body = serde_json::Value),
+        (status = 201, description = "静默窗口已创建", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError)
     )
 )]
@@ -679,7 +690,7 @@ async fn create_silence_window(
         updated_at: chrono::Utc::now(),
     };
     match state.cert_store.insert_silence_window(&row) {
-        Ok(sw) => success_response(StatusCode::CREATED, &trace_id, sw),
+        Ok(sw) => crate::api::success_id_response(StatusCode::CREATED, &trace_id, sw.id),
         Err(e) => {
             tracing::error!(error = %e, "Failed to create silence window");
             error_response(
@@ -749,7 +760,7 @@ struct UpdateSilenceWindowRequest {
     params(("id" = String, Path, description = "静默窗口 ID")),
     request_body = UpdateSilenceWindowRequest,
     responses(
-        (status = 200, description = "静默窗口已更新", body = serde_json::Value),
+        (status = 200, description = "静默窗口已更新", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "静默窗口不存在", body = crate::api::ApiError)
     )
@@ -834,7 +845,7 @@ async fn update_silence_window(
         req.end_time,
         req.recurrence,
     ) {
-        Ok(Some(window)) => success_response(StatusCode::OK, &trace_id, window),
+        Ok(Some(window)) => crate::api::success_id_response(StatusCode::OK, &trace_id, window.id),
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,
@@ -863,7 +874,7 @@ async fn update_silence_window(
     security(("bearer_auth" = [])),
     params(("id" = String, Path, description = "静默窗口 ID")),
     responses(
-        (status = 200, description = "静默窗口已删除"),
+        (status = 200, description = "静默窗口已删除", body = crate::api::IdResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "静默窗口不存在", body = crate::api::ApiError)
     )
@@ -874,7 +885,7 @@ async fn delete_silence_window(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.cert_store.delete_silence_window(&id) {
-        Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "Silence window deleted"),
+        Ok(true) => crate::api::success_id_response(StatusCode::OK, &trace_id, id),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,
