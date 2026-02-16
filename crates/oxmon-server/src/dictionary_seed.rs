@@ -134,44 +134,46 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ));
     }
 
-    // ---- metric_name: 系统指标名称 ----
+    // ---- metric_name: 系统指标名称（与 oxmon-collector 实际上报一致） ----
     order = 0;
     for (key, label, desc) in [
         ("cpu.usage", "CPU 使用率", "CPU 整体使用百分比"),
-        ("cpu.user", "CPU 用户态", "CPU 用户态使用百分比"),
-        ("cpu.system", "CPU 系统态", "CPU 系统态使用百分比"),
-        ("memory.usage", "内存使用率", "内存使用百分比"),
-        ("memory.used_bytes", "已用内存", "已使用内存字节数"),
-        ("memory.total_bytes", "总内存", "总内存字节数"),
-        ("memory.available_bytes", "可用内存", "可用内存字节数"),
-        ("disk.usage", "磁盘使用率", "磁盘使用百分比"),
-        ("disk.used_percent", "磁盘使用百分比", "磁盘已用空间占总空间百分比"),
-        ("disk.used_bytes", "已用磁盘", "已使用磁盘字节数"),
-        ("disk.total_bytes", "磁盘总量", "磁盘总容量字节数"),
-        ("disk.available_bytes", "可用磁盘", "可用磁盘字节数"),
+        ("cpu.core_usage", "CPU 核心使用率", "单个 CPU 核心使用百分比"),
+        ("memory.total", "总内存", "总内存字节数"),
+        ("memory.used", "已用内存", "已使用内存字节数"),
+        ("memory.available", "可用内存", "可用内存字节数"),
+        ("memory.used_percent", "内存使用率", "内存使用百分比"),
+        ("memory.swap_total", "交换区总量", "交换区总字节数"),
+        ("memory.swap_used", "已用交换区", "已使用交换区字节数"),
+        ("memory.swap_percent", "交换区使用率", "交换区使用百分比"),
+        ("disk.total", "磁盘总量", "磁盘总容量字节数"),
+        ("disk.used", "已用磁盘", "已使用磁盘字节数"),
+        ("disk.available", "可用磁盘", "可用磁盘字节数"),
+        ("disk.used_percent", "磁盘使用率", "磁盘已用空间占总空间百分比"),
         (
-            "disk.read_bytes_per_sec",
-            "磁盘读速率",
-            "磁盘每秒读取字节数",
+            "network.bytes_recv",
+            "网络接收字节数",
+            "网络接收字节数(采集间隔内增量)",
         ),
         (
-            "disk.write_bytes_per_sec",
-            "磁盘写速率",
-            "磁盘每秒写入字节数",
+            "network.bytes_sent",
+            "网络发送字节数",
+            "网络发送字节数(采集间隔内增量)",
         ),
         (
-            "network.rx_bytes_per_sec",
-            "网络接收速率",
-            "网络每秒接收字节数",
+            "network.packets_recv",
+            "网络接收包数",
+            "网络接收数据包数(采集间隔内增量)",
         ),
         (
-            "network.tx_bytes_per_sec",
-            "网络发送速率",
-            "网络每秒发送字节数",
+            "network.packets_sent",
+            "网络发送包数",
+            "网络发送数据包数(采集间隔内增量)",
         ),
-        ("load.load1", "1分钟负载", "系统1分钟平均负载"),
-        ("load.load5", "5分钟负载", "系统5分钟平均负载"),
-        ("load.load15", "15分钟负载", "系统15分钟平均负载"),
+        ("system.load_1", "1分钟负载", "系统1分钟平均负载"),
+        ("system.load_5", "5分钟负载", "系统5分钟平均负载"),
+        ("system.load_15", "15分钟负载", "系统15分钟平均负载"),
+        ("system.uptime", "系统运行时长", "系统启动后运行秒数"),
     ] {
         order += 1;
         items.push(make_system_item(

@@ -298,71 +298,71 @@
     },
     {
       "dict_type": "metric_name",
-      "dict_key": "cpu.user",
-      "dict_label": "CPU 用户态",
+      "dict_key": "cpu.core_usage",
+      "dict_label": "CPU 核心使用率",
       "sort_order": 2,
       "is_system": true,
-      "description": "CPU 用户态使用百分比"
+      "description": "单个 CPU 核心使用百分比"
     },
     {
       "dict_type": "metric_name",
-      "dict_key": "cpu.system",
-      "dict_label": "CPU 系统态",
-      "sort_order": 3,
-      "is_system": true,
-      "description": "CPU 系统态使用百分比"
-    },
-    {
-      "dict_type": "metric_name",
-      "dict_key": "memory.usage",
-      "dict_label": "内存使用率",
-      "sort_order": 4,
-      "is_system": true,
-      "description": "内存使用百分比"
-    },
-    {
-      "dict_type": "metric_name",
-      "dict_key": "memory.used_bytes",
-      "dict_label": "已用内存",
-      "sort_order": 5,
-      "is_system": true,
-      "description": "已使用内存字节数"
-    },
-    {
-      "dict_type": "metric_name",
-      "dict_key": "memory.total_bytes",
+      "dict_key": "memory.total",
       "dict_label": "总内存",
-      "sort_order": 6,
+      "sort_order": 3,
       "is_system": true,
       "description": "总内存字节数"
     },
     {
       "dict_type": "metric_name",
-      "dict_key": "memory.available_bytes",
+      "dict_key": "memory.used",
+      "dict_label": "已用内存",
+      "sort_order": 4,
+      "is_system": true,
+      "description": "已使用内存字节数"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "memory.available",
       "dict_label": "可用内存",
-      "sort_order": 7,
+      "sort_order": 5,
       "is_system": true,
       "description": "可用内存字节数"
     },
     {
       "dict_type": "metric_name",
-      "dict_key": "disk.usage",
-      "dict_label": "磁盘使用率",
+      "dict_key": "memory.used_percent",
+      "dict_label": "内存使用率",
+      "sort_order": 6,
+      "is_system": true,
+      "description": "内存使用百分比"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "memory.swap_total",
+      "dict_label": "交换区总量",
+      "sort_order": 7,
+      "is_system": true,
+      "description": "交换区总字节数"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "memory.swap_used",
+      "dict_label": "已用交换区",
       "sort_order": 8,
       "is_system": true,
-      "description": "磁盘使用百分比"
+      "description": "已使用交换区字节数"
     },
     {
       "dict_type": "metric_name",
-      "dict_key": "disk.used_bytes",
-      "dict_label": "已用磁盘",
+      "dict_key": "memory.swap_percent",
+      "dict_label": "交换区使用率",
       "sort_order": 9,
       "is_system": true,
-      "description": "已使用磁盘字节数"
+      "description": "交换区使用百分比"
     },
     {
       "dict_type": "metric_name",
-      "dict_key": "disk.total_bytes",
+      "dict_key": "disk.total",
       "dict_label": "磁盘总量",
       "sort_order": 10,
       "is_system": true,
@@ -370,67 +370,91 @@
     },
     {
       "dict_type": "metric_name",
-      "dict_key": "disk.available_bytes",
-      "dict_label": "可用磁盘",
+      "dict_key": "disk.used",
+      "dict_label": "已用磁盘",
       "sort_order": 11,
+      "is_system": true,
+      "description": "已使用磁盘字节数"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "disk.available",
+      "dict_label": "可用磁盘",
+      "sort_order": 12,
       "is_system": true,
       "description": "可用磁盘字节数"
     },
     {
       "dict_type": "metric_name",
-      "dict_key": "disk.read_bytes_per_sec",
-      "dict_label": "磁盘读速率",
-      "sort_order": 12,
-      "is_system": true,
-      "description": "磁盘每秒读取字节数"
-    },
-    {
-      "dict_type": "metric_name",
-      "dict_key": "disk.write_bytes_per_sec",
-      "dict_label": "磁盘写速率",
+      "dict_key": "disk.used_percent",
+      "dict_label": "磁盘使用率",
       "sort_order": 13,
       "is_system": true,
-      "description": "磁盘每秒写入字节数"
+      "description": "磁盘已用空间占总空间百分比"
     },
     {
       "dict_type": "metric_name",
-      "dict_key": "network.rx_bytes_per_sec",
-      "dict_label": "网络接收速率",
+      "dict_key": "network.bytes_recv",
+      "dict_label": "网络接收字节数",
       "sort_order": 14,
       "is_system": true,
-      "description": "网络每秒接收字节数"
+      "description": "网络接收字节数(采集间隔内增量)"
     },
     {
       "dict_type": "metric_name",
-      "dict_key": "network.tx_bytes_per_sec",
-      "dict_label": "网络发送速率",
+      "dict_key": "network.bytes_sent",
+      "dict_label": "网络发送字节数",
       "sort_order": 15,
       "is_system": true,
-      "description": "网络每秒发送字节数"
+      "description": "网络发送字节数(采集间隔内增量)"
     },
     {
       "dict_type": "metric_name",
-      "dict_key": "load.load1",
-      "dict_label": "1分钟负载",
+      "dict_key": "network.packets_recv",
+      "dict_label": "网络接收包数",
       "sort_order": 16,
+      "is_system": true,
+      "description": "网络接收数据包数(采集间隔内增量)"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "network.packets_sent",
+      "dict_label": "网络发送包数",
+      "sort_order": 17,
+      "is_system": true,
+      "description": "网络发送数据包数(采集间隔内增量)"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "system.load_1",
+      "dict_label": "1分钟负载",
+      "sort_order": 18,
       "is_system": true,
       "description": "系统1分钟平均负载"
     },
     {
       "dict_type": "metric_name",
-      "dict_key": "load.load5",
+      "dict_key": "system.load_5",
       "dict_label": "5分钟负载",
-      "sort_order": 17,
+      "sort_order": 19,
       "is_system": true,
       "description": "系统5分钟平均负载"
     },
     {
       "dict_type": "metric_name",
-      "dict_key": "load.load15",
+      "dict_key": "system.load_15",
       "dict_label": "15分钟负载",
-      "sort_order": 18,
+      "sort_order": 20,
       "is_system": true,
       "description": "系统15分钟平均负载"
+    },
+    {
+      "dict_type": "metric_name",
+      "dict_key": "system.uptime",
+      "dict_label": "系统运行时长",
+      "sort_order": 21,
+      "is_system": true,
+      "description": "系统启动后运行秒数"
     },
 
     {

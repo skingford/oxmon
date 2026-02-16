@@ -29,7 +29,7 @@
     {
       "name": "内存使用率严重告警",
       "rule_type": "threshold",
-      "metric": "memory.usage",
+      "metric": "memory.used_percent",
       "agent_pattern": "*",
       "severity": "critical",
       "silence_secs": 300,
@@ -42,7 +42,7 @@
     {
       "name": "内存使用率警告",
       "rule_type": "threshold",
-      "metric": "memory.usage",
+      "metric": "memory.used_percent",
       "agent_pattern": "*",
       "severity": "warning",
       "silence_secs": 300,
@@ -55,7 +55,7 @@
     {
       "name": "内存使用率突增",
       "rule_type": "rate_of_change",
-      "metric": "memory.usage",
+      "metric": "memory.used_percent",
       "agent_pattern": "*",
       "severity": "warning",
       "silence_secs": 600,
@@ -67,7 +67,7 @@
     {
       "name": "磁盘使用率严重告警",
       "rule_type": "threshold",
-      "metric": "disk.usage",
+      "metric": "disk.used_percent",
       "agent_pattern": "*",
       "severity": "critical",
       "silence_secs": 600,
@@ -80,7 +80,7 @@
     {
       "name": "磁盘使用率警告",
       "rule_type": "threshold",
-      "metric": "disk.usage",
+      "metric": "disk.used_percent",
       "agent_pattern": "*",
       "severity": "warning",
       "silence_secs": 600,
@@ -93,7 +93,7 @@
     {
       "name": "磁盘空间趋势预测",
       "rule_type": "trend_prediction",
-      "metric": "disk.usage",
+      "metric": "disk.used_percent",
       "agent_pattern": "*",
       "severity": "warning",
       "silence_secs": 3600,

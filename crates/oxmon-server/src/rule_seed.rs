@@ -36,7 +36,7 @@ const DEFAULT_RULES: &[RuleDef] = &[
     RuleDef {
         name: "内存使用率严重告警",
         rule_type: "threshold",
-        metric: "memory.usage",
+        metric: "memory.used_percent",
         agent_pattern: "*",
         severity: "critical",
         config_json: r#"{"operator":"greater_than","value":95.0,"duration_secs":60}"#,
@@ -45,7 +45,7 @@ const DEFAULT_RULES: &[RuleDef] = &[
     RuleDef {
         name: "内存使用率警告",
         rule_type: "threshold",
-        metric: "memory.usage",
+        metric: "memory.used_percent",
         agent_pattern: "*",
         severity: "warning",
         config_json: r#"{"operator":"greater_than","value":85.0,"duration_secs":120}"#,
@@ -54,7 +54,7 @@ const DEFAULT_RULES: &[RuleDef] = &[
     RuleDef {
         name: "内存使用率突增",
         rule_type: "rate_of_change",
-        metric: "memory.usage",
+        metric: "memory.used_percent",
         agent_pattern: "*",
         severity: "warning",
         config_json: r#"{"rate_threshold":20.0,"window_secs":300}"#,
@@ -64,7 +64,7 @@ const DEFAULT_RULES: &[RuleDef] = &[
     RuleDef {
         name: "磁盘使用率严重告警",
         rule_type: "threshold",
-        metric: "disk.usage",
+        metric: "disk.used_percent",
         agent_pattern: "*",
         severity: "critical",
         config_json: r#"{"operator":"greater_than","value":95.0,"duration_secs":0}"#,
@@ -73,7 +73,7 @@ const DEFAULT_RULES: &[RuleDef] = &[
     RuleDef {
         name: "磁盘使用率警告",
         rule_type: "threshold",
-        metric: "disk.usage",
+        metric: "disk.used_percent",
         agent_pattern: "*",
         severity: "warning",
         config_json: r#"{"operator":"greater_than","value":85.0,"duration_secs":0}"#,
@@ -82,7 +82,7 @@ const DEFAULT_RULES: &[RuleDef] = &[
     RuleDef {
         name: "磁盘空间趋势预测",
         rule_type: "trend_prediction",
-        metric: "disk.usage",
+        metric: "disk.used_percent",
         agent_pattern: "*",
         severity: "warning",
         config_json: r#"{"predict_threshold":95.0,"horizon_secs":86400,"min_data_points":3}"#,
