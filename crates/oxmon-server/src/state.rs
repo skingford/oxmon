@@ -3,6 +3,7 @@ use chrono::{DateTime, Duration, Utc};
 use oxmon_alert::engine::AlertEngine;
 use oxmon_common::types::AgentInfo;
 use oxmon_notify::manager::NotificationManager;
+use oxmon_storage::auth::PasswordEncryptor;
 use oxmon_storage::cert_store::CertStore;
 use oxmon_storage::engine::SqliteStorageEngine;
 use std::collections::HashMap;
@@ -85,5 +86,6 @@ pub struct AppState {
     pub start_time: DateTime<Utc>,
     pub jwt_secret: Arc<String>,
     pub token_expire_secs: u64,
+    pub password_encryptor: Arc<PasswordEncryptor>,
     pub config: Arc<ServerConfig>,
 }

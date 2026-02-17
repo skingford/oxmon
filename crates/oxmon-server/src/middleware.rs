@@ -136,6 +136,10 @@ mod tests {
             app_id: app_id_config,
         };
 
+        let password_encryptor = Arc::new(
+            oxmon_storage::auth::PasswordEncryptor::load_or_create(temp_dir.path()).unwrap(),
+        );
+
         let state = AppState {
             storage,
             alert_engine,
@@ -146,6 +150,7 @@ mod tests {
             start_time: Utc::now(),
             jwt_secret: Arc::new("test-secret".to_string()),
             token_expire_secs: 3600,
+            password_encryptor,
             config: Arc::new(config),
         };
 

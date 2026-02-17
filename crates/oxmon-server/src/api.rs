@@ -1063,7 +1063,9 @@ pub fn public_routes() -> OpenApiRouter<AppState> {
 }
 
 pub fn auth_routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(crate::auth::login))
+    OpenApiRouter::new()
+        .routes(routes!(crate::auth::login))
+        .routes(routes!(crate::auth::get_public_key))
 }
 
 pub fn protected_routes() -> OpenApiRouter<AppState> {

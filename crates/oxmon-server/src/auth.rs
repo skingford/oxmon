@@ -5,7 +5,9 @@ use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::Json;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-use oxmon_common::types::{ChangePasswordRequest, LoginRequest, LoginResponse};
+use oxmon_common::types::{
+    ChangePasswordRequest, LoginRequest, LoginResponse, PublicKeyResponse,
+};
 use oxmon_storage::auth::{hash_token, verify_token};
 use serde::{Deserialize, Serialize};
 
@@ -123,8 +125,35 @@ pub async fn jwt_auth_middleware(
     }
 }
 
+/// 获取 RSA 公钥（用于前端加密密码）。
+/// 鉴权：无需 Bearer Token，但需要 ox-app-id 请求头（如果在配置中启用）。
+#[utoipa::path(
+    get,
+    path = "/v1/auth/public-key",
+    tag = "Auth",
+    security(("app_id_auth" = [])),
+    responses(
+        (status = 200, description = "RSA 公钥", body = PublicKeyResponse),
+        (status = 403, description = "缺少或无效的 ox-app-id", body = ApiError)
+    )
+)]
+pub async fn get_public_key(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    success_response(
+        StatusCode::OK,
+        &trace_id,
+        PublicKeyResponse {
+            public_key: state.password_encryptor.public_key_pem().to_string(),
+            algorithm: "RSA-OAEP-SHA256".to_string(),
+        },
+    )
+}
+
 /// 用户登录并获取 JWT。
 /// 鉴权：无需 Bearer Token，但需要 ox-app-id 请求头（如果在配置中启用）。
+/// 密码需使用 RSA-OAEP(SHA-256) 加密后以 Base64 传输。
 #[utoipa::path(
     post,
     path = "/v1/auth/login",
@@ -143,14 +172,31 @@ pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
 ) -> impl IntoResponse {
-    if req.username.is_empty() || req.password.is_empty() {
+    if req.username.is_empty() || req.encrypted_password.is_empty() {
         return error_response(
             StatusCode::BAD_REQUEST,
             &trace_id,
             "bad_request",
-            "username and password are required",
+            "username and encrypted_password are required",
         );
     }
+
+    // Decrypt password
+    let password = match state
+        .password_encryptor
+        .decrypt_password(&req.encrypted_password)
+    {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to decrypt login password");
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "bad_request",
+                "invalid encrypted password",
+            );
+        }
+    };
 
     let user = match state.cert_store.get_user_by_username(&req.username) {
         Ok(Some(u)) => u,
@@ -173,7 +219,7 @@ pub async fn login(
         }
     };
 
-    match verify_token(&req.password, &user.password_hash) {
+    match verify_token(&password, &user.password_hash) {
         Ok(true) => {}
         _ => {
             return error_response(
@@ -214,6 +260,7 @@ pub async fn login(
 
 /// 修改当前登录用户密码。
 /// 鉴权：需要 Bearer Token。
+/// 密码需使用 RSA-OAEP(SHA-256) 加密后以 Base64 传输。
 #[utoipa::path(
     post,
     path = "/v1/auth/password",
@@ -221,7 +268,7 @@ pub async fn login(
     security(("bearer_auth" = [])),
     request_body = ChangePasswordRequest,
     responses(
-        (status = 200, description = "密码修改成功（需重新登录）"),
+        (status = 200, description = "密码修改成功（需重新登录）", body = ApiError),
         (status = 400, description = "请求参数错误", body = ApiError),
         (status = 401, description = "认证失败或当前密码错误", body = ApiError),
         (status = 500, description = "服务器内部错误", body = ApiError)
@@ -233,16 +280,50 @@ pub async fn change_password(
     axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<ChangePasswordRequest>,
 ) -> impl IntoResponse {
-    if body.current_password.is_empty() || body.new_password.is_empty() {
+    if body.encrypted_current_password.is_empty() || body.encrypted_new_password.is_empty() {
         return error_response(
             StatusCode::BAD_REQUEST,
             &trace_id,
             "bad_request",
-            "current_password and new_password are required",
+            "encrypted_current_password and encrypted_new_password are required",
         );
     }
 
-    if body.new_password.len() < 8 {
+    // Decrypt current password
+    let current_password = match state
+        .password_encryptor
+        .decrypt_password(&body.encrypted_current_password)
+    {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to decrypt current password");
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "bad_request",
+                "invalid encrypted password",
+            );
+        }
+    };
+
+    // Decrypt new password
+    let new_password = match state
+        .password_encryptor
+        .decrypt_password(&body.encrypted_new_password)
+    {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to decrypt new password");
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "bad_request",
+                "invalid encrypted password",
+            );
+        }
+    };
+
+    if new_password.len() < 8 {
         return error_response(
             StatusCode::BAD_REQUEST,
             &trace_id,
@@ -272,7 +353,7 @@ pub async fn change_password(
         }
     };
 
-    match verify_token(&body.current_password, &user.password_hash) {
+    match verify_token(&current_password, &user.password_hash) {
         Ok(true) => {}
         _ => {
             return error_response(
@@ -284,7 +365,7 @@ pub async fn change_password(
         }
     }
 
-    let new_password_hash = match hash_token(&body.new_password) {
+    let new_password_hash = match hash_token(&new_password) {
         Ok(hash) => hash,
         Err(e) => {
             tracing::error!(error = %e, "Failed to hash password");

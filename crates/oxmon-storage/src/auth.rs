@@ -3,6 +3,9 @@ use base64::{engine::general_purpose, Engine as _};
 use rand::Rng;
 use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
+use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey, LineEnding};
+use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
+use sha2::Sha256;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -124,6 +127,99 @@ impl TokenEncryptor {
     }
 }
 
+/// RSA-OAEP 密码加密器，用于登录/改密接口的密码安全传输。
+/// 前端用公钥加密 `{"password":"...","timestamp":<unix_secs>}` → Base64，
+/// 服务端用私钥解密并校验 timestamp 防重放。
+pub struct PasswordEncryptor {
+    private_key: RsaPrivateKey,
+    public_key_pem: String,
+}
+
+/// 加密 payload 内部结构
+#[derive(serde::Deserialize)]
+struct EncryptedPayload {
+    password: String,
+    timestamp: i64,
+}
+
+/// timestamp 容差（秒）
+const TIMESTAMP_TOLERANCE_SECS: i64 = 300;
+
+impl PasswordEncryptor {
+    /// 从文件加载或生成 RSA-2048 私钥，存储为 PEM 格式。
+    pub fn load_or_create(data_dir: &Path) -> Result<Self> {
+        let key_path = data_dir.join("login.key");
+        let private_key = if key_path.exists() {
+            let pem = std::fs::read_to_string(&key_path)?;
+            RsaPrivateKey::from_pkcs8_pem(&pem)
+                .map_err(|e| anyhow::anyhow!("Failed to parse login private key: {e}"))?
+        } else {
+            let mut rng = rand::thread_rng();
+            let key = RsaPrivateKey::new(&mut rng, 2048)
+                .map_err(|e| anyhow::anyhow!("Failed to generate RSA key: {e}"))?;
+            let pem = key
+                .to_pkcs8_pem(LineEnding::LF)
+                .map_err(|e| anyhow::anyhow!("Failed to encode private key PEM: {e}"))?;
+            std::fs::write(&key_path, pem.as_bytes())?;
+            #[cfg(unix)]
+            {
+                let perms = std::fs::Permissions::from_mode(0o600);
+                std::fs::set_permissions(&key_path, perms)?;
+            }
+            tracing::info!(path = %key_path.display(), "Generated new login RSA key pair");
+            key
+        };
+
+        let public_key = RsaPublicKey::from(&private_key);
+        let public_key_pem = public_key
+            .to_public_key_pem(LineEnding::LF)
+            .map_err(|e| anyhow::anyhow!("Failed to encode public key PEM: {e}"))?;
+
+        Ok(Self {
+            private_key,
+            public_key_pem,
+        })
+    }
+
+    /// 返回 PEM 编码的公钥字符串。
+    pub fn public_key_pem(&self) -> &str {
+        &self.public_key_pem
+    }
+
+    /// 返回 RSA 公钥（用于测试加密）。
+    pub fn public_key(&self) -> RsaPublicKey {
+        RsaPublicKey::from(&self.private_key)
+    }
+
+    /// 解密前端传来的 Base64 编码加密密码。
+    /// 返回解密后的明文密码。
+    pub fn decrypt_password(&self, encrypted_base64: &str) -> Result<String> {
+        let ciphertext = general_purpose::STANDARD
+            .decode(encrypted_base64)
+            .map_err(|e| anyhow::anyhow!("Invalid base64: {e}"))?;
+
+        let padding = Oaep::new::<Sha256>();
+        let plaintext = self
+            .private_key
+            .decrypt(padding, &ciphertext)
+            .map_err(|_| anyhow::anyhow!("RSA decryption failed"))?;
+
+        let payload_str = String::from_utf8(plaintext)
+            .map_err(|_| anyhow::anyhow!("Decrypted payload is not valid UTF-8"))?;
+
+        let payload: EncryptedPayload = serde_json::from_str(&payload_str)
+            .map_err(|_| anyhow::anyhow!("Invalid payload format"))?;
+
+        let now = chrono::Utc::now().timestamp();
+        let diff = (now - payload.timestamp).abs();
+        if diff > TIMESTAMP_TOLERANCE_SECS {
+            anyhow::bail!("Timestamp expired or too far in the future");
+        }
+
+        Ok(payload.password)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,5 +284,100 @@ mod tests {
 
         // 不同密钥解密应失败
         assert!(enc2.decrypt(&encrypted).is_err());
+    }
+
+    /// 用公钥加密密码 payload 的辅助函数（测试用）
+    fn encrypt_password_for_test(
+        public_key: &RsaPublicKey,
+        password: &str,
+        timestamp: i64,
+    ) -> String {
+        let payload = serde_json::json!({
+            "password": password,
+            "timestamp": timestamp,
+        });
+        let padding = Oaep::new::<Sha256>();
+        let mut rng = rand::thread_rng();
+        let ciphertext = public_key
+            .encrypt(&mut rng, padding, payload.to_string().as_bytes())
+            .expect("encryption should succeed");
+        general_purpose::STANDARD.encode(&ciphertext)
+    }
+
+    #[test]
+    fn test_password_encryptor_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let enc = PasswordEncryptor::load_or_create(dir.path()).unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+        let encrypted = encrypt_password_for_test(&enc.public_key(), "my-secret", now);
+
+        let decrypted = enc.decrypt_password(&encrypted).unwrap();
+        assert_eq!(decrypted, "my-secret");
+    }
+
+    #[test]
+    fn test_password_encryptor_key_persistence() {
+        let dir = TempDir::new().unwrap();
+
+        let enc1 = PasswordEncryptor::load_or_create(dir.path()).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let encrypted = encrypt_password_for_test(&enc1.public_key(), "persist-test", now);
+
+        // 重新加载应使用同一密钥
+        let enc2 = PasswordEncryptor::load_or_create(dir.path()).unwrap();
+        let decrypted = enc2.decrypt_password(&encrypted).unwrap();
+        assert_eq!(decrypted, "persist-test");
+        assert_eq!(enc1.public_key_pem(), enc2.public_key_pem());
+    }
+
+    #[test]
+    fn test_password_encryptor_expired_timestamp() {
+        let dir = TempDir::new().unwrap();
+        let enc = PasswordEncryptor::load_or_create(dir.path()).unwrap();
+
+        let old_timestamp = chrono::Utc::now().timestamp() - 600; // 10 minutes ago
+        let encrypted = encrypt_password_for_test(&enc.public_key(), "expired", old_timestamp);
+
+        let result = enc.decrypt_password(&encrypted);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Timestamp expired")
+        );
+    }
+
+    #[test]
+    fn test_password_encryptor_wrong_key_fails() {
+        let dir1 = TempDir::new().unwrap();
+        let dir2 = TempDir::new().unwrap();
+
+        let enc1 = PasswordEncryptor::load_or_create(dir1.path()).unwrap();
+        let enc2 = PasswordEncryptor::load_or_create(dir2.path()).unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+        let encrypted = encrypt_password_for_test(&enc1.public_key(), "wrong-key", now);
+
+        assert!(enc2.decrypt_password(&encrypted).is_err());
+    }
+
+    #[test]
+    fn test_password_encryptor_invalid_base64() {
+        let dir = TempDir::new().unwrap();
+        let enc = PasswordEncryptor::load_or_create(dir.path()).unwrap();
+
+        assert!(enc.decrypt_password("not-valid-base64!!!").is_err());
+    }
+
+    #[test]
+    fn test_password_encryptor_public_key_pem() {
+        let dir = TempDir::new().unwrap();
+        let enc = PasswordEncryptor::load_or_create(dir.path()).unwrap();
+
+        let pem = enc.public_key_pem();
+        assert!(pem.starts_with("-----BEGIN PUBLIC KEY-----"));
+        assert!(pem.contains("-----END PUBLIC KEY-----"));
     }
 }

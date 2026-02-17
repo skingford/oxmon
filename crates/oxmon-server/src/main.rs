@@ -397,6 +397,12 @@ async fn run_server(config_path: &str) -> Result<()> {
         }
     };
 
+    // Initialize password encryptor (RSA key pair for login/change-password)
+    let password_encryptor = Arc::new(
+        oxmon_storage::auth::PasswordEncryptor::load_or_create(Path::new(&config.data_dir))
+            .expect("Failed to initialize password encryptor"),
+    );
+
     // Default admin account: create if users table is empty
     match cert_store.count_users() {
         Ok(0) => {
@@ -439,6 +445,7 @@ async fn run_server(config_path: &str) -> Result<()> {
         start_time: Utc::now(),
         jwt_secret,
         token_expire_secs: config.auth.token_expire_secs,
+        password_encryptor,
         config: Arc::new(config.clone()),
     };
 
@@ -456,7 +463,10 @@ async fn run_server(config_path: &str) -> Result<()> {
     let http_addr: SocketAddr = format!("0.0.0.0:{}", config.http_port).parse()?;
     let app = app::build_http_app(state.clone());
     let http_listener = tokio::net::TcpListener::bind(http_addr).await?;
-    let http_server = axum::serve(http_listener, app);
+    let http_server = axum::serve(
+        http_listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    );
 
     // Periodic cleanup task
     let retention_days = config.retention_days;

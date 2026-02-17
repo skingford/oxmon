@@ -24,6 +24,7 @@ async fn openapi_paths_should_be_covered_by_test_matrix() {
 
     let covered: HashSet<String> = [
         "GET /v1/health",
+        "GET /v1/auth/public-key",
         "POST /v1/auth/login",
         "POST /v1/auth/password",
         "GET /v1/agents",

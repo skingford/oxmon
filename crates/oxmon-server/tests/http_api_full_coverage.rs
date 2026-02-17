@@ -3,8 +3,8 @@ mod common;
 use axum::http::StatusCode;
 use common::{
     add_whitelist_agent, assert_err_envelope, assert_ok_envelope, build_test_context, decode_data,
-    ensure_cert_domain_with_result, login_and_get_token, make_json_body, request_json,
-    request_no_body,
+    encrypt_password_with_state, ensure_cert_domain_with_result, login_and_get_token,
+    make_json_body, request_json, request_no_body,
 };
 use oxmon_storage::StorageEngine;
 use serde_json::json;
@@ -24,35 +24,40 @@ async fn health_should_return_ok_envelope() {
 async fn auth_login_success_and_failure_cases() {
     let ctx = build_test_context().expect("test context should build");
 
+    // Success case
+    let encrypted = encrypt_password_with_state(&ctx.state, "changeme");
     let (status, body, _) = request_json(
         &ctx.app,
         "POST",
         "/v1/auth/login",
         None,
-        Some(json!({"username":"admin","password":"changeme"})),
+        Some(json!({"username":"admin","encrypted_password": encrypted})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
     assert!(body["data"]["access_token"].is_string());
 
+    // Wrong password
+    let encrypted_wrong = encrypt_password_with_state(&ctx.state, "wrong");
     let (status, body, _) = request_json(
         &ctx.app,
         "POST",
         "/v1/auth/login",
         None,
-        Some(json!({"username":"admin","password":"wrong"})),
+        Some(json!({"username":"admin","encrypted_password": encrypted_wrong})),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_err_envelope(&body, 1002);
 
+    // Empty fields
     let (status, body, _) = request_json(
         &ctx.app,
         "POST",
         "/v1/auth/login",
         None,
-        Some(json!({"username":"","password":""})),
+        Some(json!({"username":"","encrypted_password":""})),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -64,14 +69,16 @@ async fn auth_change_password_success_and_revocation() {
     let ctx = build_test_context().expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
+    let encrypted_current = encrypt_password_with_state(&ctx.state, "changeme");
+    let encrypted_new = encrypt_password_with_state(&ctx.state, "new-secret");
     let (status, body, _) = request_json(
         &ctx.app,
         "POST",
         "/v1/auth/password",
         Some(&token),
         Some(json!({
-            "current_password":"changeme",
-            "new_password":"new-secret"
+            "encrypted_current_password": encrypted_current,
+            "encrypted_new_password": encrypted_new
         })),
     )
     .await;
@@ -86,12 +93,13 @@ async fn auth_change_password_success_and_revocation() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_err_envelope(&body, 1002);
 
+    let encrypted_new_login = encrypt_password_with_state(&ctx.state, "new-secret");
     let (status, body, _) = request_json(
         &ctx.app,
         "POST",
         "/v1/auth/login",
         None,
-        Some(json!({"username":"admin","password":"new-secret"})),
+        Some(json!({"username":"admin","encrypted_password": encrypted_new_login})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);

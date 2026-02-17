@@ -3,6 +3,7 @@
 use anyhow::Result;
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
+use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
 use oxmon_alert::engine::AlertEngine;
 use oxmon_alert::rules::threshold::{CompareOp, ThresholdRule};
@@ -15,11 +16,13 @@ use oxmon_server::app;
 use oxmon_server::config::ServerConfig;
 use oxmon_server::grpc;
 use oxmon_server::state::{AgentRegistry, AppState};
-use oxmon_storage::auth::hash_token;
+use oxmon_storage::auth::{hash_token, PasswordEncryptor};
 use oxmon_storage::cert_store::CertStore;
 use oxmon_storage::engine::SqliteStorageEngine;
+use rsa::{Oaep, RsaPublicKey};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use sha2::Sha256;
 use std::sync::{Arc, Mutex, OnceLock};
 use tempfile::TempDir;
 use tonic::metadata::MetadataValue;
@@ -82,6 +85,8 @@ pub fn build_test_context() -> Result<TestContext> {
         app_id: Default::default(),
     };
 
+    let password_encryptor = Arc::new(PasswordEncryptor::load_or_create(temp_dir.path())?);
+
     let state = AppState {
         storage,
         alert_engine,
@@ -92,6 +97,7 @@ pub fn build_test_context() -> Result<TestContext> {
         start_time: Utc::now(),
         jwt_secret: Arc::new("test-secret".to_string()),
         token_expire_secs: 3600,
+        password_encryptor,
         config: Arc::new(config),
     };
 
@@ -184,7 +190,37 @@ pub async fn request_no_body(
     (status, json, trace_id)
 }
 
+/// 用 RSA-OAEP 公钥加密密码（测试辅助）
+pub fn encrypt_password(public_key: &RsaPublicKey, password: &str) -> String {
+    let payload = serde_json::json!({
+        "password": password,
+        "timestamp": Utc::now().timestamp(),
+    });
+    let padding = Oaep::new::<Sha256>();
+    let mut rng = rand::thread_rng();
+    let ciphertext = public_key
+        .encrypt(&mut rng, padding, payload.to_string().as_bytes())
+        .expect("RSA encryption should succeed");
+    general_purpose::STANDARD.encode(&ciphertext)
+}
+
+/// 从测试上下文中获取公钥加密密码
+pub fn encrypt_password_with_state(state: &AppState, password: &str) -> String {
+    encrypt_password(&state.password_encryptor.public_key(), password)
+}
+
 pub async fn login_and_get_token(app: &axum::Router) -> String {
+    // First get the public key
+    let (status, pk_body, _) = request_no_body(app, "GET", "/v1/auth/public-key", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let pem = pk_body["data"]["public_key"]
+        .as_str()
+        .expect("public_key should exist");
+    let public_key =
+        rsa::pkcs8::DecodePublicKey::from_public_key_pem(pem).expect("PEM should parse");
+
+    let encrypted = encrypt_password(&public_key, "changeme");
+
     let (status, body, _) = request_json(
         app,
         "POST",
@@ -193,7 +229,7 @@ pub async fn login_and_get_token(app: &axum::Router) -> String {
         Some(
             serde_json::to_value(LoginRequest {
                 username: "admin".to_string(),
-                password: "changeme".to_string(),
+                encrypted_password: encrypted,
             })
             .expect("login request should serialize"),
         ),

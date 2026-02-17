@@ -39,6 +39,7 @@ struct ListDictTypesParams {
 }
 
 #[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ListByTypeQuery {
     /// 是否仅返回启用的条目（默认 false）
     #[serde(default)]

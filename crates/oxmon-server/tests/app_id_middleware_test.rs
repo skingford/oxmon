@@ -1,7 +1,10 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{build_test_context, login_and_get_token, request_json, request_no_body};
+use common::{
+    build_test_context, encrypt_password_with_state, login_and_get_token, request_json,
+    request_no_body,
+};
 
 #[tokio::test]
 async fn health_without_app_id_when_disabled_should_return_200() {
@@ -20,19 +23,14 @@ async fn login_without_app_id_when_disabled_should_work() {
     // Default config has require_app_id = false
     let ctx = build_test_context().expect("test context should build");
 
+    let encrypted = encrypt_password_with_state(&ctx.state, "changeme");
     let payload = serde_json::json!({
         "username": "admin",
-        "password": "changeme"
+        "encrypted_password": encrypted
     });
 
-    let (status, body, _) = request_json(
-        &ctx.app,
-        "POST",
-        "/v1/auth/login",
-        None,
-        Some(payload),
-    )
-    .await;
+    let (status, body, _) = request_json(&ctx.app, "POST", "/v1/auth/login", None, Some(payload))
+        .await;
 
     // Should succeed with valid credentials
     assert_eq!(status, StatusCode::OK);

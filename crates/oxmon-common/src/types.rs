@@ -441,8 +441,8 @@ pub struct User {
 pub struct LoginRequest {
     /// 登录用户名（必填）
     pub username: String,
-    /// 登录密码（必填）
-    pub password: String,
+    /// RSA-OAEP 加密后的密码（Base64 编码，必填）
+    pub encrypted_password: String,
 }
 
 /// 登录响应
@@ -457,10 +457,19 @@ pub struct LoginResponse {
 /// 修改密码请求
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ChangePasswordRequest {
-    /// 当前密码（必填）
-    pub current_password: String,
-    /// 新密码（必填）
-    pub new_password: String,
+    /// RSA-OAEP 加密后的当前密码（Base64 编码，必填）
+    pub encrypted_current_password: String,
+    /// RSA-OAEP 加密后的新密码（Base64 编码，必填）
+    pub encrypted_new_password: String,
+}
+
+/// 公钥响应
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct PublicKeyResponse {
+    /// RSA 公钥（PEM 格式）
+    pub public_key: String,
+    /// 加密算法标识
+    pub algorithm: String,
 }
 
 // ---- System dictionary types ----
