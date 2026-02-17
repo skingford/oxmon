@@ -128,7 +128,15 @@ pub trait StorageEngine: Send + Sync {
     fn get_alert_event_by_id(&self, event_id: &str) -> Result<Option<AlertEvent>>;
 
     /// Queries active (non-resolved) alert events.
-    fn query_active_alerts(&self, limit: usize, offset: usize) -> Result<Vec<AlertEvent>>;
+    fn query_active_alerts(
+        &self,
+        agent_id_contains: Option<&str>,
+        severity: Option<&str>,
+        rule_id: Option<&str>,
+        metric_name: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<AlertEvent>>;
 
     /// Returns total count for paginated metrics query.
     fn count_metrics(
@@ -155,7 +163,13 @@ pub trait StorageEngine: Send + Sync {
     fn count_distinct_agent_ids(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<u64>;
 
     /// Returns total count of active (non-resolved) alert events.
-    fn count_active_alerts(&self) -> Result<u64>;
+    fn count_active_alerts(
+        &self,
+        agent_id_contains: Option<&str>,
+        severity: Option<&str>,
+        rule_id: Option<&str>,
+        metric_name: Option<&str>,
+    ) -> Result<u64>;
 }
 
 /// Aggregated metric statistics.

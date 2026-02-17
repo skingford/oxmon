@@ -37,7 +37,7 @@ async fn login_without_app_id_when_disabled_should_work() {
     // Should succeed with valid credentials
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["err_code"], 0);
-    assert!(body["data"]["token"].is_string());
+    assert!(body["data"]["access_token"].is_string());
 }
 
 #[tokio::test]

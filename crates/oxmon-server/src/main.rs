@@ -126,7 +126,7 @@ fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
     let mut recipients_set = 0u32;
 
     // List existing channel names for dedup
-    let existing = cert_store.list_notification_channels(10000, 0)?;
+    let existing = cert_store.list_notification_channels(None, None, None, None, 10000, 0)?;
     let existing_names: std::collections::HashSet<String> =
         existing.iter().map(|ch| ch.name.clone()).collect();
 
@@ -226,7 +226,7 @@ fn run_init_rules(config_path: &str, seed_path: &str) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to parse seed file '{}': {}", seed_path, e))?;
 
     // List existing rule names for dedup
-    let existing = cert_store.list_alert_rules(10000, 0)?;
+    let existing = cert_store.list_alert_rules(None, None, None, None, None, 10000, 0)?;
     let existing_names: std::collections::HashSet<String> =
         existing.iter().map(|r| r.name.clone()).collect();
 

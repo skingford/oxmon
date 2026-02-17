@@ -114,7 +114,7 @@ pub async fn jwt_auth_middleware(
         }
         Err(e) => {
             let msg = if matches!(e.kind(), jsonwebtoken::errors::ErrorKind::ExpiredSignature) {
-                return auth_error(&trace_id, "TOKEN_EXPIRED", "token expired");
+                return auth_error(&trace_id, "token_expired", "token expired");
             } else {
                 "invalid token"
             };
@@ -196,7 +196,7 @@ pub async fn login(
             StatusCode::OK,
             &trace_id,
             LoginResponse {
-                token,
+                access_token: token,
                 expires_in: state.token_expire_secs,
             },
         ),
@@ -239,6 +239,15 @@ pub async fn change_password(
             &trace_id,
             "bad_request",
             "current_password and new_password are required",
+        );
+    }
+
+    if body.new_password.len() < 8 {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &trace_id,
+            "bad_request",
+            "new_password must be at least 8 characters long",
         );
     }
 

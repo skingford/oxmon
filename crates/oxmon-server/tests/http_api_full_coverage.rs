@@ -34,7 +34,7 @@ async fn auth_login_success_and_failure_cases() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    assert!(body["data"]["token"].is_string());
+    assert!(body["data"]["access_token"].is_string());
 
     let (status, body, _) = request_json(
         &ctx.app,

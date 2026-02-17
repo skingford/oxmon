@@ -602,7 +602,15 @@ impl StorageEngine for SqliteStorageEngine {
         Ok(None)
     }
 
-    fn query_active_alerts(&self, limit: usize, offset: usize) -> Result<Vec<AlertEvent>> {
+    fn query_active_alerts(
+        &self,
+        agent_id_contains: Option<&str>,
+        severity: Option<&str>,
+        rule_id: Option<&str>,
+        metric_name: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<AlertEvent>> {
         // Query last 7 days for active alerts
         let to = Utc::now();
         let from = to - chrono::Duration::days(7);
@@ -613,14 +621,39 @@ impl StorageEngine for SqliteStorageEngine {
 
         for key in keys {
             self.partitions.with_partition(&key, |conn| {
-                let mut stmt = conn.prepare(
+                let mut sql = String::from(
                     "SELECT id, rule_id, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach, created_at, updated_at, status, rule_name, labels, first_triggered_at
                      FROM alert_events
                      WHERE timestamp >= ?1 AND timestamp <= ?2
-                       AND (status IS NULL OR status NOT IN ('resolved'))
-                     ORDER BY created_at DESC",
-                )?;
-                let rows = stmt.query_map(rusqlite::params![from_ms, to_ms], |row| {
+                       AND (status IS NULL OR status NOT IN ('resolved'))",
+                );
+                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+                    vec![Box::new(from_ms), Box::new(to_ms)];
+                if let Some(v) = agent_id_contains {
+                    let idx = params.len() + 1;
+                    sql.push_str(&format!(" AND agent_id LIKE ?{idx}"));
+                    params.push(Box::new(format!("%{v}%")));
+                }
+                if let Some(v) = severity {
+                    let idx = params.len() + 1;
+                    sql.push_str(&format!(" AND severity = ?{idx}"));
+                    params.push(Box::new(v.to_string()));
+                }
+                if let Some(v) = rule_id {
+                    let idx = params.len() + 1;
+                    sql.push_str(&format!(" AND rule_id = ?{idx}"));
+                    params.push(Box::new(v.to_string()));
+                }
+                if let Some(v) = metric_name {
+                    let idx = params.len() + 1;
+                    sql.push_str(&format!(" AND metric_name = ?{idx}"));
+                    params.push(Box::new(v.to_string()));
+                }
+                sql.push_str(" ORDER BY created_at DESC");
+                let mut stmt = conn.prepare(&sql)?;
+                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                    params.iter().map(|p| p.as_ref()).collect();
+                let rows = stmt.query_map(param_refs.as_slice(), |row| {
                     let ts_ms: i64 = row.get(8)?;
                     let predicted_ms: Option<i64> = row.get(9)?;
                     let sev_str: String = row.get(4)?;
@@ -805,7 +838,13 @@ impl StorageEngine for SqliteStorageEngine {
         Ok(all_ids.len() as u64)
     }
 
-    fn count_active_alerts(&self) -> Result<u64> {
+    fn count_active_alerts(
+        &self,
+        agent_id_contains: Option<&str>,
+        severity: Option<&str>,
+        rule_id: Option<&str>,
+        metric_name: Option<&str>,
+    ) -> Result<u64> {
         // Query last 7 days for active alerts
         let to = Utc::now();
         let from = to - chrono::Duration::days(7);
@@ -816,11 +855,35 @@ impl StorageEngine for SqliteStorageEngine {
 
         for key in keys {
             self.partitions.with_partition(&key, |conn| {
-                let count: i64 = conn.query_row(
+                let mut sql = String::from(
                     "SELECT COUNT(*) FROM alert_events WHERE timestamp >= ?1 AND timestamp <= ?2 AND (status IS NULL OR status NOT IN ('resolved'))",
-                    rusqlite::params![from_ms, to_ms],
-                    |row| row.get(0),
-                )?;
+                );
+                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+                    vec![Box::new(from_ms), Box::new(to_ms)];
+                if let Some(v) = agent_id_contains {
+                    let idx = params.len() + 1;
+                    sql.push_str(&format!(" AND agent_id LIKE ?{idx}"));
+                    params.push(Box::new(format!("%{v}%")));
+                }
+                if let Some(v) = severity {
+                    let idx = params.len() + 1;
+                    sql.push_str(&format!(" AND severity = ?{idx}"));
+                    params.push(Box::new(v.to_string()));
+                }
+                if let Some(v) = rule_id {
+                    let idx = params.len() + 1;
+                    sql.push_str(&format!(" AND rule_id = ?{idx}"));
+                    params.push(Box::new(v.to_string()));
+                }
+                if let Some(v) = metric_name {
+                    let idx = params.len() + 1;
+                    sql.push_str(&format!(" AND metric_name = ?{idx}"));
+                    params.push(Box::new(v.to_string()));
+                }
+                let mut stmt = conn.prepare(&sql)?;
+                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                    params.iter().map(|p| p.as_ref()).collect();
+                let count: i64 = stmt.query_row(param_refs.as_slice(), |row| row.get(0))?;
                 total += count as u64;
                 Ok(())
             })?;

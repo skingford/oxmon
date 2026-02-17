@@ -75,6 +75,8 @@ pub fn build_test_context() -> Result<TestContext> {
         retention_days: 7,
         require_agent_auth: false,
         agent_collection_interval_secs: 10,
+        cors_allowed_origins: Vec::new(),
+        rate_limit_enabled: false,
         cert_check: Default::default(),
         auth: Default::default(),
         app_id: Default::default(),
@@ -200,9 +202,9 @@ pub async fn login_and_get_token(app: &axum::Router) -> String {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["err_code"], 0);
-    body["data"]["token"]
+    body["data"]["access_token"]
         .as_str()
-        .expect("token should exist")
+        .expect("access_token should exist")
         .to_string()
 }
 

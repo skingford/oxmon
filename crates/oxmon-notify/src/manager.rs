@@ -219,7 +219,7 @@ impl NotificationManager {
         let now = Utc::now();
 
         // Check silence windows from DB
-        if let Ok(windows) = self.cert_store.list_silence_windows(100, 0) {
+        if let Ok(windows) = self.cert_store.list_silence_windows(None, 100, 0) {
             for sw in &windows {
                 if let (Ok(start), Ok(end)) = (
                     NaiveTime::parse_from_str(&sw.start_time, "%H:%M"),

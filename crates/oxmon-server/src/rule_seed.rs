@@ -105,7 +105,7 @@ const DEFAULT_RULES: &[RuleDef] = &[
 /// This runs after TOML migration so that TOML-migrated rules take priority.
 /// Only seeds when `count_alert_rules() == 0`.
 pub fn init_default_rules(cert_store: &CertStore) -> anyhow::Result<usize> {
-    let count = cert_store.count_alert_rules()?;
+    let count = cert_store.count_alert_rules(None, None, None, None, None)?;
     if count > 0 {
         tracing::debug!(
             existing = count,

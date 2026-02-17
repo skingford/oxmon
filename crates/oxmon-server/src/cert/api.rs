@@ -277,6 +277,18 @@ async fn list_domains(
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 struct CertStatusListParams {
+    /// 域名模糊匹配
+    #[param(required = false, rename = "domain__contains")]
+    #[serde(rename = "domain__contains")]
+    domain_contains: Option<String>,
+    /// 证书是否有效精确匹配
+    #[param(required = false, rename = "is_valid__eq")]
+    #[serde(rename = "is_valid__eq")]
+    is_valid_eq: Option<bool>,
+    /// 剩余有效天数上界（小于等于该值）
+    #[param(required = false, rename = "days_until_expiry__lte")]
+    #[serde(rename = "days_until_expiry__lte")]
+    days_until_expiry_lte: Option<i64>,
     /// 每页条数（默认 20）
     #[param(required = false)]
     #[serde(
@@ -463,8 +475,11 @@ async fn cert_status_all(
 ) -> impl IntoResponse {
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
+    let domain_contains = params.domain_contains.as_deref();
+    let is_valid = params.is_valid_eq;
+    let days_lte = params.days_until_expiry_lte;
 
-    let total = match state.cert_store.count_latest_results() {
+    let total = match state.cert_store.count_latest_results(domain_contains, is_valid, days_lte) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count latest results");
@@ -478,7 +493,7 @@ async fn cert_status_all(
         }
     };
 
-    match state.cert_store.query_latest_results(limit, offset) {
+    match state.cert_store.query_latest_results(domain_contains, is_valid, days_lte, limit, offset) {
         Ok(results) => success_paginated_response(
             StatusCode::OK,
             &trace_id,

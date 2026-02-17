@@ -14,7 +14,31 @@ use oxmon_common::types::{
     UpdateAgentRequest,
 };
 use oxmon_storage::auth::{generate_token, hash_token};
+use oxmon_storage::cert_store::AgentWhitelistFilter;
+use serde::Deserialize;
 use utoipa_axum::{router::OpenApiRouter, routes};
+
+/// Agent 白名单列表查询参数
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct WhitelistListQueryParams {
+    /// Agent ID 包含匹配（agent_id__contains，可选）
+    #[param(required = false)]
+    #[serde(rename = "agent_id__contains")]
+    agent_id_contains: Option<String>,
+    /// 描述包含匹配（description__contains，可选）
+    #[param(required = false)]
+    #[serde(rename = "description__contains")]
+    description_contains: Option<String>,
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    offset: Option<u64>,
+}
 
 /// 新增白名单 Agent。
 /// 鉴权：需要 Bearer Token。
@@ -156,13 +180,13 @@ async fn add_agent(
     )
 }
 
-/// 分页查询白名单 Agent 列表（包含在线状态）。
+/// 分页查询白名单 Agent 列表（包含在线状态，支持按 agent_id__contains、description__contains 过滤）。
 /// 默认排序：`created_at` 倒序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
     path = "/v1/agents/whitelist",
     security(("bearer_auth" = [])),
-    params(PaginationParams),
+    params(WhitelistListQueryParams),
     responses(
         (status = 200, description = "白名单 Agent 分页列表", body = Vec<AgentWhitelistDetail>),
         (status = 401, description = "未认证"),
@@ -173,12 +197,17 @@ async fn add_agent(
 async fn list_whitelist_agents(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
-    Query(pagination): Query<PaginationParams>,
+    Query(params): Query<WhitelistListQueryParams>,
 ) -> impl IntoResponse {
-    let limit = pagination.limit();
-    let offset = pagination.offset();
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
 
-    let total = match state.cert_store.count_agents().map_err(|e| {
+    let filter = AgentWhitelistFilter {
+        agent_id_contains: params.agent_id_contains,
+        description_contains: params.description_contains,
+    };
+
+    let total = match state.cert_store.count_agents_with_filter(&filter).map_err(|e| {
         tracing::error!(error = %e, "Failed to count agents");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -191,7 +220,7 @@ async fn list_whitelist_agents(
         Err(resp) => return resp,
     };
 
-    let agents = match state.cert_store.list_agents(limit, offset).map_err(|e| {
+    let agents = match state.cert_store.list_agents_with_filter(&filter, limit, offset).map_err(|e| {
         tracing::error!(error = %e, "Failed to list agents");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,

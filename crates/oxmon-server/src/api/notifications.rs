@@ -42,6 +42,40 @@ fn validate_time_format(time: &str) -> bool {
     }
 }
 
+/// 对配置 JSON 中的敏感字段进行脱敏处理。
+/// 将包含 password、secret、key、token 等关键词的字段值替换为 "****"。
+fn mask_sensitive_config(config_json: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(config_json) else {
+        return config_json.to_string();
+    };
+    mask_sensitive_fields(&mut value);
+    serde_json::to_string(&value).unwrap_or_else(|_| config_json.to_string())
+}
+
+fn mask_sensitive_fields(value: &mut serde_json::Value) {
+    const SENSITIVE_KEYWORDS: &[&str] = &["password", "secret", "key", "token", "credential", "api_key", "apikey"];
+    match value {
+        serde_json::Value::Object(map) => {
+            for (k, v) in map.iter_mut() {
+                let lower = k.to_lowercase();
+                if SENSITIVE_KEYWORDS.iter().any(|kw| lower.contains(kw)) {
+                    if v.is_string() && !v.as_str().unwrap_or("").is_empty() {
+                        *v = serde_json::Value::String("****".to_string());
+                    }
+                } else {
+                    mask_sensitive_fields(v);
+                }
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                mask_sensitive_fields(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn build_channel_overview(state: &AppState, ch: NotificationChannelRow) -> ChannelOverview {
     let recipients = state
         .cert_store
@@ -62,12 +96,42 @@ fn build_channel_overview(state: &AppState, ch: NotificationChannelRow) -> Chann
         description: ch.description.clone(),
         min_severity: ch.min_severity.clone(),
         enabled: ch.enabled,
-        config_json: ch.config_json,
+        config_json: mask_sensitive_config(&ch.config_json),
         recipient_type,
         recipients,
         created_at: ch.created_at.to_rfc3339(),
         updated_at: ch.updated_at.to_rfc3339(),
     }
+}
+
+/// 通知渠道列表查询参数
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct ListChannelsParams {
+    /// 渠道名称模糊匹配
+    #[param(required = false, rename = "name__contains")]
+    #[serde(rename = "name__contains")]
+    name_contains: Option<String>,
+    /// 渠道类型精确匹配（email / webhook / sms / dingtalk / weixin）
+    #[param(required = false, rename = "channel_type__eq")]
+    #[serde(rename = "channel_type__eq")]
+    channel_type_eq: Option<String>,
+    /// 是否启用精确匹配
+    #[param(required = false, rename = "enabled__eq")]
+    #[serde(rename = "enabled__eq")]
+    enabled_eq: Option<bool>,
+    /// 最低告警级别精确匹配（info / warning / critical）
+    #[param(required = false, rename = "min_severity__eq")]
+    #[serde(rename = "min_severity__eq")]
+    min_severity_eq: Option<String>,
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    offset: Option<u64>,
 }
 
 /// 列出所有通知渠道配置（含收件人）。
@@ -76,7 +140,7 @@ fn build_channel_overview(state: &AppState, ch: NotificationChannelRow) -> Chann
     path = "/v1/notifications/channels",
     tag = "Notifications",
     security(("bearer_auth" = [])),
-    params(PaginationParams),
+    params(ListChannelsParams),
     responses(
         (status = 200, description = "通知渠道列表", body = Vec<ChannelOverview>),
         (status = 401, description = "未认证", body = crate::api::ApiError)
@@ -85,12 +149,16 @@ fn build_channel_overview(state: &AppState, ch: NotificationChannelRow) -> Chann
 async fn list_channels(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
-    Query(pagination): Query<PaginationParams>,
+    Query(params): Query<ListChannelsParams>,
 ) -> impl IntoResponse {
-    let limit = pagination.limit();
-    let offset = pagination.offset();
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
+    let name_contains = params.name_contains.as_deref();
+    let channel_type = params.channel_type_eq.as_deref();
+    let enabled = params.enabled_eq;
+    let min_severity = params.min_severity_eq.as_deref();
 
-    let total = match state.cert_store.count_notification_channels() {
+    let total = match state.cert_store.count_notification_channels(name_contains, channel_type, enabled, min_severity) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count notification channels");
@@ -104,7 +172,7 @@ async fn list_channels(
         }
     };
 
-    match state.cert_store.list_notification_channels(limit, offset) {
+    match state.cert_store.list_notification_channels(name_contains, channel_type, enabled, min_severity, limit, offset) {
         Ok(channels) => {
             let mut result = Vec::with_capacity(channels.len());
             for ch in channels {
@@ -561,13 +629,31 @@ async fn delete_channel(
 
 // ---- Silence windows CRUD ----
 
+/// 静默窗口列表查询参数
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct ListSilenceWindowsParams {
+    /// 重复规则精确匹配（daily / weekly / monthly）
+    #[param(required = false, rename = "recurrence__eq")]
+    #[serde(rename = "recurrence__eq")]
+    recurrence_eq: Option<String>,
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    offset: Option<u64>,
+}
+
 /// 列出持久化的静默窗口。
 #[utoipa::path(
     get,
     path = "/v1/notifications/silence-windows",
     tag = "Notifications",
     security(("bearer_auth" = [])),
-    params(PaginationParams),
+    params(ListSilenceWindowsParams),
     responses(
         (status = 200, description = "静默窗口列表", body = Vec<serde_json::Value>),
         (status = 401, description = "未认证", body = crate::api::ApiError)
@@ -576,12 +662,13 @@ async fn delete_channel(
 async fn list_silence_windows(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
-    Query(pagination): Query<PaginationParams>,
+    Query(params): Query<ListSilenceWindowsParams>,
 ) -> impl IntoResponse {
-    let limit = pagination.limit();
-    let offset = pagination.offset();
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
+    let recurrence = params.recurrence_eq.as_deref();
 
-    let total = match state.cert_store.count_silence_windows() {
+    let total = match state.cert_store.count_silence_windows(recurrence) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count silence windows");
@@ -595,7 +682,7 @@ async fn list_silence_windows(
         }
     };
 
-    match state.cert_store.list_silence_windows(limit, offset) {
+    match state.cert_store.list_silence_windows(recurrence, limit, offset) {
         Ok(windows) => {
             success_paginated_response(StatusCode::OK, &trace_id, windows, total, limit, offset)
         }

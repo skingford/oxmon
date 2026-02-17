@@ -448,8 +448,8 @@ pub struct LoginRequest {
 /// 登录响应
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct LoginResponse {
-    /// JWT Token
-    pub token: String,
+    /// JWT Access Token
+    pub access_token: String,
     /// Token 有效期（秒）
     pub expires_in: u64,
 }

@@ -91,6 +91,7 @@ urlencoding = "2"
 
 # HTTP middleware
 tower-http = { version = "0.6", features = ["cors"] }
+tower_governor = "0.6"
 
 # OpenAPI documentation
 utoipa = { version = "5", features = ["chrono", "preserve_order"] }

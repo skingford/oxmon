@@ -35,14 +35,54 @@ pub struct AlertRuleResponse {
     pub enabled: bool,
 }
 
+/// 告警规则列表查询参数
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct ListAlertRulesParams {
+    /// 规则名称模糊匹配
+    #[param(required = false, rename = "name__contains")]
+    #[serde(rename = "name__contains")]
+    name_contains: Option<String>,
+    /// 规则类型精确匹配（threshold / rate_of_change / trend_prediction / cert_expiration）
+    #[param(required = false, rename = "rule_type__eq")]
+    #[serde(rename = "rule_type__eq")]
+    rule_type_eq: Option<String>,
+    /// 监控指标模糊匹配
+    #[param(required = false, rename = "metric__contains")]
+    #[serde(rename = "metric__contains")]
+    metric_contains: Option<String>,
+    /// 告警级别精确匹配（info / warning / critical）
+    #[param(required = false, rename = "severity__eq")]
+    #[serde(rename = "severity__eq")]
+    severity_eq: Option<String>,
+    /// 是否启用精确匹配
+    #[param(required = false, rename = "enabled__eq")]
+    #[serde(rename = "enabled__eq")]
+    enabled_eq: Option<bool>,
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    offset: Option<u64>,
+}
+
 /// 分页查询告警规则列表。
-/// 默认排序：`id` 升序；默认分页：`limit=20&offset=0`。
+/// 默认排序：`created_at` 倒序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
     path = "/v1/alerts/rules",
     tag = "Alerts",
     security(("bearer_auth" = [])),
-    params(PaginationParams),
+    params(ListAlertRulesParams),
     responses(
         (status = 200, description = "告警规则分页列表", body = Vec<AlertRuleResponse>),
         (status = 401, description = "未认证", body = crate::api::ApiError)
@@ -51,9 +91,17 @@ pub struct AlertRuleResponse {
 async fn list_alert_rules(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
-    Query(pagination): Query<PaginationParams>,
+    Query(params): Query<ListAlertRulesParams>,
 ) -> impl IntoResponse {
-    let total = match state.cert_store.count_alert_rules() {
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
+    let name_contains = params.name_contains.as_deref();
+    let rule_type = params.rule_type_eq.as_deref();
+    let metric_contains = params.metric_contains.as_deref();
+    let severity = params.severity_eq.as_deref();
+    let enabled = params.enabled_eq;
+
+    let total = match state.cert_store.count_alert_rules(name_contains, rule_type, metric_contains, severity, enabled) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count alert rules");
@@ -69,7 +117,7 @@ async fn list_alert_rules(
 
     match state
         .cert_store
-        .list_alert_rules(pagination.limit(), pagination.offset())
+        .list_alert_rules(name_contains, rule_type, metric_contains, severity, enabled, limit, offset)
     {
         Ok(rules) => {
             let items: Vec<AlertRuleResponse> = rules
@@ -89,8 +137,8 @@ async fn list_alert_rules(
                 &trace_id,
                 items,
                 total,
-                pagination.limit(),
-                pagination.offset(),
+                limit,
+                offset,
             )
         }
         Err(e) => {
@@ -737,13 +785,49 @@ async fn resolve_alert(
     }
 }
 
+/// 活跃告警列表查询参数
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct ActiveAlertsParams {
+    /// Agent ID 模糊匹配
+    #[param(required = false, rename = "agent_id__contains")]
+    #[serde(rename = "agent_id__contains")]
+    agent_id_contains: Option<String>,
+    /// 告警级别精确匹配（info / warning / critical）
+    #[param(required = false, rename = "severity__eq")]
+    #[serde(rename = "severity__eq")]
+    severity_eq: Option<String>,
+    /// 规则 ID 精确匹配
+    #[param(required = false, rename = "rule_id__eq")]
+    #[serde(rename = "rule_id__eq")]
+    rule_id_eq: Option<String>,
+    /// 指标名称精确匹配
+    #[param(required = false, rename = "metric_name__eq")]
+    #[serde(rename = "metric_name__eq")]
+    metric_name_eq: Option<String>,
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    offset: Option<u64>,
+}
+
 /// 查询当前活跃（未解决）告警。
 #[utoipa::path(
     get,
     path = "/v1/alerts/active",
     tag = "Alerts",
     security(("bearer_auth" = [])),
-    params(PaginationParams),
+    params(ActiveAlertsParams),
     responses(
         (status = 200, description = "活跃告警列表"),
         (status = 401, description = "未认证", body = crate::api::ApiError)
@@ -752,9 +836,16 @@ async fn resolve_alert(
 async fn active_alerts(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
-    Query(pagination): Query<PaginationParams>,
+    Query(params): Query<ActiveAlertsParams>,
 ) -> impl IntoResponse {
-    let total = match state.storage.count_active_alerts() {
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
+    let agent_id_contains = params.agent_id_contains.as_deref();
+    let severity = params.severity_eq.as_deref();
+    let rule_id = params.rule_id_eq.as_deref();
+    let metric_name = params.metric_name_eq.as_deref();
+
+    let total = match state.storage.count_active_alerts(agent_id_contains, severity, rule_id, metric_name) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count active alerts");
@@ -770,15 +861,15 @@ async fn active_alerts(
 
     match state
         .storage
-        .query_active_alerts(pagination.limit(), pagination.offset())
+        .query_active_alerts(agent_id_contains, severity, rule_id, metric_name, limit, offset)
     {
         Ok(events) => success_paginated_response(
             StatusCode::OK,
             &trace_id,
             events,
             total,
-            pagination.limit(),
-            pagination.offset(),
+            limit,
+            offset,
         ),
         Err(e) => {
             tracing::error!(error = %e, "Failed to query active alerts");

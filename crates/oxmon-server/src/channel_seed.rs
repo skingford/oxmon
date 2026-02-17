@@ -61,7 +61,7 @@ const DEFAULT_CHANNELS: &[ChannelDef] = &[
 /// All channels are created with `enabled = false` and empty `config_json` so
 /// the user must configure and enable them before they take effect.
 pub fn init_default_channels(cert_store: &CertStore) -> anyhow::Result<usize> {
-    let existing = cert_store.list_notification_channels(1, 0)?;
+    let existing = cert_store.list_notification_channels(None, None, None, None, 1, 0)?;
     if !existing.is_empty() {
         tracing::debug!("Notification channels already exist, skipping seed initialization");
         return Ok(0);

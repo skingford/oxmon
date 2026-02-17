@@ -3,7 +3,9 @@ use crate::{api, auth, cert, logging, openapi};
 use axum::middleware;
 use axum::Router;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_governor::governor::GovernorConfigBuilder;
+use tower_governor::GovernorLayer;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -64,25 +66,75 @@ pub fn build_http_app(state: AppState) -> Router {
     merged_spec.merge(cert_spec);
     let spec = Arc::new(merged_spec.clone());
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let cors = if state.config.cors_allowed_origins.is_empty() {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        let origins: Vec<axum::http::HeaderValue> = state
+            .config
+            .cors_allowed_origins
+            .iter()
+            .filter_map(|o| o.parse().ok())
+            .collect();
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods(Any)
+            .allow_headers(Any)
+    };
+
+    let rate_limit_enabled = state.config.rate_limit_enabled;
+
+    // Build the base router tree
+    let login_branch = if rate_limit_enabled {
+        let login_governor_conf = Arc::new(
+            GovernorConfigBuilder::default()
+                .per_second(12)
+                .burst_size(5)
+                .finish()
+                .expect("failed to build login rate limiter config"),
+        );
+        login_router.layer(GovernorLayer {
+            config: login_governor_conf,
+        })
+    } else {
+        login_router
+    };
+
+    let protected_branch = if rate_limit_enabled {
+        let api_governor_conf = Arc::new(
+            GovernorConfigBuilder::default()
+                .per_second(1)
+                .burst_size(60)
+                .finish()
+                .expect("failed to build API rate limiter config"),
+        );
+        protected_router
+            .merge(cert_router)
+            .layer(GovernorLayer {
+                config: api_governor_conf,
+            })
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::jwt_auth_middleware,
+            ))
+    } else {
+        protected_router
+            .merge(cert_router)
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::jwt_auth_middleware,
+            ))
+    };
 
     public_router
-        .merge(login_router)
+        .merge(login_branch)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             crate::middleware::app_id_middleware,
         ))
-        .merge(
-            protected_router
-                .merge(cert_router)
-                .layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    auth::jwt_auth_middleware,
-                )),
-        )
+        .merge(protected_branch)
         .with_state(state)
         .merge(SwaggerUi::new("/docs").url("/v1/openapi.json", merged_spec))
         .merge(openapi::yaml_route(spec))

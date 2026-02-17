@@ -63,9 +63,10 @@ impl PartitionManager {
 
     /// Lock the connections map, recovering from a poisoned Mutex if necessary.
     fn lock_connections(&self) -> MutexGuard<'_, HashMap<String, Connection>> {
-        self.connections
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.connections.lock().unwrap_or_else(|poisoned| {
+            tracing::error!("PartitionManager Mutex was poisoned, recovering");
+            poisoned.into_inner()
+        })
     }
 
     fn partition_key(ts: DateTime<Utc>) -> String {

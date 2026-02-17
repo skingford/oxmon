@@ -14,11 +14,43 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+/// 字典类型列表查询参数
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct ListDictTypesParams {
+    /// 字典类型标识模糊匹配
+    #[param(required = false, rename = "dict_type__contains")]
+    #[serde(rename = "dict_type__contains")]
+    dict_type_contains: Option<String>,
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
+    offset: Option<u64>,
+}
+
 #[derive(Deserialize, IntoParams)]
 struct ListByTypeQuery {
     /// 是否仅返回启用的条目（默认 false）
     #[serde(default)]
     enabled_only: bool,
+    /// dict_key 模糊匹配
+    #[param(required = false, rename = "key__contains")]
+    #[serde(rename = "key__contains")]
+    key_contains: Option<String>,
+    /// dict_label 模糊匹配
+    #[param(required = false, rename = "label__contains")]
+    #[serde(rename = "label__contains")]
+    label_contains: Option<String>,
 }
 
 /// 获取所有字典类型摘要。
@@ -27,7 +59,7 @@ struct ListByTypeQuery {
     path = "/v1/dictionaries/types",
     tag = "Dictionaries",
     security(("bearer_auth" = [])),
-    params(PaginationParams),
+    params(ListDictTypesParams),
     responses(
         (status = 200, description = "字典类型列表", body = Vec<DictionaryTypeSummary>),
         (status = 401, description = "未认证", body = crate::api::ApiError)
@@ -36,12 +68,13 @@ struct ListByTypeQuery {
 async fn list_dict_types(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
-    Query(pagination): Query<PaginationParams>,
+    Query(params): Query<ListDictTypesParams>,
 ) -> impl IntoResponse {
-    let limit = pagination.limit();
-    let offset = pagination.offset();
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
+    let dict_type_contains = params.dict_type_contains.as_deref();
 
-    let total = match state.cert_store.count_all_dict_types() {
+    let total = match state.cert_store.count_all_dict_types(dict_type_contains) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count dictionary types");
@@ -55,7 +88,7 @@ async fn list_dict_types(
         }
     };
 
-    match state.cert_store.list_all_dict_types(limit, offset) {
+    match state.cert_store.list_all_dict_types(dict_type_contains, limit, offset) {
         Ok(types) => success_paginated_response(StatusCode::OK, &trace_id, types, total, limit, offset),
         Err(e) => {
             tracing::error!(error = %e, "Failed to list dictionary types");
@@ -96,7 +129,10 @@ async fn list_by_type(
     let limit = pagination.limit();
     let offset = pagination.offset();
 
-    let total = match state.cert_store.count_dictionaries_by_type(&dict_type, query.enabled_only) {
+    let key_contains = query.key_contains.as_deref();
+    let label_contains = query.label_contains.as_deref();
+
+    let total = match state.cert_store.count_dictionaries_by_type(&dict_type, query.enabled_only, key_contains, label_contains) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, dict_type = %dict_type, "Failed to count dictionaries by type");
@@ -113,6 +149,8 @@ async fn list_by_type(
     match state.cert_store.list_dictionaries_by_type(
         &dict_type,
         query.enabled_only,
+        key_contains,
+        label_contains,
         limit,
         offset,
     ) {

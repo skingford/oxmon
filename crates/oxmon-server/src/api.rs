@@ -214,6 +214,38 @@ async fn health(
     )
 }
 
+/// Agent 列表查询参数
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct AgentListQueryParams {
+    /// Agent ID 包含匹配（agent_id__contains，可选）
+    #[param(required = false)]
+    #[serde(rename = "agent_id__contains")]
+    agent_id_contains: Option<String>,
+    /// 状态精确匹配（status__eq，可选，active/inactive）
+    #[param(required = false)]
+    #[serde(rename = "status__eq")]
+    status_eq: Option<String>,
+    /// 最后上报时间下界（last_seen__gte，可选，Unix 秒级时间戳）
+    #[param(required = false)]
+    #[serde(rename = "last_seen__gte")]
+    #[serde(default, deserialize_with = "pagination::deserialize_optional_u64")]
+    last_seen_gte: Option<u64>,
+    /// 最后上报时间上界（last_seen__lte，可选，Unix 秒级时间戳）
+    #[param(required = false)]
+    #[serde(rename = "last_seen__lte")]
+    #[serde(default, deserialize_with = "pagination::deserialize_optional_u64")]
+    last_seen_lte: Option<u64>,
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "pagination::deserialize_optional_u64")]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "pagination::deserialize_optional_u64")]
+    offset: Option<u64>,
+}
+
 /// Agent 信息
 #[derive(Serialize, ToSchema)]
 struct AgentResponse {
@@ -258,14 +290,14 @@ struct AgentDetail {
     whitelist_id: Option<String>,
 }
 
-/// 分页查询 Agent 列表。
+/// 分页查询 Agent 列表（支持按 agent_id__contains、status__eq、last_seen__gte/lte 过滤）。
 /// 默认排序：`last_seen` 倒序；默认分页：`limit=20&offset=0`。
 #[utoipa::path(
     get,
     path = "/v1/agents",
     tag = "Agents",
     security(("bearer_auth" = [])),
-    params(PaginationParams),
+    params(AgentListQueryParams),
     responses(
         (status = 200, description = "Agent 分页列表", body = Vec<AgentResponse>),
         (status = 401, description = "未认证", body = ApiError)
@@ -274,13 +306,21 @@ struct AgentDetail {
 async fn list_agents(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
-    Query(pagination): Query<PaginationParams>,
+    Query(params): Query<AgentListQueryParams>,
 ) -> impl IntoResponse {
-    let limit = pagination.limit();
-    let offset = pagination.offset();
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
+
+    // 构建过滤条件
+    let filter = oxmon_storage::cert_store::AgentListFilter {
+        agent_id_contains: params.agent_id_contains.clone(),
+        status_eq: params.status_eq.clone(),
+        last_seen_gte: params.last_seen_gte.map(|v| v as i64),
+        last_seen_lte: params.last_seen_lte.map(|v| v as i64),
+    };
 
     // 获取总数
-    let total = match state.cert_store.count_agents_from_db().map_err(|e| {
+    let total = match state.cert_store.count_agents_from_db_with_filter(&filter).map_err(|e| {
         tracing::error!(error = %e, "Failed to count agents");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -294,7 +334,7 @@ async fn list_agents(
     };
 
     // 从数据库查询 agent 列表
-    let agents = match state.cert_store.list_agents_from_db(limit, offset).map_err(|e| {
+    let agents = match state.cert_store.list_agents_from_db_with_filter(&filter, limit, offset).map_err(|e| {
         tracing::error!(error = %e, "Failed to list agents from database");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -307,16 +347,15 @@ async fn list_agents(
         Err(resp) => return resp,
     };
 
+    // 批量加载白名单 created_at，避免 N+1 查询
+    let whitelist_map = state
+        .cert_store
+        .get_whitelist_created_at_map()
+        .unwrap_or_default();
+
     let items: Vec<AgentResponse> = agents
         .into_iter()
         .map(|agent_info| {
-            // 尝试从白名单获取白名单特有的信息（id, created_at）
-            let whitelist_entry = state
-                .cert_store
-                .get_agent_by_agent_id(&agent_info.agent_id)
-                .ok()
-                .flatten();
-
             // 计算 active 状态（collection_interval_secs 现在来自 agent_info）
             let collection_interval = agent_info
                 .collection_interval_secs
@@ -324,6 +363,8 @@ async fn list_agents(
             let timeout = chrono::Duration::seconds((collection_interval * 3) as i64);
             let now = Utc::now();
             let active = now - agent_info.last_seen < timeout;
+
+            let created_at = whitelist_map.get(&agent_info.agent_id).copied();
 
             AgentResponse {
                 id: Some(agent_info.id),
@@ -334,7 +375,7 @@ async fn list_agents(
                 } else {
                     "inactive".to_string()
                 },
-                created_at: whitelist_entry.as_ref().map(|e| e.created_at),
+                created_at,
                 collection_interval_secs: agent_info.collection_interval_secs,
             }
         })
@@ -648,8 +689,8 @@ async fn agent_latest(
         Err(resp) => return resp.into_response(),
     };
 
-    let from = DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_default();
     let to = Utc::now();
+    let from = to - chrono::Duration::days(2);
     let rows = match state
         .storage
         .query_metrics_paginated(from, to, Some(&agent_entry.agent_id), None, 1, 0)

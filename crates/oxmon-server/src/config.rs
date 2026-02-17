@@ -17,6 +17,14 @@ pub struct ServerConfig {
     #[serde(default = "default_agent_collection_interval_secs")]
     pub agent_collection_interval_secs: u64,
 
+    /// CORS 允许的 origins 列表，为空时允许所有来源（开发模式）
+    #[serde(default)]
+    pub cors_allowed_origins: Vec<String>,
+
+    /// 是否启用 API 速率限制（默认 true）
+    #[serde(default = "default_rate_limit_enabled")]
+    pub rate_limit_enabled: bool,
+
     #[serde(default)]
     pub cert_check: CertCheckConfig,
     #[serde(default)]
@@ -226,6 +234,10 @@ fn default_seed_enabled() -> bool {
 
 fn default_require_agent_auth() -> bool {
     false
+}
+
+fn default_rate_limit_enabled() -> bool {
+    true
 }
 
 fn default_agent_collection_interval_secs() -> u64 {

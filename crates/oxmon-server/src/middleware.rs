@@ -129,6 +129,8 @@ mod tests {
             retention_days: 7,
             require_agent_auth: false,
             agent_collection_interval_secs: 10,
+            cors_allowed_origins: Vec::new(),
+            rate_limit_enabled: false,
             cert_check: CertCheckConfig::default(),
             auth: AuthConfig::default(),
             app_id: app_id_config,

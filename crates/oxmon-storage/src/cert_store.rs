@@ -10,6 +10,16 @@ use std::sync::{Mutex, MutexGuard};
 
 use crate::auth::TokenEncryptor;
 
+/// 转义 LIKE 模式中的通配符字符（% 和 _），防止用户输入被解释为通配符。
+fn escape_like(s: &str) -> String {
+    s.replace('%', "\\%").replace('_', "\\_")
+}
+
+/// 构建 LIKE 参数：转义用户输入并包裹 %...%
+fn like_pattern(s: &str) -> String {
+    format!("%{}%", escape_like(s))
+}
+
 const CERT_DOMAINS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS cert_domains (
     id TEXT PRIMARY KEY,
@@ -480,6 +490,10 @@ impl CertStore {
     }
 
     fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+        // Validate table name to prevent SQL injection via format!
+        if !table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(anyhow::anyhow!("table_has_column: invalid table name '{}'", table));
+        }
         let sql = format!("PRAGMA table_info({})", table);
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map([], |row| {
@@ -495,9 +509,10 @@ impl CertStore {
 
     /// Lock the database connection, recovering from a poisoned Mutex if necessary.
     fn lock_conn(&self) -> MutexGuard<'_, Connection> {
-        self.conn
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.conn.lock().unwrap_or_else(|poisoned| {
+            tracing::error!("CertStore Mutex was poisoned, recovering");
+            poisoned.into_inner()
+        })
     }
 
     // ---- cert_domains CRUD ----
@@ -574,8 +589,8 @@ impl CertStore {
             idx += 1;
         }
         if let Some(s) = search {
-            sql.push_str(&format!(" AND domain LIKE ?{idx}"));
-            params.push(Box::new(format!("%{s}%")));
+            sql.push_str(&format!(" AND domain LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(s)));
             idx += 1;
         }
 
@@ -608,8 +623,8 @@ impl CertStore {
             idx += 1;
         }
         if let Some(s) = search {
-            sql.push_str(&format!(" AND domain LIKE ?{idx}"));
-            params.push(Box::new(format!("%{s}%")));
+            sql.push_str(&format!(" AND domain LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(s)));
         }
 
         let mut stmt = conn.prepare(&sql)?;
@@ -792,30 +807,54 @@ impl CertStore {
         Ok(())
     }
 
-    pub fn count_latest_results(&self) -> Result<u64> {
-        let conn = self.lock_conn();
-        let count: i64 = conn.query_row(
+    pub fn count_latest_results(
+        &self,
+        domain_contains: Option<&str>,
+        is_valid: Option<bool>,
+        days_until_expiry_lte: Option<i64>,
+    ) -> Result<u64> {
+        let mut sql = String::from(
             "SELECT COUNT(*)
-             FROM (
+             FROM cert_check_results r
+             INNER JOIN (
                  SELECT domain_id, MAX(checked_at) AS max_checked
                  FROM cert_check_results
                  GROUP BY domain_id
-             ) latest
-             INNER JOIN cert_check_results r ON r.domain_id = latest.domain_id AND r.checked_at = latest.max_checked
-             INNER JOIN cert_domains d ON d.id = r.domain_id AND d.enabled = 1",
-            [],
-            |row| row.get(0),
-        )?;
+             ) latest ON r.domain_id = latest.domain_id AND r.checked_at = latest.max_checked
+             INNER JOIN cert_domains d ON d.id = r.domain_id AND d.enabled = 1
+             WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(v) = domain_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND r.domain LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
+        if let Some(v) = is_valid {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND r.is_valid = ?{idx}"));
+            params.push(Box::new(v as i32));
+        }
+        if let Some(v) = days_until_expiry_lte {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND r.days_until_expiry <= ?{idx}"));
+            params.push(Box::new(v));
+        }
+        let conn = self.lock_conn();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
 
     pub fn query_latest_results(
         &self,
+        domain_contains: Option<&str>,
+        is_valid: Option<bool>,
+        days_until_expiry_lte: Option<i64>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<CertCheckResult>> {
-        let conn = self.lock_conn();
-        let mut stmt = conn.prepare(
+        let mut sql = String::from(
             "SELECT r.id, r.domain_id, r.domain, r.is_valid, r.chain_valid, r.not_before, r.not_after, r.days_until_expiry, r.issuer, r.subject, r.san_list, r.resolved_ips, r.error, r.checked_at, r.created_at, r.updated_at
              FROM cert_check_results r
              INNER JOIN (
@@ -824,10 +863,33 @@ impl CertStore {
                  GROUP BY domain_id
              ) latest ON r.domain_id = latest.domain_id AND r.checked_at = latest.max_checked
              INNER JOIN cert_domains d ON d.id = r.domain_id AND d.enabled = 1
-             ORDER BY r.checked_at DESC
-             LIMIT ?1 OFFSET ?2",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+             WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(v) = domain_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND r.domain LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
+        if let Some(v) = is_valid {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND r.is_valid = ?{idx}"));
+            params.push(Box::new(v as i32));
+        }
+        if let Some(v) = days_until_expiry_lte {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND r.days_until_expiry <= ?{idx}"));
+            params.push(Box::new(v));
+        }
+        let limit_idx = params.len() + 1;
+        let offset_idx = params.len() + 2;
+        sql.push_str(&format!(" ORDER BY r.checked_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok(Self::row_to_check_result(row))
         })?;
         let mut results = Vec::new();
@@ -979,6 +1041,77 @@ impl CertStore {
              ORDER BY w.created_at DESC LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+            let created: i64 = row.get(2)?;
+            let updated: i64 = row.get(3)?;
+            let encrypted_token: Option<String> = row.get(5)?;
+            let collection_interval: Option<i64> = row.get(6)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                created,
+                updated,
+                row.get::<_, Option<String>>(4)?,
+                encrypted_token,
+                collection_interval.map(|v| v as u64),
+            ))
+        })?;
+        let mut agents = Vec::new();
+        for row in rows {
+            let (
+                id,
+                agent_id,
+                created,
+                updated,
+                description,
+                encrypted_token,
+                collection_interval_secs,
+            ) = row?;
+            let token = encrypted_token.and_then(|e| self.token_encryptor.decrypt(&e).ok());
+            agents.push(oxmon_common::types::AgentWhitelistEntry {
+                id,
+                agent_id,
+                created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+                updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+                description,
+                token,
+                collection_interval_secs,
+            });
+        }
+        Ok(agents)
+    }
+
+    /// 带过滤条件从白名单表查询 agent 列表
+    pub fn list_agents_with_filter(
+        &self,
+        filter: &AgentWhitelistFilter,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<oxmon_common::types::AgentWhitelistEntry>> {
+        let conn = self.lock_conn();
+        let mut sql = String::from(
+            "SELECT w.id, w.agent_id, w.created_at, w.updated_at, w.description, w.encrypted_token, a.collection_interval_secs
+             FROM agent_whitelist w
+             LEFT JOIN agents a ON w.agent_id = a.agent_id
+             WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(ref agent_id) = filter.agent_id_contains {
+            sql.push_str(" AND w.agent_id LIKE ? ESCAPE '\\'");
+            params.push(Box::new(like_pattern(agent_id)));
+        }
+        if let Some(ref description) = filter.description_contains {
+            sql.push_str(" AND w.description LIKE ? ESCAPE '\\'");
+            params.push(Box::new(like_pattern(description)));
+        }
+
+        sql.push_str(" ORDER BY w.created_at DESC LIMIT ? OFFSET ?");
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
             let created: i64 = row.get(2)?;
             let updated: i64 = row.get(3)?;
             let encrypted_token: Option<String> = row.get(5)?;
@@ -1262,13 +1395,56 @@ impl CertStore {
         }
     }
 
-    pub fn list_alert_rules(&self, limit: usize, offset: usize) -> Result<Vec<AlertRuleRow>> {
-        let conn = self.lock_conn();
-        let mut stmt = conn.prepare(
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_alert_rules(
+        &self,
+        name_contains: Option<&str>,
+        rule_type: Option<&str>,
+        metric_contains: Option<&str>,
+        severity: Option<&str>,
+        enabled: Option<bool>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<AlertRuleRow>> {
+        let mut sql = String::from(
             "SELECT id, name, rule_type, metric, agent_pattern, severity, enabled, config_json, silence_secs, source, created_at, updated_at
-             FROM alert_rules ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+             FROM alert_rules WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(v) = name_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND name LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
+        if let Some(v) = rule_type {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND rule_type = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
+        if let Some(v) = metric_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND metric LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
+        if let Some(v) = severity {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND severity = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
+        if let Some(v) = enabled {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND enabled = ?{idx}"));
+            params.push(Box::new(v as i32));
+        }
+        let limit_idx = params.len() + 1;
+        let offset_idx = params.len() + 2;
+        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok(Self::row_to_alert_rule(row))
         })?;
         let mut results = Vec::new();
@@ -1278,10 +1454,44 @@ impl CertStore {
         Ok(results)
     }
 
-    pub fn count_alert_rules(&self) -> Result<u64> {
+    pub fn count_alert_rules(
+        &self,
+        name_contains: Option<&str>,
+        rule_type: Option<&str>,
+        metric_contains: Option<&str>,
+        severity: Option<&str>,
+        enabled: Option<bool>,
+    ) -> Result<u64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM alert_rules WHERE 1=1");
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(v) = name_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND name LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
+        if let Some(v) = rule_type {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND rule_type = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
+        if let Some(v) = metric_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND metric LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
+        if let Some(v) = severity {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND severity = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
+        if let Some(v) = enabled {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND enabled = ?{idx}"));
+            params.push(Box::new(v as i32));
+        }
         let conn = self.lock_conn();
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM alert_rules", [], |row| row.get(0))?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -1450,15 +1660,47 @@ impl CertStore {
 
     pub fn list_notification_channels(
         &self,
+        name_contains: Option<&str>,
+        channel_type: Option<&str>,
+        enabled: Option<bool>,
+        min_severity: Option<&str>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<NotificationChannelRow>> {
-        let conn = self.lock_conn();
-        let mut stmt = conn.prepare(
+        let mut sql = String::from(
             "SELECT id, name, channel_type, description, min_severity, enabled, config_json, created_at, updated_at
-             FROM notification_channels ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+             FROM notification_channels WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(v) = name_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND name LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
+        if let Some(v) = channel_type {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND channel_type = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
+        if let Some(v) = enabled {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND enabled = ?{idx}"));
+            params.push(Box::new(v as i32));
+        }
+        if let Some(v) = min_severity {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND min_severity = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
+        let limit_idx = params.len() + 1;
+        let offset_idx = params.len() + 2;
+        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok(Self::row_to_notification_channel(row))
         })?;
         let mut results = Vec::new();
@@ -1468,12 +1710,38 @@ impl CertStore {
         Ok(results)
     }
 
-    pub fn count_notification_channels(&self) -> Result<u64> {
+    pub fn count_notification_channels(
+        &self,
+        name_contains: Option<&str>,
+        channel_type: Option<&str>,
+        enabled: Option<bool>,
+        min_severity: Option<&str>,
+    ) -> Result<u64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM notification_channels WHERE 1=1");
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(v) = name_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND name LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
+        if let Some(v) = channel_type {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND channel_type = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
+        if let Some(v) = enabled {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND enabled = ?{idx}"));
+            params.push(Box::new(v as i32));
+        }
+        if let Some(v) = min_severity {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND min_severity = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
         let conn = self.lock_conn();
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM notification_channels", [], |row| {
-                row.get(0)
-            })?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -1781,15 +2049,29 @@ impl CertStore {
 
     pub fn list_silence_windows(
         &self,
+        recurrence: Option<&str>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<SilenceWindowRow>> {
-        let conn = self.lock_conn();
-        let mut stmt = conn.prepare(
+        let mut sql = String::from(
             "SELECT id, start_time, end_time, recurrence, created_at, updated_at
-             FROM notification_silence_windows ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+             FROM notification_silence_windows WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(v) = recurrence {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND recurrence = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
+        let limit_idx = params.len() + 1;
+        let offset_idx = params.len() + 2;
+        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok(Self::row_to_silence_window(row))
         })?;
         let mut results = Vec::new();
@@ -1799,13 +2081,18 @@ impl CertStore {
         Ok(results)
     }
 
-    pub fn count_silence_windows(&self) -> Result<u64> {
+    pub fn count_silence_windows(&self, recurrence: Option<&str>) -> Result<u64> {
+        let mut sql =
+            String::from("SELECT COUNT(*) FROM notification_silence_windows WHERE 1=1");
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(v) = recurrence {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND recurrence = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
         let conn = self.lock_conn();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM notification_silence_windows",
-            [],
-            |row| row.get(0),
-        )?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -2212,9 +2499,54 @@ impl CertStore {
         Ok(count as u64)
     }
 
+    /// 带过滤条件统计白名单 agent 数量
+    pub fn count_agents_with_filter(&self, filter: &AgentWhitelistFilter) -> Result<u64> {
+        let conn = self.lock_conn();
+        let mut sql = String::from("SELECT COUNT(*) FROM agent_whitelist WHERE 1=1");
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(ref agent_id) = filter.agent_id_contains {
+            sql.push_str(" AND agent_id LIKE ? ESCAPE '\\'");
+            params.push(Box::new(like_pattern(agent_id)));
+        }
+        if let Some(ref description) = filter.description_contains {
+            sql.push_str(" AND description LIKE ? ESCAPE '\\'");
+            params.push(Box::new(like_pattern(description)));
+        }
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
     pub fn count_agents_from_db(&self) -> Result<u64> {
         let conn = self.lock_conn();
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM agents", [], |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
+    /// 带过滤条件统计 agent 数量
+    pub fn count_agents_from_db_with_filter(&self, filter: &AgentListFilter) -> Result<u64> {
+        let conn = self.lock_conn();
+        let mut sql = String::from("SELECT COUNT(*) FROM agents WHERE 1=1");
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(ref agent_id) = filter.agent_id_contains {
+            sql.push_str(" AND agent_id LIKE ? ESCAPE '\\'");
+            params.push(Box::new(like_pattern(agent_id)));
+        }
+        if let Some(ref last_seen_gte) = filter.last_seen_gte {
+            sql.push_str(" AND last_seen >= ?");
+            params.push(Box::new(*last_seen_gte));
+        }
+        if let Some(ref last_seen_lte) = filter.last_seen_lte {
+            sql.push_str(" AND last_seen <= ?");
+            params.push(Box::new(*last_seen_lte));
+        }
+        // status 过滤需要在应用层计算，这里不处理
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -2277,6 +2609,27 @@ impl CertStore {
             Some(Err(e)) => Err(e.into()),
             None => Ok(None),
         }
+    }
+
+    /// 批量获取白名单中 agent_id -> created_at 的映射。
+    /// 用于 list_agents 避免 N+1 查询。
+    pub fn get_whitelist_created_at_map(&self) -> Result<std::collections::HashMap<String, DateTime<Utc>>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT agent_id, created_at FROM agent_whitelist",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let agent_id: String = row.get(0)?;
+            let created: i64 = row.get(1)?;
+            Ok((agent_id, created))
+        })?;
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            let (agent_id, created) = row?;
+            let dt = DateTime::from_timestamp(created, 0).unwrap_or_default();
+            map.insert(agent_id, dt);
+        }
+        Ok(map)
     }
 
     // ---- Agent operations ----
@@ -2375,6 +2728,65 @@ impl CertStore {
                 agent_id,
                 last_seen,
                 active: false, // 稍后在 API 层计算
+                collection_interval_secs,
+                description,
+            });
+        }
+
+        Ok(agents)
+    }
+
+    /// 带过滤条件从数据库查询 agent 列表（支持分页）
+    pub fn list_agents_from_db_with_filter(
+        &self,
+        filter: &AgentListFilter,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<oxmon_common::types::AgentInfo>> {
+        let conn = self.lock_conn();
+        let mut sql = String::from(
+            "SELECT id, agent_id, last_seen, collection_interval_secs, description FROM agents WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(ref agent_id) = filter.agent_id_contains {
+            sql.push_str(" AND agent_id LIKE ? ESCAPE '\\'");
+            params.push(Box::new(like_pattern(agent_id)));
+        }
+        if let Some(ref last_seen_gte) = filter.last_seen_gte {
+            sql.push_str(" AND last_seen >= ?");
+            params.push(Box::new(*last_seen_gte));
+        }
+        if let Some(ref last_seen_lte) = filter.last_seen_lte {
+            sql.push_str(" AND last_seen <= ?");
+            params.push(Box::new(*last_seen_lte));
+        }
+
+        sql.push_str(" ORDER BY last_seen DESC LIMIT ? OFFSET ?");
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            let id: String = row.get(0)?;
+            let agent_id: String = row.get(1)?;
+            let last_seen: i64 = row.get(2)?;
+            let interval: Option<i64> = row.get(3)?;
+            let description: Option<String> = row.get(4)?;
+            Ok((id, agent_id, last_seen, interval.map(|v| v as u64), description))
+        })?;
+
+        let mut agents = Vec::new();
+        for row in rows {
+            let (id, agent_id, last_seen_ts, collection_interval_secs, description) = row?;
+            let last_seen = DateTime::from_timestamp(last_seen_ts, 0).unwrap_or_default();
+
+            agents.push(oxmon_common::types::AgentInfo {
+                id,
+                agent_id,
+                last_seen,
+                active: false,
                 collection_interval_secs,
                 description,
             });
@@ -2730,15 +3142,15 @@ impl CertStore {
             idx += 1;
         }
         if let Some(ip) = &filter.ip_address_contains {
-            sql.push_str(&format!(" AND ip_addresses LIKE ?{idx}"));
-            params.push(Box::new(format!("%{ip}%")));
+            sql.push_str(&format!(" AND ip_addresses LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(ip)));
             idx += 1;
         }
         if let Some(issuer) = &filter.issuer_contains {
             sql.push_str(&format!(
-                " AND (issuer_cn LIKE ?{idx} OR issuer_o LIKE ?{idx})"
+                " AND (issuer_cn LIKE ?{idx} ESCAPE '\\' OR issuer_o LIKE ?{idx} ESCAPE '\\')"
             ));
-            params.push(Box::new(format!("%{issuer}%")));
+            params.push(Box::new(like_pattern(issuer)));
             idx += 1;
         }
 
@@ -2776,15 +3188,15 @@ impl CertStore {
             idx += 1;
         }
         if let Some(ip) = &filter.ip_address_contains {
-            sql.push_str(&format!(" AND ip_addresses LIKE ?{idx}"));
-            params.push(Box::new(format!("%{ip}%")));
+            sql.push_str(&format!(" AND ip_addresses LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(ip)));
             idx += 1;
         }
         if let Some(issuer) = &filter.issuer_contains {
             sql.push_str(&format!(
-                " AND (issuer_cn LIKE ?{idx} OR issuer_o LIKE ?{idx})"
+                " AND (issuer_cn LIKE ?{idx} ESCAPE '\\' OR issuer_o LIKE ?{idx} ESCAPE '\\')"
             ));
-            params.push(Box::new(format!("%{issuer}%")));
+            params.push(Box::new(like_pattern(issuer)));
         }
 
         let mut stmt = conn.prepare(&sql)?;
@@ -2880,22 +3292,38 @@ impl CertStore {
         &self,
         dict_type: &str,
         enabled_only: bool,
+        key_contains: Option<&str>,
+        label_contains: Option<&str>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<DictionaryItem>> {
+        let mut sql = String::from(
+            "SELECT id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at
+             FROM system_dictionaries WHERE dict_type = ?1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(dict_type.to_string())];
+        if enabled_only {
+            sql.push_str(" AND enabled = 1");
+        }
+        if let Some(v) = key_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND dict_key LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
+        if let Some(v) = label_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND dict_label LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
+        let limit_idx = params.len() + 1;
+        let offset_idx = params.len() + 2;
+        sql.push_str(&format!(" ORDER BY sort_order ASC, created_at ASC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
         let conn = self.lock_conn();
-        let sql = if enabled_only {
-            "SELECT id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at
-             FROM system_dictionaries WHERE dict_type = ?1 AND enabled = 1 ORDER BY sort_order ASC, created_at ASC LIMIT ?2 OFFSET ?3"
-        } else {
-            "SELECT id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at
-             FROM system_dictionaries WHERE dict_type = ?1 ORDER BY sort_order ASC, created_at ASC LIMIT ?2 OFFSET ?3"
-        };
-        let mut stmt = conn.prepare(sql)?;
-        let rows = stmt.query_map(
-            rusqlite::params![dict_type, limit as i64, offset as i64],
-            |row| Ok(Self::row_to_dictionary(row)),
-        )?;
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| Ok(Self::row_to_dictionary(row)))?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row??);
@@ -2905,19 +3333,33 @@ impl CertStore {
 
     pub fn list_all_dict_types(
         &self,
+        dict_type_contains: Option<&str>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<DictionaryTypeSummary>> {
-        let conn = self.lock_conn();
-        let mut stmt = conn.prepare(
+        let mut sql = String::from(
             "SELECT sd.dict_type, COUNT(*) as cnt, dt.dict_type_label
              FROM system_dictionaries sd
              LEFT JOIN dictionary_types dt ON sd.dict_type = dt.dict_type
-             GROUP BY sd.dict_type
-             ORDER BY COALESCE(dt.sort_order, 0) ASC, sd.dict_type ASC
-             LIMIT ?1 OFFSET ?2",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+             WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(v) = dict_type_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND sd.dict_type LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
+        let limit_idx = params.len() + 1;
+        let offset_idx = params.len() + 2;
+        sql.push_str(&format!(
+            " GROUP BY sd.dict_type ORDER BY COALESCE(dt.sort_order, 0) ASC, sd.dict_type ASC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
+        ));
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
             let dict_type: String = row.get(0)?;
             let count: i64 = row.get(1)?;
             let label: Option<String> = row.get(2)?;
@@ -3010,14 +3452,32 @@ impl CertStore {
         Ok(count as u64)
     }
 
-    pub fn count_dictionaries_by_type(&self, dict_type: &str, enabled_only: bool) -> Result<u64> {
+    pub fn count_dictionaries_by_type(
+        &self,
+        dict_type: &str,
+        enabled_only: bool,
+        key_contains: Option<&str>,
+        label_contains: Option<&str>,
+    ) -> Result<u64> {
+        let mut sql =
+            String::from("SELECT COUNT(*) FROM system_dictionaries WHERE dict_type = ?1");
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(dict_type.to_string())];
+        if enabled_only {
+            sql.push_str(" AND enabled = 1");
+        }
+        if let Some(v) = key_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND dict_key LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
+        if let Some(v) = label_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND dict_label LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
         let conn = self.lock_conn();
-        let sql = if enabled_only {
-            "SELECT COUNT(*) FROM system_dictionaries WHERE dict_type = ?1 AND enabled = 1"
-        } else {
-            "SELECT COUNT(*) FROM system_dictionaries WHERE dict_type = ?1"
-        };
-        let count: i64 = conn.query_row(sql, rusqlite::params![dict_type], |row| row.get(0))?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -3072,10 +3532,19 @@ impl CertStore {
         Ok(results)
     }
 
-    pub fn count_all_dict_types(&self) -> Result<u64> {
+    pub fn count_all_dict_types(&self, dict_type_contains: Option<&str>) -> Result<u64> {
+        let mut sql = String::from(
+            "SELECT COUNT(DISTINCT sd.dict_type) FROM system_dictionaries sd WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(v) = dict_type_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND sd.dict_type LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
         let conn = self.lock_conn();
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM dictionary_types", [], |row| row.get(0))?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -3583,6 +4052,122 @@ pub struct NotificationLogFilter {
     pub end_time: Option<i64>,
 }
 
+/// Agent 列表过滤条件
+#[derive(Debug, Clone, Default)]
+pub struct AgentListFilter {
+    /// Agent ID 包含匹配
+    pub agent_id_contains: Option<String>,
+    /// 状态精确匹配（active/inactive）
+    pub status_eq: Option<String>,
+    /// 最后上报时间下界（Unix 秒级时间戳）
+    pub last_seen_gte: Option<i64>,
+    /// 最后上报时间上界（Unix 秒级时间戳）
+    pub last_seen_lte: Option<i64>,
+}
+
+/// Agent 白名单列表过滤条件
+#[derive(Debug, Clone, Default)]
+pub struct AgentWhitelistFilter {
+    /// Agent ID 包含匹配
+    pub agent_id_contains: Option<String>,
+    /// 描述包含匹配
+    pub description_contains: Option<String>,
+}
+
+/// 告警规则列表过滤条件
+#[derive(Debug, Clone, Default)]
+pub struct AlertRuleFilter {
+    /// 规则名称包含匹配
+    pub name_contains: Option<String>,
+    /// 规则类型精确匹配
+    pub rule_type_eq: Option<String>,
+    /// 监控指标精确匹配
+    pub metric_eq: Option<String>,
+    /// 告警级别精确匹配
+    pub severity_eq: Option<String>,
+    /// 是否启用
+    pub enabled_eq: Option<bool>,
+}
+
+/// 活跃告警列表过滤条件
+#[derive(Debug, Clone, Default)]
+pub struct ActiveAlertFilter {
+    /// Agent ID 精确匹配
+    pub agent_id_eq: Option<String>,
+    /// 告警级别精确匹配
+    pub severity_eq: Option<String>,
+    /// 规则 ID 精确匹配
+    pub rule_id_eq: Option<String>,
+    /// 指标名称精确匹配
+    pub metric_name_eq: Option<String>,
+    /// 时间下界（Unix 秒级时间戳）
+    pub timestamp_gte: Option<i64>,
+}
+
+/// 通知渠道列表过滤条件
+#[derive(Debug, Clone, Default)]
+pub struct NotificationChannelFilter {
+    /// 渠道名称包含匹配
+    pub name_contains: Option<String>,
+    /// 渠道类型精确匹配
+    pub channel_type_eq: Option<String>,
+    /// 是否启用
+    pub enabled_eq: Option<bool>,
+    /// 最低告警级别精确匹配
+    pub min_severity_eq: Option<String>,
+}
+
+/// 静默窗口列表过滤条件
+#[derive(Debug, Clone, Default)]
+pub struct SilenceWindowFilter {
+    /// 重复类型精确匹配（daily/weekly/monthly）
+    pub recurrence_eq: Option<String>,
+}
+
+/// 系统配置列表过滤条件
+#[derive(Debug, Clone, Default)]
+pub struct SystemConfigFilter {
+    /// 配置键包含匹配
+    pub config_key_contains: Option<String>,
+    /// 配置类型精确匹配
+    pub config_type_eq: Option<String>,
+    /// 供应商精确匹配
+    pub provider_eq: Option<String>,
+    /// 是否启用
+    pub enabled_eq: Option<bool>,
+}
+
+/// 字典类型列表过滤条件
+#[derive(Debug, Clone, Default)]
+pub struct DictTypeFilter {
+    /// 类型标识包含匹配
+    pub dict_type_contains: Option<String>,
+    /// 描述包含匹配
+    pub description_contains: Option<String>,
+}
+
+/// 字典条目列表过滤条件
+#[derive(Debug, Clone, Default)]
+pub struct DictionaryFilter {
+    /// 字典键包含匹配
+    pub dict_key_contains: Option<String>,
+    /// 字典值包含匹配
+    pub dict_value_contains: Option<String>,
+}
+
+/// 证书状态列表过滤条件
+#[derive(Debug, Clone, Default)]
+pub struct CertStatusFilter {
+    /// 域名包含匹配
+    pub domain_contains: Option<String>,
+    /// 是否有效
+    pub is_valid_eq: Option<bool>,
+    /// 距离过期天数下界
+    pub days_until_expiry_gte: Option<i32>,
+    /// 距离过期天数上界
+    pub days_until_expiry_lte: Option<i32>,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CertHealthSummary {
     pub total_domains: u64,
@@ -3862,7 +4447,7 @@ mod tests {
             .unwrap();
 
         let severity_items = store
-            .list_dictionaries_by_type("severity", false, 1000, 0)
+            .list_dictionaries_by_type("severity", false, None, None, 1000, 0)
             .unwrap();
         assert_eq!(severity_items.len(), 3);
         // Should be ordered by sort_order
@@ -3870,7 +4455,7 @@ mod tests {
         assert_eq!(severity_items[2].dict_key, "critical");
 
         let channel_items = store
-            .list_dictionaries_by_type("channel_type", false, 1000, 0)
+            .list_dictionaries_by_type("channel_type", false, None, None, 1000, 0)
             .unwrap();
         assert_eq!(channel_items.len(), 1);
     }
@@ -3896,7 +4481,7 @@ mod tests {
                 })
                 .unwrap();
         }
-        let types = store.list_all_dict_types(1000, 0).unwrap();
+        let types = store.list_all_dict_types(None, 1000, 0).unwrap();
         assert_eq!(types.len(), 2);
         // Ordered alphabetically (no dictionary_types records, fallback label = dict_type)
         assert_eq!(types[0].dict_type, "channel_type");
@@ -3932,7 +4517,7 @@ mod tests {
                 extra_json: None,
             })
             .unwrap();
-        let types = store.list_all_dict_types(1000, 0).unwrap();
+        let types = store.list_all_dict_types(None, 1000, 0).unwrap();
         assert_eq!(types.len(), 1);
         assert_eq!(types[0].dict_type, "severity");
         assert_eq!(types[0].dict_type_label, "告警级别");
@@ -4201,8 +4786,8 @@ mod tests {
                 })
                 .unwrap();
         }
-        assert_eq!(store.count_dictionaries_by_type("test_type", false).unwrap(), 3);
-        assert_eq!(store.count_dictionaries_by_type("nonexistent", false).unwrap(), 0);
+        assert_eq!(store.count_dictionaries_by_type("test_type", false, None, None).unwrap(), 3);
+        assert_eq!(store.count_dictionaries_by_type("nonexistent", false, None, None).unwrap(), 0);
     }
 
     #[test]
@@ -4234,12 +4819,12 @@ mod tests {
             .unwrap();
 
         let all = store
-            .list_dictionaries_by_type("test", false, 1000, 0)
+            .list_dictionaries_by_type("test", false, None, None, 1000, 0)
             .unwrap();
         assert_eq!(all.len(), 2);
 
         let enabled = store
-            .list_dictionaries_by_type("test", true, 1000, 0)
+            .list_dictionaries_by_type("test", true, None, None, 1000, 0)
             .unwrap();
         assert_eq!(enabled.len(), 1);
         assert_ne!(enabled[0].id, disabled.id);
@@ -4295,7 +4880,7 @@ mod tests {
         };
         store.insert_check_result(&result).unwrap();
 
-        let latest = store.query_latest_results(20, 0).unwrap();
+        let latest = store.query_latest_results(None, None, None, 20, 0).unwrap();
         assert_eq!(latest.len(), 1);
         assert_eq!(latest[0].domain, "cert.com");
         assert!(latest[0].is_valid);
@@ -4444,7 +5029,7 @@ mod tests {
 
         // Verify updated — original id preserved
         let all = store
-            .list_dictionaries_by_type("severity", false, 1000, 0)
+            .list_dictionaries_by_type("severity", false, None, None, 1000, 0)
             .unwrap();
         let info_item = all.iter().find(|i| i.dict_key == "info").unwrap();
         assert_eq!(info_item.dict_label, "信息(更新)");
@@ -4470,7 +5055,7 @@ mod tests {
         assert_eq!(upd, 0);
         assert_eq!(
             store
-                .list_dictionaries_by_type("severity", false, 1000, 0)
+                .list_dictionaries_by_type("severity", false, None, None, 1000, 0)
                 .unwrap()
                 .len(),
             3
