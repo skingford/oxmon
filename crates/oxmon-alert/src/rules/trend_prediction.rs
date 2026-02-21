@@ -39,7 +39,7 @@ impl AlertRule for TrendPredictionRule {
         self.silence_secs
     }
 
-    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>) -> Option<AlertEvent> {
+    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>, locale: &str) -> Option<AlertEvent> {
         if window.len() < self.min_data_points {
             return None;
         }
@@ -105,12 +105,28 @@ impl AlertRule for TrendPredictionRule {
         };
 
         // 智能时间显示：小于1小时显示分钟，否则显示小时
-        let time_display = if time_to_threshold < 3600.0 {
-            let minutes = (time_to_threshold / 60.0).round() as i64;
-            format!("{} 分钟", minutes)
-        } else {
-            let hours = time_to_threshold / 3600.0;
-            format!("{:.1} 小时", hours)
+        let time_display = {
+            use oxmon_common::i18n::TRANSLATIONS;
+            if time_to_threshold < 3600.0 {
+                let minutes = (time_to_threshold / 60.0).round() as i64;
+                TRANSLATIONS.get(locale, "time.minutes", "{n} minutes")
+                    .replace("{n}", &minutes.to_string())
+            } else {
+                let hours = time_to_threshold / 3600.0;
+                TRANSLATIONS.get(locale, "time.hours", "{n} hours")
+                    .replace("{n}", &format!("{:.1}", hours))
+            }
+        };
+
+        let message = {
+            use oxmon_common::i18n::TRANSLATIONS;
+            let tmpl = TRANSLATIONS.get(locale, "alert.trend_prediction",
+                "{metric}{labels} predicted to reach threshold {threshold:.1} in {time_display} (host: {agent})");
+            tmpl.replace("{metric}", &self.metric)
+                .replace("{labels}", &labels_display)
+                .replace("{threshold:.1}", &format!("{:.1}", self.predict_threshold))
+                .replace("{time_display}", &time_display)
+                .replace("{agent}", &last.agent_id)
         };
 
         Some(AlertEvent {
@@ -120,10 +136,7 @@ impl AlertRule for TrendPredictionRule {
             agent_id: last.agent_id.clone(),
             metric_name: self.metric.clone(),
             severity: self.severity,
-            message: format!(
-                "{}{} 预计在 {} 后达到阈值 {:.1}（主机: {}）",
-                self.metric, labels_display, time_display, self.predict_threshold, last.agent_id,
-            ),
+            message,
             value: last.value,
             threshold: self.predict_threshold,
             timestamp: now,

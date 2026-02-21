@@ -41,7 +41,7 @@ fn threshold_rule_fires_when_sustained() {
         .map(|i| make_dp("web-01", "cpu.usage", 95.0, 50 - i * 10))
         .collect();
 
-    let event = rule.evaluate(&window, Utc::now());
+    let event = rule.evaluate(&window, Utc::now(), "zh-CN");
     assert!(event.is_some());
     let event = event.unwrap();
     assert_eq!(event.severity, Severity::Critical);
@@ -68,7 +68,7 @@ fn threshold_rule_does_not_fire_below_threshold() {
         .map(|i| make_dp("web-01", "cpu.usage", 50.0, 50 - i * 10))
         .collect();
 
-    assert!(rule.evaluate(&window, Utc::now()).is_none());
+    assert!(rule.evaluate(&window, Utc::now(), "zh-CN").is_none());
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn threshold_rule_does_not_fire_when_partially_exceeded() {
         make_dp("web-01", "cpu.usage", 95.0, 10),
     ];
 
-    assert!(rule.evaluate(&window, Utc::now()).is_none());
+    assert!(rule.evaluate(&window, Utc::now(), "zh-CN").is_none());
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn rate_of_change_fires_on_spike() {
         make_dp("web-01", "memory.used_percent", 75.0, 0), // 50% increase
     ];
 
-    let event = rule.evaluate(&window, Utc::now());
+    let event = rule.evaluate(&window, Utc::now(), "zh-CN");
     assert!(event.is_some());
 }
 
@@ -137,7 +137,7 @@ fn rate_of_change_does_not_fire_on_small_change() {
         make_dp("web-01", "memory.used_percent", 55.0, 0), // 10% change
     ];
 
-    assert!(rule.evaluate(&window, Utc::now()).is_none());
+    assert!(rule.evaluate(&window, Utc::now(), "zh-CN").is_none());
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn trend_prediction_fires_when_breach_within_horizon() {
         },
     ];
 
-    let event = rule.evaluate(&window, now);
+    let event = rule.evaluate(&window, now, "zh-CN");
     assert!(event.is_some());
     let event = event.unwrap();
     assert!(event.predicted_breach.is_some());
@@ -245,7 +245,7 @@ fn trend_prediction_does_not_fire_when_decreasing() {
         },
     ];
 
-    assert!(rule.evaluate(&window, now).is_none());
+    assert!(rule.evaluate(&window, now, "zh-CN").is_none());
 }
 
 #[test]
@@ -300,7 +300,7 @@ fn trend_prediction_does_not_fire_when_too_soon() {
     ];
 
     // 应该返回 None，因为预测时间小于 5 分钟
-    let event = rule.evaluate(&window, now);
+    let event = rule.evaluate(&window, now, "zh-CN");
     assert!(
         event.is_none(),
         "Should not fire when prediction time is less than 5 minutes"
@@ -398,7 +398,7 @@ fn engine_recovery_after_consecutive_ok() {
     assert!(matches!(&outputs_final[0], AlertOutput::Recovered(_)));
     let event = outputs_final[0].event();
     assert_eq!(event.status, 3);
-    assert!(event.message.contains("RECOVERED"));
+    assert!(event.message.contains("已恢复"));
     assert!(event.first_triggered_at.is_some());
 }
 
@@ -530,7 +530,7 @@ fn threshold_rule_includes_labels_in_message() {
         updated_at: ts,
     };
 
-    let event = rule.evaluate(&[dp], Utc::now());
+    let event = rule.evaluate(&[dp], Utc::now(), "zh-CN");
     assert!(event.is_some());
     let event = event.unwrap();
     assert!(

@@ -338,8 +338,11 @@ async fn test_channel(
         updated_at: chrono::Utc::now(),
     };
 
+    let locale = state
+        .cert_store
+        .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
     let start = tokio::time::Instant::now();
-    let result = channel.send(&test_event, &recipients).await;
+    let result = channel.send(&test_event, &recipients, &locale).await;
     let duration_ms = start.elapsed().as_millis() as i64;
 
     // 记录通知发送日志（测试通知也纳入日志记录）

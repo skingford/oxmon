@@ -43,34 +43,43 @@ impl EmailChannel {
         })
     }
 
-    fn format_body(alert: &AlertEvent) -> String {
+    fn format_body(alert: &AlertEvent, locale: &str) -> String {
+        use oxmon_common::i18n::TRANSLATIONS;
+        let t = &*TRANSLATIONS;
         let labels_str = oxmon_common::types::format_labels(&alert.labels);
         let labels_line = if labels_str.is_empty() {
             String::new()
         } else {
-            format!("\nLabels: {}", labels_str)
+            format!("\n{}: {}", t.get(locale, "notify.labels", "Labels"), labels_str)
         };
         let rule_line = if alert.rule_name.is_empty() {
             String::new()
         } else {
-            format!("\nRule: {}", alert.rule_name)
+            format!("\n{}: {}", t.get(locale, "notify.rule", "Rule"), alert.rule_name)
         };
         let status_tag = if alert.status == 3 {
-            " [RECOVERED]"
+            format!(" {}", t.get(locale, "notify.recovered_tag", "[RECOVERED]"))
         } else {
-            ""
+            String::new()
         };
         format!(
-            "Alert: {severity}{status_tag}{rule_line}\nAgent: {agent}\nMetric: {metric}{labels_line}\nValue: {value:.2}\nThreshold: {threshold:.2}\nMessage: {message}\nTime: {time}",
+            "{alert_label}: {severity}{status_tag}{rule_line}\n{agent_label}: {agent}\n{metric_label}: {metric}{labels_line}\n{value_label}: {value:.2}\n{threshold_label}: {threshold:.2}\n{message_label}: {message}\n{time_label}: {time}",
+            alert_label = t.get(locale, "notify.alert", "Alert"),
             severity = alert.severity,
             status_tag = status_tag,
             rule_line = rule_line,
+            agent_label = t.get(locale, "notify.agent", "Agent"),
             agent = alert.agent_id,
+            metric_label = t.get(locale, "notify.metric", "Metric"),
             metric = alert.metric_name,
             labels_line = labels_line,
+            value_label = t.get(locale, "notify.value", "Value"),
             value = alert.value,
+            threshold_label = t.get(locale, "notify.threshold", "Threshold"),
             threshold = alert.threshold,
+            message_label = t.get(locale, "notify.message", "Message"),
             message = alert.message,
+            time_label = t.get(locale, "notify.time", "Time"),
             time = alert.timestamp,
         )
     }
@@ -78,8 +87,13 @@ impl EmailChannel {
 
 #[async_trait]
 impl NotificationChannel for EmailChannel {
-    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<SendResponse> {
-        let status_tag = if alert.status == 3 { "[RECOVERED]" } else { "" };
+    async fn send(&self, alert: &AlertEvent, recipients: &[String], locale: &str) -> Result<SendResponse> {
+        use oxmon_common::i18n::TRANSLATIONS;
+        let recovered_tag = if alert.status == 3 {
+            TRANSLATIONS.get(locale, "notify.recovered_tag", "[RECOVERED]")
+        } else {
+            ""
+        };
         let rule_display = if alert.rule_name.is_empty() {
             alert.metric_name.clone()
         } else {
@@ -87,9 +101,9 @@ impl NotificationChannel for EmailChannel {
         };
         let subject = format!(
             "[oxmon][{}]{} {} - {}",
-            alert.severity, status_tag, rule_display, alert.agent_id
+            alert.severity, recovered_tag, rule_display, alert.agent_id
         );
-        let body = Self::format_body(alert);
+        let body = Self::format_body(alert, locale);
 
         // 记录 request_body（邮件内容）
         let request_body = serde_json::json!({

@@ -291,7 +291,7 @@ fn run_init_configs(config_path: &str, seed_path: &str) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to parse seed file '{}': {}", seed_path, e))?;
 
     // List existing config keys for dedup
-    let existing = cert_store.list_system_configs(10000, 0)?;
+    let existing = cert_store.list_system_configs(None, None, None, 10000, 0)?;
     let existing_keys: std::collections::HashSet<String> =
         existing.iter().map(|c| c.config_key.clone()).collect();
 

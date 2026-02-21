@@ -74,7 +74,7 @@ impl AlertRule for CertExpirationRule {
         self.silence_secs
     }
 
-    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>) -> Option<AlertEvent> {
+    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>, locale: &str) -> Option<AlertEvent> {
         // 获取最新的数据点
         let latest = window.last()?;
 
@@ -87,18 +87,26 @@ impl AlertRule for CertExpirationRule {
             .cloned()
             .unwrap_or_else(|| "unknown".to_string());
 
-        let message = if days <= 0.0 {
-            format!("证书已过期: {} (已过期 {:.0} 天)", domain, -days)
-        } else if severity == Severity::Critical {
-            format!(
-                "证书即将过期: {} (剩余 {:.0} 天，低于 {} 天严重阈值)",
-                domain, days, self.critical_days
-            )
-        } else {
-            format!(
-                "证书即将过期: {} (剩余 {:.0} 天，低于 {} 天警告阈值)",
-                domain, days, self.warning_days
-            )
+        let message = {
+            use oxmon_common::i18n::TRANSLATIONS;
+            if days <= 0.0 {
+                let tmpl = TRANSLATIONS.get(locale, "alert.cert_expired",
+                    "Certificate expired: {domain} (expired {days:.0} days ago)");
+                tmpl.replace("{domain}", &domain)
+                    .replace("{days:.0}", &format!("{:.0}", -days))
+            } else if severity == Severity::Critical {
+                let tmpl = TRANSLATIONS.get(locale, "alert.cert_expiring_critical",
+                    "Certificate expiring soon: {domain} ({days:.0} days left, below {threshold} day critical threshold)");
+                tmpl.replace("{domain}", &domain)
+                    .replace("{days:.0}", &format!("{:.0}", days))
+                    .replace("{threshold}", &self.critical_days.to_string())
+            } else {
+                let tmpl = TRANSLATIONS.get(locale, "alert.cert_expiring_warning",
+                    "Certificate expiring soon: {domain} ({days:.0} days left, below {threshold} day warning threshold)");
+                tmpl.replace("{domain}", &domain)
+                    .replace("{days:.0}", &format!("{:.0}", days))
+                    .replace("{threshold}", &self.warning_days.to_string())
+            }
         };
 
         Some(AlertEvent {
@@ -162,7 +170,7 @@ mod tests {
         oxmon_common::id::init(1, 1);
         let rule = make_rule();
         let dp = make_dp(90.0, "example.com");
-        let result = rule.evaluate(&[dp], Utc::now());
+        let result = rule.evaluate(&[dp], Utc::now(), "zh-CN");
         assert!(result.is_none());
     }
 
@@ -171,7 +179,7 @@ mod tests {
         oxmon_common::id::init(1, 1);
         let rule = make_rule();
         let dp = make_dp(20.0, "example.com");
-        let result = rule.evaluate(&[dp], Utc::now());
+        let result = rule.evaluate(&[dp], Utc::now(), "zh-CN");
         assert!(result.is_some());
         let event = result.unwrap();
         assert_eq!(event.severity, Severity::Warning);
@@ -184,7 +192,7 @@ mod tests {
         oxmon_common::id::init(1, 1);
         let rule = make_rule();
         let dp = make_dp(5.0, "example.com");
-        let result = rule.evaluate(&[dp], Utc::now());
+        let result = rule.evaluate(&[dp], Utc::now(), "zh-CN");
         assert!(result.is_some());
         let event = result.unwrap();
         assert_eq!(event.severity, Severity::Critical);
@@ -195,7 +203,7 @@ mod tests {
         oxmon_common::id::init(1, 1);
         let rule = make_rule();
         let dp = make_dp(-3.0, "expired.com");
-        let result = rule.evaluate(&[dp], Utc::now());
+        let result = rule.evaluate(&[dp], Utc::now(), "zh-CN");
         assert!(result.is_some());
         let event = result.unwrap();
         assert_eq!(event.severity, Severity::Critical);
@@ -207,7 +215,7 @@ mod tests {
         oxmon_common::id::init(1, 1);
         let rule = make_rule();
         let dp = make_dp(30.0, "example.com");
-        let result = rule.evaluate(&[dp], Utc::now());
+        let result = rule.evaluate(&[dp], Utc::now(), "zh-CN");
         assert!(result.is_some());
         assert_eq!(result.unwrap().severity, Severity::Warning);
     }
@@ -217,7 +225,7 @@ mod tests {
         oxmon_common::id::init(1, 1);
         let rule = make_rule();
         let dp = make_dp(7.0, "example.com");
-        let result = rule.evaluate(&[dp], Utc::now());
+        let result = rule.evaluate(&[dp], Utc::now(), "zh-CN");
         assert!(result.is_some());
         assert_eq!(result.unwrap().severity, Severity::Critical);
     }

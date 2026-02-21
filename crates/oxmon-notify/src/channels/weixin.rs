@@ -31,8 +31,14 @@ impl WeixinChannel {
         }
     }
 
-    fn format_markdown(alert: &AlertEvent) -> String {
-        let status_tag = if alert.status == 3 { "[RECOVERED]" } else { "" };
+    fn format_markdown(alert: &AlertEvent, locale: &str) -> String {
+        use oxmon_common::i18n::TRANSLATIONS;
+        let t = &*TRANSLATIONS;
+        let recovered_tag = if alert.status == 3 {
+            t.get(locale, "notify.recovered_tag", "[RECOVERED]")
+        } else {
+            ""
+        };
         let rule_display = if alert.rule_name.is_empty() {
             alert.metric_name.clone()
         } else {
@@ -42,31 +48,37 @@ impl WeixinChannel {
         let labels_line = if labels_str.is_empty() {
             String::new()
         } else {
-            format!("\n> **Labels**: {}", labels_str)
+            format!("\n> **{}**: {}", t.get(locale, "notify.labels", "Labels"), labels_str)
         };
         let rule_line = if alert.rule_name.is_empty() {
             String::new()
         } else {
-            format!("\n> **Rule**: {}", alert.rule_name)
+            format!("\n> **{}**: {}", t.get(locale, "notify.rule", "Rule"), alert.rule_name)
         };
         format!(
-            "### [oxmon][{severity}]{status_tag} {rule_display} - {agent}\n\
-             > **Severity**: {severity}{rule_line}\n\
-             > **Agent**: {agent}\n\
-             > **Metric**: {metric}{labels_line}\n\
-             > **Value**: {value:.2}\n\
-             > **Threshold**: {threshold:.2}\n\
-             > **Time**: {time}\n\n\
+            "### [oxmon][{severity}]{recovered_tag} {rule_display} - {agent}\n\
+             > **{severity_label}**: {severity}{rule_line}\n\
+             > **{agent_label}**: {agent}\n\
+             > **{metric_label}**: {metric}{labels_line}\n\
+             > **{value_label}**: {value:.2}\n\
+             > **{threshold_label}**: {threshold:.2}\n\
+             > **{time_label}**: {time}\n\n\
              {message}",
             severity = alert.severity,
-            status_tag = status_tag,
+            recovered_tag = recovered_tag,
             rule_display = rule_display,
+            severity_label = t.get(locale, "notify.severity", "Severity"),
             rule_line = rule_line,
+            agent_label = t.get(locale, "notify.agent", "Agent"),
             agent = alert.agent_id,
+            metric_label = t.get(locale, "notify.metric", "Metric"),
             metric = alert.metric_name,
             labels_line = labels_line,
+            value_label = t.get(locale, "notify.value", "Value"),
             value = alert.value,
+            threshold_label = t.get(locale, "notify.threshold", "Threshold"),
             threshold = alert.threshold,
+            time_label = t.get(locale, "notify.time", "Time"),
             time = alert.timestamp.to_rfc3339(),
             message = alert.message,
         )
@@ -175,8 +187,8 @@ impl WeixinChannel {
 
 #[async_trait]
 impl NotificationChannel for WeixinChannel {
-    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<SendResponse> {
-        let content = Self::format_markdown(alert);
+    async fn send(&self, alert: &AlertEvent, recipients: &[String], locale: &str) -> Result<SendResponse> {
+        let content = Self::format_markdown(alert, locale);
         let payload = serde_json::json!({
             "msgtype": "markdown",
             "markdown": {

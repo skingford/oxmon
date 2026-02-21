@@ -93,6 +93,10 @@ impl AlertEngine {
     }
 
     pub fn ingest(&mut self, data_point: &MetricDataPoint) -> Vec<AlertOutput> {
+        self.ingest_with_locale(data_point, oxmon_common::i18n::DEFAULT_LOCALE)
+    }
+
+    pub fn ingest_with_locale(&mut self, data_point: &MetricDataPoint, locale: &str) -> Vec<AlertOutput> {
         let now = Utc::now();
         let mut outputs = Vec::new();
 
@@ -121,7 +125,7 @@ impl AlertEngine {
             window.evict(now);
 
             // Use make_contiguous() to get a &[MetricDataPoint] without allocating a Vec
-            let event = rule.evaluate(window.as_contiguous_slice(), now);
+            let event = rule.evaluate(window.as_contiguous_slice(), now, locale);
 
             // NLL: window borrow ends here; self.last_fired is now accessible
             if let Some(mut event) = event {
@@ -175,6 +179,13 @@ impl AlertEngine {
                     let state = self.active_alerts.remove(&key).unwrap();
                     self.last_fired.remove(&key);
 
+                    let recovery_message = {
+                        use oxmon_common::i18n::TRANSLATIONS;
+                        let tmpl = TRANSLATIONS.get(locale, "alert.recovered",
+                            "[RECOVERED] {metric} has returned to normal on {agent}");
+                        tmpl.replace("{metric}", &data_point.metric_name)
+                            .replace("{agent}", &data_point.agent_id)
+                    };
                     let recovered_event = AlertEvent {
                         id: oxmon_common::id::next_id(),
                         rule_id: rule_id.to_string(),
@@ -182,10 +193,7 @@ impl AlertEngine {
                         agent_id: data_point.agent_id.clone(),
                         metric_name: data_point.metric_name.clone(),
                         severity: rule.severity(),
-                        message: format!(
-                            "[RECOVERED] {} has returned to normal on {}",
-                            data_point.metric_name, data_point.agent_id,
-                        ),
+                        message: recovery_message,
                         value: data_point.value,
                         threshold: 0.0,
                         timestamp: now,

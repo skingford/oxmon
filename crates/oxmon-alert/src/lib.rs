@@ -43,5 +43,13 @@ pub trait AlertRule: Send + Sync {
 
     /// Evaluates the sliding window and returns an alert event if the
     /// rule condition is met, or `None` otherwise.
-    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>) -> Option<AlertEvent>;
+    ///
+    /// The `locale` parameter controls the language of generated alert messages
+    /// (e.g., `"zh-CN"`, `"en"`).
+    fn evaluate(
+        &self,
+        window: &[MetricDataPoint],
+        now: DateTime<Utc>,
+        locale: &str,
+    ) -> Option<AlertEvent>;
 }

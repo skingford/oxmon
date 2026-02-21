@@ -38,7 +38,7 @@ impl AlertRule for RateOfChangeRule {
         self.silence_secs
     }
 
-    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>) -> Option<AlertEvent> {
+    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>, locale: &str) -> Option<AlertEvent> {
         if window.len() < 2 {
             return None;
         }
@@ -59,6 +59,16 @@ impl AlertRule for RateOfChangeRule {
             } else {
                 format!(" [{}]", labels_str)
             };
+            let message = {
+                use oxmon_common::i18n::TRANSLATIONS;
+                let tmpl = TRANSLATIONS.get(locale, "alert.rate_of_change",
+                    "{metric}{labels} changed by {rate:.1}% (threshold: {rate_threshold:.1}%) on {agent}");
+                tmpl.replace("{metric}", &self.metric)
+                    .replace("{labels}", &labels_display)
+                    .replace("{rate:.1}", &format!("{:.1}", rate))
+                    .replace("{rate_threshold:.1}", &format!("{:.1}", self.rate_threshold))
+                    .replace("{agent}", &last.agent_id)
+            };
             Some(AlertEvent {
                 id: oxmon_common::id::next_id(),
                 rule_id: self.id.clone(),
@@ -66,10 +76,7 @@ impl AlertRule for RateOfChangeRule {
                 agent_id: last.agent_id.clone(),
                 metric_name: self.metric.clone(),
                 severity: self.severity,
-                message: format!(
-                    "{}{} changed by {:.1}% (threshold: {:.1}%) on {}",
-                    self.metric, labels_display, rate, self.rate_threshold, last.agent_id,
-                ),
+                message,
                 value: last.value,
                 threshold: self.rate_threshold,
                 timestamp: now,

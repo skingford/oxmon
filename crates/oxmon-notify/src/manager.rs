@@ -313,6 +313,9 @@ impl NotificationManager {
     }
 
     async fn send_to_channels(&self, event: &AlertEvent) {
+        let locale = self
+            .cert_store
+            .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
         let instances = self.instances.read().await;
         for (channel_id, instance) in instances.iter() {
             if event.severity < instance.min_severity {
@@ -320,7 +323,7 @@ impl NotificationManager {
             }
 
             let start = Instant::now();
-            let result = instance.channel.send(event, &instance.recipients).await;
+            let result = instance.channel.send(event, &instance.recipients, &locale).await;
             let duration_ms = start.elapsed().as_millis() as i64;
 
             let (send_result, response) = match result {

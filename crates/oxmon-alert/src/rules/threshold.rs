@@ -84,7 +84,7 @@ impl AlertRule for ThresholdRule {
         self.silence_secs
     }
 
-    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>) -> Option<AlertEvent> {
+    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>, locale: &str) -> Option<AlertEvent> {
         if window.is_empty() {
             return None;
         }
@@ -114,6 +114,17 @@ impl AlertRule for ThresholdRule {
         } else {
             format!(" [{}]", labels_str)
         };
+        let op_display = op_str(&self.operator, locale);
+        let message = {
+            use oxmon_common::i18n::TRANSLATIONS;
+            let tmpl = TRANSLATIONS.get(locale, "alert.threshold",
+                "{metric}{labels} has been {op} {threshold:.1} for the configured duration on {agent}");
+            tmpl.replace("{metric}", &self.metric)
+                .replace("{labels}", &labels_display)
+                .replace("{op}", op_display)
+                .replace("{threshold:.1}", &format!("{:.1}", self.value))
+                .replace("{agent}", &latest.agent_id)
+        };
         Some(AlertEvent {
             id: oxmon_common::id::next_id(),
             rule_id: self.id.clone(),
@@ -121,14 +132,7 @@ impl AlertRule for ThresholdRule {
             agent_id: latest.agent_id.clone(),
             metric_name: self.metric.clone(),
             severity: self.severity,
-            message: format!(
-                "{}{} has been {} {:.1} for the configured duration on {}",
-                self.metric,
-                labels_display,
-                op_str(&self.operator),
-                self.value,
-                latest.agent_id,
-            ),
+            message,
             value: latest.value,
             threshold: self.value,
             timestamp: now,
@@ -142,11 +146,12 @@ impl AlertRule for ThresholdRule {
     }
 }
 
-fn op_str(op: &CompareOp) -> &'static str {
+fn op_str<'a>(op: &CompareOp, locale: &str) -> &'a str {
+    use oxmon_common::i18n::TRANSLATIONS;
     match op {
-        CompareOp::GreaterThan => "above",
-        CompareOp::LessThan => "below",
-        CompareOp::GreaterEqual => "at or above",
-        CompareOp::LessEqual => "at or below",
+        CompareOp::GreaterThan => TRANSLATIONS.get(locale, "op.above", "above"),
+        CompareOp::LessThan => TRANSLATIONS.get(locale, "op.below", "below"),
+        CompareOp::GreaterEqual => TRANSLATIONS.get(locale, "op.at_or_above", "at or above"),
+        CompareOp::LessEqual => TRANSLATIONS.get(locale, "op.at_or_below", "at or below"),
     }
 }

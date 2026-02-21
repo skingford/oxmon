@@ -24,6 +24,8 @@ struct RuntimeConfig {
     notification_aggregation_window_secs: u64,
     alert_rules_count: usize,
     notification_channels_count: usize,
+    /// 系统当前语言设置
+    language: String,
 }
 
 /// 获取运行时配置（敏感字段已脱敏）。
@@ -46,6 +48,9 @@ async fn get_system_config(
     let notification_aggregation_window_secs = state
         .cert_store
         .get_runtime_setting_u64("notification_aggregation_window", 60);
+    let language = state
+        .cert_store
+        .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
     success_response(
         StatusCode::OK,
         &trace_id,
@@ -63,6 +68,7 @@ async fn get_system_config(
             alert_rules_count: state.cert_store.count_alert_rules(None, None, None, None, None).unwrap_or(0) as usize,
             notification_channels_count: state.cert_store.count_notification_channels(None, None, None, None).unwrap_or(0)
                 as usize,
+            language,
         },
     )
 }

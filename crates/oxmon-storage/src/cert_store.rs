@@ -1883,13 +1883,43 @@ impl CertStore {
         }
     }
 
-    pub fn list_system_configs(&self, limit: usize, offset: usize) -> Result<Vec<SystemConfigRow>> {
-        let conn = self.lock_conn();
-        let mut stmt = conn.prepare(
+    pub fn list_system_configs(
+        &self,
+        config_type: Option<&str>,
+        config_key: Option<&str>,
+        enabled: Option<bool>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SystemConfigRow>> {
+        let mut sql = String::from(
             "SELECT id, config_key, config_type, provider, display_name, description, config_json, enabled, created_at, updated_at
-             FROM system_configs ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+             FROM system_configs WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(v) = config_type {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND config_type = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
+        if let Some(v) = config_key {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND config_key = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
+        if let Some(v) = enabled {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND enabled = ?{idx}"));
+            params.push(Box::new(v as i32));
+        }
+        let limit_idx = params.len() + 1;
+        let offset_idx = params.len() + 2;
+        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok(Self::row_to_system_config(row))
         })?;
         let mut results = Vec::new();
@@ -1899,10 +1929,32 @@ impl CertStore {
         Ok(results)
     }
 
-    pub fn count_system_configs(&self) -> Result<u64> {
+    pub fn count_system_configs(
+        &self,
+        config_type: Option<&str>,
+        config_key: Option<&str>,
+        enabled: Option<bool>,
+    ) -> Result<u64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM system_configs WHERE 1=1");
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(v) = config_type {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND config_type = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
+        if let Some(v) = config_key {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND config_key = ?{idx}"));
+            params.push(Box::new(v.to_string()));
+        }
+        if let Some(v) = enabled {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND enabled = ?{idx}"));
+            params.push(Box::new(v as i32));
+        }
         let conn = self.lock_conn();
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM system_configs", [], |row| row.get(0))?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -2011,6 +2063,22 @@ impl CertStore {
                 default
             }
             _ => default,
+        }
+    }
+
+    /// Get a runtime setting value as a string from system_configs table.
+    /// Returns the parsed string value from config_json, or the default if not found or parsing fails.
+    pub fn get_runtime_setting_string(&self, config_key: &str, default: &str) -> String {
+        match self.get_system_config_by_key(config_key) {
+            Ok(Some(row)) if row.enabled && row.config_type == "runtime" => {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&row.config_json) {
+                    if let Some(value) = json.get("value").and_then(|v| v.as_str()) {
+                        return value.to_string();
+                    }
+                }
+                default.to_string()
+            }
+            _ => default.to_string(),
         }
     }
 

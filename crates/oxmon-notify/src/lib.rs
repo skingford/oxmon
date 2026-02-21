@@ -38,13 +38,21 @@ pub trait NotificationChannel: Send + Sync {
     /// email addresses, phone numbers, webhook URLs, etc.
     /// An empty slice means the channel should skip delivery.
     ///
+    /// The `locale` parameter controls the language of notification messages
+    /// (e.g., `"zh-CN"`, `"en"`).
+    ///
     /// Returns detailed response information including HTTP status,
     /// response/request bodies, retry count, and per-recipient results.
     ///
     /// # Errors
     ///
     /// Returns an error if delivery fails after retries (if applicable).
-    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<SendResponse>;
+    async fn send(
+        &self,
+        alert: &AlertEvent,
+        recipients: &[String],
+        locale: &str,
+    ) -> Result<SendResponse>;
 
     /// Returns the channel type name (e.g., `"email"`, `"webhook"`).
     fn channel_type(&self) -> &str;

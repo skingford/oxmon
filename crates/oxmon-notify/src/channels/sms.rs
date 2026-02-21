@@ -682,7 +682,7 @@ impl SmsChannel {
 
 #[async_trait]
 impl NotificationChannel for SmsChannel {
-    async fn send(&self, alert: &AlertEvent, recipients: &[String]) -> Result<SendResponse> {
+    async fn send(&self, alert: &AlertEvent, recipients: &[String], _locale: &str) -> Result<SendResponse> {
         if recipients.is_empty() {
             return Ok(SendResponse::default());
         }

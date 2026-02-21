@@ -1,3 +1,4 @@
+pub mod i18n;
 pub mod id;
 pub mod types;
 

@@ -176,13 +176,17 @@ impl MetricService for MetricServiceImpl {
 
         // Feed metrics to alert engine
         {
+            let locale = self
+                .state
+                .cert_store
+                .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
             let mut engine = self
                 .state
                 .alert_engine
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             for dp in &batch.data_points {
-                let outputs = engine.ingest(dp);
+                let outputs = engine.ingest_with_locale(dp, &locale);
                 for output in outputs {
                     let event = output.event().clone();
                     // Store alert event

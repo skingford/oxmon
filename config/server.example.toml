@@ -31,6 +31,12 @@ default_password = "changeme"   # Default admin password (change this!)
 # See config/channels.seed.example.json for examples
 # Supported types: email, webhook, sms_aliyun, sms_tencent, sms_generic, dingtalk, weixin
 
+# Runtime Settings (stored in database, managed via REST API)
+# - notification_aggregation_window: Alert aggregation window in seconds (default: 60)
+# - notification_log_retention: Notification log retention days (default: 30)
+# - language: System language for notifications and alerts (default: "zh-CN", supported: "zh-CN", "en")
+#   Change via: PUT /v1/system-configs/{id} with {"config_json": "{\"value\": \"en\"}"}
+
 # Certificate Check Configuration
 [cert_check]
 enabled = true

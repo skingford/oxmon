@@ -92,13 +92,36 @@ fn row_to_response(row: SystemConfigRow) -> SystemConfigResponse {
     }
 }
 
-/// 列出所有系统配置（密钥已脱敏）。
+/// 系统配置列表查询参数（分页 + 过滤）
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct ListSystemConfigParams {
+    /// 每页条数（默认 20）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    offset: Option<u64>,
+    /// 按配置类型过滤（如 runtime）
+    #[param(required = false)]
+    config_type: Option<String>,
+    /// 按配置标识精确匹配（如 language、notification_aggregation_window）
+    #[param(required = false)]
+    config_key: Option<String>,
+    /// 按启用状态过滤
+    #[param(required = false)]
+    enabled: Option<bool>,
+}
+
+/// 列出所有系统配置（密钥已脱敏），支持按 config_type、config_key、enabled 过滤。
 #[utoipa::path(
     get,
     path = "/v1/system/configs",
     tag = "SystemConfig",
     security(("bearer_auth" = [])),
-    params(PaginationParams),
+    params(ListSystemConfigParams),
     responses(
         (status = 200, description = "系统配置列表", body = Vec<SystemConfigResponse>),
         (status = 401, description = "未认证", body = crate::api::ApiError)
@@ -107,12 +130,16 @@ fn row_to_response(row: SystemConfigRow) -> SystemConfigResponse {
 async fn list_system_configs(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
-    Query(pagination): Query<PaginationParams>,
+    Query(params): Query<ListSystemConfigParams>,
 ) -> impl IntoResponse {
-    let limit = pagination.limit();
-    let offset = pagination.offset();
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
 
-    let total = match state.cert_store.count_system_configs() {
+    let total = match state.cert_store.count_system_configs(
+        params.config_type.as_deref(),
+        params.config_key.as_deref(),
+        params.enabled,
+    ) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count system configs");
@@ -126,7 +153,13 @@ async fn list_system_configs(
         }
     };
 
-    match state.cert_store.list_system_configs(limit, offset) {
+    match state.cert_store.list_system_configs(
+        params.config_type.as_deref(),
+        params.config_key.as_deref(),
+        params.enabled,
+        limit,
+        offset,
+    ) {
         Ok(rows) => {
             let resp: Vec<SystemConfigResponse> = rows.into_iter().map(row_to_response).collect();
             success_paginated_response(StatusCode::OK, &trace_id, resp, total, limit, offset)

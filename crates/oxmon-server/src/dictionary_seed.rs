@@ -253,6 +253,24 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ));
     }
 
+    // ---- language: 系统语言 ----
+    order = 0;
+    for (key, label, desc) in [
+        ("zh-CN", "简体中文", "Chinese Simplified"),
+        ("en", "English", "English"),
+    ] {
+        order += 1;
+        items.push(make_system_item(
+            "language",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
+    }
+
     items
 }
 
@@ -276,6 +294,7 @@ pub fn default_type_seed_items() -> Vec<DictionaryType> {
             "系统配置类型",
             "系统级发送方配置的类型",
         ),
+        ("language", "系统语言", "系统支持的语言选项"),
     ]
     .into_iter()
     .enumerate()
