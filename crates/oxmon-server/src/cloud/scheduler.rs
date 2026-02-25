@@ -165,6 +165,27 @@ impl CloudCheckScheduler {
                 .map(|(ck, _, _, _)| ck.clone())
                 .unwrap_or_else(|| format!("cloud_{}_{}", provider_type, "unknown"));
 
+            // 将安全组ID数组序列化为JSON字符串
+            let security_group_ids_json = if instance.security_group_ids.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&instance.security_group_ids).unwrap_or_default())
+            };
+
+            // 将IPv6地址数组序列化为JSON字符串
+            let ipv6_addresses_json = if instance.ipv6_addresses.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&instance.ipv6_addresses).unwrap_or_default())
+            };
+
+            // 将tags HashMap序列化为JSON字符串
+            let tags_json = if instance.tags.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&instance.tags).unwrap_or_default())
+            };
+
             if let Err(e) = self.cert_store.upsert_cloud_instance(&oxmon_storage::cert_store::CloudInstanceRow {
                 id: String::new(), // ID将由 upsert_cloud_instance 内部生成
                 instance_id: instance.instance_id.clone(),
@@ -183,6 +204,28 @@ impl CloudCheckScheduler {
                 cpu_cores: instance.cpu_cores.map(|v| v as i32),
                 memory_gb: instance.memory_gb,
                 disk_gb: instance.disk_gb,
+                created_time: instance.created_time,
+                expired_time: instance.expired_time,
+                charge_type: instance.charge_type.clone(),
+                vpc_id: instance.vpc_id.clone(),
+                subnet_id: instance.subnet_id.clone(),
+                security_group_ids: security_group_ids_json,
+                zone: instance.zone.clone(),
+                internet_max_bandwidth: instance.internet_max_bandwidth.map(|v| v as i32),
+                ipv6_addresses: ipv6_addresses_json,
+                eip_allocation_id: instance.eip_allocation_id.clone(),
+                internet_charge_type: instance.internet_charge_type.clone(),
+                image_id: instance.image_id.clone(),
+                hostname: instance.hostname.clone(),
+                description: instance.description.clone(),
+                gpu: instance.gpu.map(|v| v as i32),
+                io_optimized: instance.io_optimized.clone(),
+                latest_operation: instance.latest_operation.clone(),
+                latest_operation_state: instance.latest_operation_state.clone(),
+                tags: tags_json,
+                project_id: instance.project_id.clone(),
+                resource_group_id: instance.resource_group_id.clone(),
+                auto_renew_flag: instance.auto_renew_flag.clone(),
             }) {
                 tracing::error!(
                     instance_id = instance.instance_id,

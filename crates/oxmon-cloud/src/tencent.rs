@@ -265,6 +265,110 @@ impl TencentCloudProvider {
                         disk_gb = Some(disk_gb.unwrap_or(0.0) + data_disk_total);
                     }
 
+                    // Phase 1: Lifecycle information
+                    let created_time = inst
+                        .get("CreatedTime")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.timestamp());
+
+                    let expired_time = inst
+                        .get("ExpiredTime")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.timestamp());
+
+                    let charge_type = inst
+                        .get("InstanceChargeType")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    // Phase 1: Network configuration
+                    let vpc_id = inst
+                        .get("VirtualPrivateCloud")
+                        .and_then(|vpc| vpc.get("VpcId"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let subnet_id = inst
+                        .get("VirtualPrivateCloud")
+                        .and_then(|vpc| vpc.get("SubnetId"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let mut security_group_ids = Vec::new();
+                    if let Some(sg_arr) = inst.get("SecurityGroupIds").and_then(|v| v.as_array()) {
+                        for sg in sg_arr {
+                            if let Some(sg_id) = sg.as_str() {
+                                security_group_ids.push(sg_id.to_string());
+                            }
+                        }
+                    }
+
+                    // Phase 1: Location information
+                    let zone = inst
+                        .get("Placement")
+                        .and_then(|p| p.get("Zone"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    // Phase 2: Advanced network features
+                    let internet_max_bandwidth = inst
+                        .get("InternetAccessible")
+                        .and_then(|ia| ia.get("InternetMaxBandwidthOut"))
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32);
+
+                    let mut ipv6_addresses = Vec::new();
+                    if let Some(ipv6_arr) = inst.get("IPv6Addresses").and_then(|v| v.as_array()) {
+                        for ipv6 in ipv6_arr {
+                            if let Some(addr) = ipv6.as_str() {
+                                ipv6_addresses.push(addr.to_string());
+                            }
+                        }
+                    }
+
+                    let internet_charge_type = inst
+                        .get("InternetAccessible")
+                        .and_then(|ia| ia.get("InternetChargeType"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    // Phase 2: System and image information
+                    let image_id = inst
+                        .get("ImageId")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    // Phase 2: Compute resource extensions
+                    let gpu = inst
+                        .get("GPU")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32);
+
+                    // Phase 2: Operation tracking
+                    let latest_operation = inst
+                        .get("LatestOperation")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let latest_operation_state = inst
+                        .get("LatestOperationState")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    // Phase 3: Additional metadata
+                    let project_id = inst
+                        .get("Placement")
+                        .and_then(|p| p.get("ProjectId"))
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v.to_string());
+
+                    let auto_renew_flag = inst
+                        .get("RenewFlag")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
                     let instance = CloudInstance {
                         instance_id,
                         instance_name,
@@ -279,6 +383,27 @@ impl TencentCloudProvider {
                         cpu_cores,
                         memory_gb,
                         disk_gb,
+                        created_time,
+                        expired_time,
+                        charge_type,
+                        vpc_id,
+                        subnet_id,
+                        security_group_ids,
+                        zone,
+                        internet_max_bandwidth,
+                        ipv6_addresses,
+                        eip_allocation_id: None, // Tencent uses different EIP model
+                        internet_charge_type,
+                        image_id,
+                        hostname: None, // Tencent doesn't expose hostname in API
+                        description: None, // Tencent doesn't have description field
+                        gpu,
+                        io_optimized: None, // Tencent doesn't have IO optimization flag
+                        latest_operation,
+                        latest_operation_state,
+                        project_id,
+                        resource_group_id: None, // Alibaba specific
+                        auto_renew_flag,
                     };
 
                     // Apply instance filter
@@ -544,6 +669,27 @@ mod tests {
             cpu_cores: Some(4),
             memory_gb: Some(8.0),
             disk_gb: Some(100.0),
+            created_time: Some(1640000000),
+            expired_time: Some(1672000000),
+            charge_type: Some("PREPAID".to_string()),
+            vpc_id: Some("vpc-test123".to_string()),
+            subnet_id: Some("subnet-test456".to_string()),
+            security_group_ids: vec!["sg-test789".to_string()],
+            zone: Some("ap-guangzhou-3".to_string()),
+            internet_max_bandwidth: Some(100),
+            ipv6_addresses: vec![],
+            eip_allocation_id: None,
+            internet_charge_type: Some("TRAFFIC_POSTPAID_BY_HOUR".to_string()),
+            image_id: Some("img-test".to_string()),
+            hostname: None,
+            description: None,
+            gpu: None,
+            io_optimized: None,
+            latest_operation: Some("StartInstance".to_string()),
+            latest_operation_state: Some("SUCCESS".to_string()),
+            project_id: Some("0".to_string()),
+            resource_group_id: None,
+            auto_renew_flag: Some("NOTIFY_AND_AUTO_RENEW".to_string()),
         };
 
         assert_eq!(instance.instance_id, "ins-abc123");

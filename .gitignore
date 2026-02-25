@@ -32,3 +32,5 @@ config/server.toml
 config/agent.toml
 
 .env
+
+*.log

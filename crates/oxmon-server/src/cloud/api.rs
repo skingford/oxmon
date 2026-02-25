@@ -76,6 +76,58 @@ struct CloudInstanceResponse {
     cpu_cores: Option<i32>,
     memory_gb: Option<f64>,
     disk_gb: Option<f64>,
+    // Phase 1: Lifecycle information
+    /// 实例创建时间(Unix timestamp)
+    created_time: Option<i64>,
+    /// 实例过期时间(Unix timestamp,仅预付费实例)
+    expired_time: Option<i64>,
+    /// 计费类型(PREPAID/POSTPAID_BY_HOUR/PrePaid/PostPaid)
+    charge_type: Option<String>,
+    // Phase 1: Network configuration
+    /// VPC ID
+    vpc_id: Option<String>,
+    /// 子网/交换机ID
+    subnet_id: Option<String>,
+    /// 安全组ID列表
+    security_group_ids: Vec<String>,
+    // Phase 1: Location
+    /// 可用区
+    zone: Option<String>,
+    // Phase 2: Advanced network
+    /// 公网带宽上限(Mbps)
+    internet_max_bandwidth: Option<i32>,
+    /// IPv6地址列表
+    ipv6_addresses: Vec<String>,
+    /// 弹性公网IP分配ID(阿里云)
+    eip_allocation_id: Option<String>,
+    /// 网络计费类型
+    internet_charge_type: Option<String>,
+    // Phase 2: System and image
+    /// 镜像ID
+    image_id: Option<String>,
+    /// 主机名
+    hostname: Option<String>,
+    /// 实例描述
+    description: Option<String>,
+    // Phase 2: Compute extensions
+    /// GPU核数
+    gpu: Option<i32>,
+    /// IO优化状态
+    io_optimized: Option<String>,
+    // Phase 2: Operation tracking
+    /// 最近操作
+    latest_operation: Option<String>,
+    /// 最近操作状态
+    latest_operation_state: Option<String>,
+    // Phase 3: Additional metadata
+    /// 标签
+    tags: std::collections::HashMap<String, String>,
+    /// 项目ID
+    project_id: Option<String>,
+    /// 资源组ID
+    resource_group_id: Option<String>,
+    /// 自动续费标识
+    auto_renew_flag: Option<String>,
 }
 
 /// 单条指标最新值
@@ -123,6 +175,66 @@ struct CloudInstanceDetailResponse {
     memory_gb: Option<f64>,
     /// 磁盘总容量（GB）
     disk_gb: Option<f64>,
+
+    // ---- Phase 1: Lifecycle information ----
+    /// 实例创建时间(Unix timestamp)
+    created_time: Option<i64>,
+    /// 实例过期时间(Unix timestamp,仅预付费实例)
+    expired_time: Option<i64>,
+    /// 计费类型(PREPAID/POSTPAID_BY_HOUR/PrePaid/PostPaid)
+    charge_type: Option<String>,
+
+    // ---- Phase 1: Network configuration ----
+    /// VPC ID
+    vpc_id: Option<String>,
+    /// 子网/交换机ID
+    subnet_id: Option<String>,
+    /// 安全组ID列表
+    security_group_ids: Vec<String>,
+
+    // ---- Phase 1: Location ----
+    /// 可用区
+    zone: Option<String>,
+
+    // ---- Phase 2: Advanced network ----
+    /// 公网带宽上限(Mbps)
+    internet_max_bandwidth: Option<i32>,
+    /// IPv6地址列表
+    ipv6_addresses: Vec<String>,
+    /// 弹性公网IP分配ID(阿里云)
+    eip_allocation_id: Option<String>,
+    /// 网络计费类型
+    internet_charge_type: Option<String>,
+
+    // ---- Phase 2: System and image ----
+    /// 镜像ID
+    image_id: Option<String>,
+    /// 主机名
+    hostname: Option<String>,
+    /// 实例描述
+    description: Option<String>,
+
+    // ---- Phase 2: Compute extensions ----
+    /// GPU核数
+    gpu: Option<i32>,
+    /// IO优化状态
+    io_optimized: Option<String>,
+
+    // ---- Phase 2: Operation tracking ----
+    /// 最近操作
+    latest_operation: Option<String>,
+    /// 最近操作状态
+    latest_operation_state: Option<String>,
+
+    // ---- Phase 3: Additional metadata ----
+    /// 标签
+    tags: std::collections::HashMap<String, String>,
+    /// 项目ID
+    project_id: Option<String>,
+    /// 资源组ID
+    resource_group_id: Option<String>,
+    /// 自动续费标识
+    auto_renew_flag: Option<String>,
 
     // ---- Latest metrics ----
     /// CPU 使用率（%）
@@ -209,6 +321,21 @@ fn row_to_cloud_account_response(row: SystemConfigRow) -> CloudAccountResponse {
 }
 
 fn cloud_instance_row_to_response(row: CloudInstanceRow) -> CloudInstanceResponse {
+    // 反序列化安全组ID数组
+    let security_group_ids = row.security_group_ids
+        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+        .unwrap_or_default();
+
+    // 反序列化IPv6地址数组
+    let ipv6_addresses = row.ipv6_addresses
+        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+        .unwrap_or_default();
+
+    // 反序列化tags对象
+    let tags = row.tags
+        .and_then(|json| serde_json::from_str::<std::collections::HashMap<String, String>>(&json).ok())
+        .unwrap_or_default();
+
     CloudInstanceResponse {
         id: row.id,
         instance_id: row.instance_id,
@@ -234,6 +361,30 @@ fn cloud_instance_row_to_response(row: CloudInstanceRow) -> CloudInstanceRespons
         cpu_cores: row.cpu_cores,
         memory_gb: row.memory_gb,
         disk_gb: row.disk_gb,
+        // Phase 1 fields
+        created_time: row.created_time,
+        expired_time: row.expired_time,
+        charge_type: row.charge_type,
+        vpc_id: row.vpc_id,
+        subnet_id: row.subnet_id,
+        security_group_ids,
+        zone: row.zone,
+        // Phase 2 & 3 fields
+        internet_max_bandwidth: row.internet_max_bandwidth,
+        ipv6_addresses,
+        eip_allocation_id: row.eip_allocation_id,
+        internet_charge_type: row.internet_charge_type,
+        image_id: row.image_id,
+        hostname: row.hostname,
+        description: row.description,
+        gpu: row.gpu,
+        io_optimized: row.io_optimized,
+        latest_operation: row.latest_operation,
+        latest_operation_state: row.latest_operation_state,
+        tags,
+        project_id: row.project_id,
+        resource_group_id: row.resource_group_id,
+        auto_renew_flag: row.auto_renew_flag,
     }
 }
 
@@ -1127,6 +1278,21 @@ async fn get_cloud_instance_detail(
         .map(|t| t.to_rfc3339());
 
     // 6. Assemble the response
+    // 反序列化安全组ID数组
+    let security_group_ids = instance.security_group_ids
+        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+        .unwrap_or_default();
+
+    // 反序列化IPv6地址数组
+    let ipv6_addresses = instance.ipv6_addresses
+        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+        .unwrap_or_default();
+
+    // 反序列化tags对象
+    let tags = instance.tags
+        .and_then(|json| serde_json::from_str::<std::collections::HashMap<String, String>>(&json).ok())
+        .unwrap_or_default();
+
     let resp = CloudInstanceDetailResponse {
         id: instance.id,
         instance_id: instance.instance_id,
@@ -1142,6 +1308,31 @@ async fn get_cloud_instance_detail(
         cpu_cores: instance.cpu_cores,
         memory_gb: instance.memory_gb,
         disk_gb: instance.disk_gb,
+        // Phase 1 fields
+        created_time: instance.created_time,
+        expired_time: instance.expired_time,
+        charge_type: instance.charge_type,
+        vpc_id: instance.vpc_id,
+        subnet_id: instance.subnet_id,
+        security_group_ids,
+        zone: instance.zone,
+        // Phase 2 & 3 fields
+        internet_max_bandwidth: instance.internet_max_bandwidth,
+        ipv6_addresses,
+        eip_allocation_id: instance.eip_allocation_id,
+        internet_charge_type: instance.internet_charge_type,
+        image_id: instance.image_id,
+        hostname: instance.hostname,
+        description: instance.description,
+        gpu: instance.gpu,
+        io_optimized: instance.io_optimized,
+        latest_operation: instance.latest_operation,
+        latest_operation_state: instance.latest_operation_state,
+        tags,
+        project_id: instance.project_id,
+        resource_group_id: instance.resource_group_id,
+        auto_renew_flag: instance.auto_renew_flag,
+        // Metrics
         cpu_usage: extract_metric("cloud.cpu.usage"),
         memory_usage: extract_metric("cloud.memory.usage"),
         disk_usage: extract_metric("cloud.disk.usage"),

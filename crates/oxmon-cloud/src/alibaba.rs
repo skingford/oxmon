@@ -346,6 +346,120 @@ impl AlibabaCloudProvider {
                     // Disk capacity will be populated later by calling DescribeDisks API
                     let disk_gb: Option<f64> = None;
 
+                    // Phase 1: Lifecycle information
+                    let created_time = inst
+                        .get("CreationTime")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.timestamp());
+
+                    let expired_time = inst
+                        .get("ExpiredTime")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.timestamp());
+
+                    let charge_type = inst
+                        .get("InstanceChargeType")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    // Phase 1: Network configuration
+                    let vpc_id = inst
+                        .get("VpcAttributes")
+                        .and_then(|vpc| vpc.get("VpcId"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let subnet_id = inst
+                        .get("VpcAttributes")
+                        .and_then(|vpc| vpc.get("VSwitchId"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let mut security_group_ids = Vec::new();
+                    if let Some(sg_obj) = inst.get("SecurityGroupIds") {
+                        if let Some(sg_arr) = sg_obj.get("SecurityGroupId").and_then(|v| v.as_array()) {
+                            for sg in sg_arr {
+                                if let Some(sg_id) = sg.as_str() {
+                                    security_group_ids.push(sg_id.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    // Phase 1: Location information
+                    let zone = inst
+                        .get("ZoneId")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    // Phase 2: Advanced network features
+                    let internet_max_bandwidth = inst
+                        .get("InternetMaxBandwidthOut")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32);
+
+                    let mut ipv6_addresses = Vec::new();
+                    if let Some(ipv6_obj) = inst.get("Ipv6Addresses") {
+                        if let Some(ipv6_arr) = ipv6_obj.get("Ipv6Address").and_then(|v| v.as_array()) {
+                            for ipv6 in ipv6_arr {
+                                if let Some(addr) = ipv6.as_str() {
+                                    ipv6_addresses.push(addr.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    let eip_allocation_id = inst
+                        .get("EipAddress")
+                        .and_then(|eip| eip.get("AllocationId"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let internet_charge_type = inst
+                        .get("InternetChargeType")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    // Phase 2: System and image information
+                    let image_id = inst
+                        .get("ImageId")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let hostname = inst
+                        .get("HostName")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let description = inst
+                        .get("Description")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    // Phase 2: Compute resource extensions
+                    let gpu = inst
+                        .get("GPUAmount")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32);
+
+                    let io_optimized = inst
+                        .get("IoOptimized")
+                        .and_then(|v| v.as_bool())
+                        .map(|b| if b { "optimized" } else { "none" }.to_string());
+
+                    // Phase 3: Additional metadata
+                    let resource_group_id = inst
+                        .get("ResourceGroupId")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let auto_renew_flag = inst
+                        .get("AutoReleaseTime")
+                        .and_then(|v| v.as_str())
+                        .map(|s| if !s.is_empty() { "enabled" } else { "disabled" }.to_string());
+
                     let instance = CloudInstance {
                         instance_id,
                         instance_name,
@@ -360,6 +474,27 @@ impl AlibabaCloudProvider {
                         cpu_cores,
                         memory_gb,
                         disk_gb,
+                        created_time,
+                        expired_time,
+                        charge_type,
+                        vpc_id,
+                        subnet_id,
+                        security_group_ids,
+                        zone,
+                        internet_max_bandwidth,
+                        ipv6_addresses,
+                        eip_allocation_id,
+                        internet_charge_type,
+                        image_id,
+                        hostname,
+                        description,
+                        gpu,
+                        io_optimized,
+                        latest_operation: None, // Alibaba doesn't expose operation tracking
+                        latest_operation_state: None,
+                        project_id: None, // Tencent specific
+                        resource_group_id,
+                        auto_renew_flag,
                     };
 
                     // Apply instance filter
@@ -729,6 +864,27 @@ mod tests {
             cpu_cores: Some(4),
             memory_gb: Some(8.0),
             disk_gb: None,
+            created_time: Some(1640000000),
+            expired_time: None,
+            charge_type: Some("PostPaid".to_string()),
+            vpc_id: Some("vpc-bp1test".to_string()),
+            subnet_id: Some("vsw-bp1test".to_string()),
+            security_group_ids: vec!["sg-bp1test".to_string()],
+            zone: Some("cn-hangzhou-h".to_string()),
+            internet_max_bandwidth: Some(100),
+            ipv6_addresses: vec![],
+            eip_allocation_id: Some("eip-bp1test".to_string()),
+            internet_charge_type: Some("PayByTraffic".to_string()),
+            image_id: Some("centos_7_9_x64_20G".to_string()),
+            hostname: Some("test-ecs".to_string()),
+            description: Some("Test instance".to_string()),
+            gpu: None,
+            io_optimized: Some("optimized".to_string()),
+            latest_operation: None,
+            latest_operation_state: None,
+            project_id: None,
+            resource_group_id: Some("rg-test".to_string()),
+            auto_renew_flag: Some("disabled".to_string()),
         };
 
         assert_eq!(instance.instance_id, "i-bp1abc123");

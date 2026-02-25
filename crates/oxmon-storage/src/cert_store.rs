@@ -409,6 +409,12 @@ impl CertStore {
         Self::migrate_cloud_instances_swap_id(&conn)?;
         Self::migrate_cloud_instances_cleanup(&conn)?;
 
+        // Phase 1: 添加生命周期、网络和位置字段
+        Self::migrate_cloud_instances_phase1_fields(&conn)?;
+
+        // Phase 2 & 3: 添加所有剩余字段
+        Self::migrate_cloud_instances_phase2_3_fields(&conn)?;
+
         let token_encryptor = TokenEncryptor::load_or_create(data_dir)?;
         tracing::info!(path = %db_path.display(), "Initialized cert store");
         Ok(Self {
@@ -681,6 +687,107 @@ impl CertStore {
     fn migrate_cloud_instances_cleanup(_conn: &Connection) -> Result<()> {
         // SQLite 的 DROP COLUMN 需要 3.35.0+，且已经通过重建表完成清理
         tracing::info!("Phase 3: Cleanup completed (table rebuilt without id_v2)");
+        Ok(())
+    }
+
+    /// Phase 1: 添加生命周期、网络和位置字段
+    fn migrate_cloud_instances_phase1_fields(conn: &Connection) -> Result<()> {
+        // 检查表是否存在
+        let table_exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='cloud_instances'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        if !table_exists {
+            tracing::info!("cloud_instances table does not exist, skipping Phase 1 migration");
+            return Ok(());
+        }
+
+        // 检查是否已有created_time列(标识迁移是否已执行)
+        if Self::table_has_column(conn, "cloud_instances", "created_time")? {
+            tracing::debug!("Phase 1 fields already exist, skipping migration");
+            return Ok(());
+        }
+
+        tracing::info!("Adding Phase 1 fields to cloud_instances table");
+
+        // 添加生命周期字段
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN created_time INTEGER", [])?;
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN expired_time INTEGER", [])?;
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN charge_type TEXT", [])?;
+
+        // 添加网络配置字段
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN vpc_id TEXT", [])?;
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN subnet_id TEXT", [])?;
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN security_group_ids TEXT", [])?; // JSON array
+
+        // 添加位置字段
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN zone TEXT", [])?;
+
+        // 创建索引
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_vpc ON cloud_instances(vpc_id)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_zone ON cloud_instances(zone)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_charge_type ON cloud_instances(charge_type)", [])?;
+
+        tracing::info!("Phase 1 fields migration completed");
+        Ok(())
+    }
+
+    /// Phase 2 & 3: 添加所有剩余字段
+    fn migrate_cloud_instances_phase2_3_fields(conn: &Connection) -> Result<()> {
+        // 检查表是否存在
+        let table_exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='cloud_instances'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        if !table_exists {
+            tracing::info!("cloud_instances table does not exist, skipping Phase 2 & 3 migration");
+            return Ok(());
+        }
+
+        // 检查是否已有internet_max_bandwidth列(标识迁移是否已执行)
+        if Self::table_has_column(conn, "cloud_instances", "internet_max_bandwidth")? {
+            tracing::debug!("Phase 2 & 3 fields already exist, skipping migration");
+            return Ok(());
+        }
+
+        tracing::info!("Adding Phase 2 & 3 fields to cloud_instances table");
+
+        // Phase 2: Advanced network features
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN internet_max_bandwidth INTEGER", [])?;
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN ipv6_addresses TEXT", [])?; // JSON array
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN eip_allocation_id TEXT", [])?;
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN internet_charge_type TEXT", [])?;
+
+        // Phase 2: System and image information
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN image_id TEXT", [])?;
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN hostname TEXT", [])?;
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN description TEXT", [])?;
+
+        // Phase 2: Compute resource extensions
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN gpu INTEGER", [])?;
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN io_optimized TEXT", [])?;
+
+        // Phase 2: Operation tracking
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN latest_operation TEXT", [])?;
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN latest_operation_state TEXT", [])?;
+
+        // Phase 3: Additional metadata
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN tags TEXT", [])?; // JSON object
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN project_id TEXT", [])?;
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN resource_group_id TEXT", [])?;
+        conn.execute("ALTER TABLE cloud_instances ADD COLUMN auto_renew_flag TEXT", [])?;
+
+        // 创建索引
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_image ON cloud_instances(image_id)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_hostname ON cloud_instances(hostname)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_project ON cloud_instances(project_id)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_resource_group ON cloud_instances(resource_group_id)", [])?;
+
+        tracing::info!("Phase 2 & 3 fields migration completed");
         Ok(())
     }
 
@@ -4331,8 +4438,14 @@ impl CertStore {
             "INSERT INTO cloud_instances
              (id, instance_id, instance_name, provider, account_config_key, region,
               public_ip, private_ip, os, status, last_seen_at, created_at, updated_at,
-              instance_type, cpu_cores, memory_gb, disk_gb)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+              instance_type, cpu_cores, memory_gb, disk_gb,
+              created_time, expired_time, charge_type, vpc_id, subnet_id, security_group_ids, zone,
+              internet_max_bandwidth, ipv6_addresses, eip_allocation_id, internet_charge_type,
+              image_id, hostname, description,
+              gpu, io_optimized, latest_operation, latest_operation_state,
+              tags, project_id, resource_group_id, auto_renew_flag)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
+                     ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39)
              ON CONFLICT(provider, instance_id) DO UPDATE SET
              instance_name = ?3,
              account_config_key = ?5,
@@ -4346,7 +4459,29 @@ impl CertStore {
              instance_type = COALESCE(?14, instance_type),
              cpu_cores = COALESCE(?15, cpu_cores),
              memory_gb = COALESCE(?16, memory_gb),
-             disk_gb = COALESCE(?17, disk_gb)",
+             disk_gb = COALESCE(?17, disk_gb),
+             created_time = COALESCE(?18, created_time),
+             expired_time = COALESCE(?19, expired_time),
+             charge_type = COALESCE(?20, charge_type),
+             vpc_id = COALESCE(?21, vpc_id),
+             subnet_id = COALESCE(?22, subnet_id),
+             security_group_ids = COALESCE(?23, security_group_ids),
+             zone = COALESCE(?24, zone),
+             internet_max_bandwidth = COALESCE(?25, internet_max_bandwidth),
+             ipv6_addresses = COALESCE(?26, ipv6_addresses),
+             eip_allocation_id = COALESCE(?27, eip_allocation_id),
+             internet_charge_type = COALESCE(?28, internet_charge_type),
+             image_id = COALESCE(?29, image_id),
+             hostname = COALESCE(?30, hostname),
+             description = COALESCE(?31, description),
+             gpu = COALESCE(?32, gpu),
+             io_optimized = COALESCE(?33, io_optimized),
+             latest_operation = COALESCE(?34, latest_operation),
+             latest_operation_state = COALESCE(?35, latest_operation_state),
+             tags = COALESCE(?36, tags),
+             project_id = COALESCE(?37, project_id),
+             resource_group_id = COALESCE(?38, resource_group_id),
+             auto_renew_flag = COALESCE(?39, auto_renew_flag)",
             rusqlite::params![
                 id,
                 instance.instance_id,
@@ -4365,6 +4500,28 @@ impl CertStore {
                 instance.cpu_cores,
                 instance.memory_gb,
                 instance.disk_gb,
+                instance.created_time,
+                instance.expired_time,
+                instance.charge_type,
+                instance.vpc_id,
+                instance.subnet_id,
+                instance.security_group_ids,
+                instance.zone,
+                instance.internet_max_bandwidth,
+                instance.ipv6_addresses,
+                instance.eip_allocation_id,
+                instance.internet_charge_type,
+                instance.image_id,
+                instance.hostname,
+                instance.description,
+                instance.gpu,
+                instance.io_optimized,
+                instance.latest_operation,
+                instance.latest_operation_state,
+                instance.tags,
+                instance.project_id,
+                instance.resource_group_id,
+                instance.auto_renew_flag,
             ],
         )?;
         Ok(())
@@ -4382,7 +4539,12 @@ impl CertStore {
         let mut sql = String::from(
             "SELECT id, instance_id, instance_name, provider, account_config_key, region,
                     public_ip, private_ip, os, status, last_seen_at, created_at, updated_at,
-                    instance_type, cpu_cores, memory_gb, disk_gb
+                    instance_type, cpu_cores, memory_gb, disk_gb,
+                    created_time, expired_time, charge_type, vpc_id, subnet_id, security_group_ids, zone,
+                    internet_max_bandwidth, ipv6_addresses, eip_allocation_id, internet_charge_type,
+                    image_id, hostname, description,
+                    gpu, io_optimized, latest_operation, latest_operation_state,
+                    tags, project_id, resource_group_id, auto_renew_flag
              FROM cloud_instances
              WHERE 1=1",
         );
@@ -4431,6 +4593,28 @@ impl CertStore {
                 cpu_cores: row.get(14)?,
                 memory_gb: row.get(15)?,
                 disk_gb: row.get(16)?,
+                created_time: row.get(17)?,
+                expired_time: row.get(18)?,
+                charge_type: row.get(19)?,
+                vpc_id: row.get(20)?,
+                subnet_id: row.get(21)?,
+                security_group_ids: row.get(22)?,
+                zone: row.get(23)?,
+                internet_max_bandwidth: row.get(24)?,
+                ipv6_addresses: row.get(25)?,
+                eip_allocation_id: row.get(26)?,
+                internet_charge_type: row.get(27)?,
+                image_id: row.get(28)?,
+                hostname: row.get(29)?,
+                description: row.get(30)?,
+                gpu: row.get(31)?,
+                io_optimized: row.get(32)?,
+                latest_operation: row.get(33)?,
+                latest_operation_state: row.get(34)?,
+                tags: row.get(35)?,
+                project_id: row.get(36)?,
+                resource_group_id: row.get(37)?,
+                auto_renew_flag: row.get(38)?,
             });
         }
 
@@ -4470,7 +4654,12 @@ impl CertStore {
         let mut stmt = conn.prepare(
             "SELECT id, instance_id, instance_name, provider, account_config_key, region,
                     public_ip, private_ip, os, status, last_seen_at, created_at, updated_at,
-                    instance_type, cpu_cores, memory_gb, disk_gb
+                    instance_type, cpu_cores, memory_gb, disk_gb,
+                    created_time, expired_time, charge_type, vpc_id, subnet_id, security_group_ids, zone,
+                    internet_max_bandwidth, ipv6_addresses, eip_allocation_id, internet_charge_type,
+                    image_id, hostname, description,
+                    gpu, io_optimized, latest_operation, latest_operation_state,
+                    tags, project_id, resource_group_id, auto_renew_flag
              FROM cloud_instances
              WHERE id = ?1",
         )?;
@@ -4498,6 +4687,28 @@ impl CertStore {
                 cpu_cores: row.get(14)?,
                 memory_gb: row.get(15)?,
                 disk_gb: row.get(16)?,
+                created_time: row.get(17)?,
+                expired_time: row.get(18)?,
+                charge_type: row.get(19)?,
+                vpc_id: row.get(20)?,
+                subnet_id: row.get(21)?,
+                security_group_ids: row.get(22)?,
+                zone: row.get(23)?,
+                internet_max_bandwidth: row.get(24)?,
+                ipv6_addresses: row.get(25)?,
+                eip_allocation_id: row.get(26)?,
+                internet_charge_type: row.get(27)?,
+                image_id: row.get(28)?,
+                hostname: row.get(29)?,
+                description: row.get(30)?,
+                gpu: row.get(31)?,
+                io_optimized: row.get(32)?,
+                latest_operation: row.get(33)?,
+                latest_operation_state: row.get(34)?,
+                tags: row.get(35)?,
+                project_id: row.get(36)?,
+                resource_group_id: row.get(37)?,
+                auto_renew_flag: row.get(38)?,
             }))
         } else {
             Ok(None)
@@ -4654,6 +4865,36 @@ pub struct CloudInstanceRow {
     pub cpu_cores: Option<i32>,
     pub memory_gb: Option<f64>,
     pub disk_gb: Option<f64>,
+    // Phase 1: Lifecycle information
+    pub created_time: Option<i64>,
+    pub expired_time: Option<i64>,
+    pub charge_type: Option<String>,
+    // Phase 1: Network configuration
+    pub vpc_id: Option<String>,
+    pub subnet_id: Option<String>,
+    pub security_group_ids: Option<String>, // JSON array
+    // Phase 1: Location information
+    pub zone: Option<String>,
+    // Phase 2: Advanced network features
+    pub internet_max_bandwidth: Option<i32>,
+    pub ipv6_addresses: Option<String>, // JSON array
+    pub eip_allocation_id: Option<String>,
+    pub internet_charge_type: Option<String>,
+    // Phase 2: System and image information
+    pub image_id: Option<String>,
+    pub hostname: Option<String>,
+    pub description: Option<String>,
+    // Phase 2: Compute resource extensions
+    pub gpu: Option<i32>,
+    pub io_optimized: Option<String>,
+    // Phase 2: Operation tracking
+    pub latest_operation: Option<String>,
+    pub latest_operation_state: Option<String>,
+    // Phase 3: Additional metadata
+    pub tags: Option<String>, // JSON object
+    pub project_id: Option<String>,
+    pub resource_group_id: Option<String>,
+    pub auto_renew_flag: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

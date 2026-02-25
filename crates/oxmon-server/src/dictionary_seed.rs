@@ -184,6 +184,46 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
             "证书是否有效",
             "SSL/TLS 证书链校验结果，有效为 1.0，无效为 0.0",
         ),
+        (
+            "cloud.cpu.usage",
+            "云主机CPU使用率",
+            "云实例 CPU 使用百分比 (0-100)",
+        ),
+        (
+            "cloud.memory.usage",
+            "云主机内存使用率",
+            "云实例内存使用百分比 (0-100)",
+        ),
+        (
+            "cloud.disk.usage",
+            "云主机磁盘使用率",
+            "云实例磁盘使用百分比 (0-100)",
+        ),
+        (
+            "cloud.network.in_bytes",
+            "云主机入流量",
+            "云实例网络入流量速率 (bytes/s)",
+        ),
+        (
+            "cloud.network.out_bytes",
+            "云主机出流量",
+            "云实例网络出流量速率 (bytes/s)",
+        ),
+        (
+            "cloud.disk.iops_read",
+            "云主机磁盘读IOPS",
+            "云实例磁盘读取操作次数/秒",
+        ),
+        (
+            "cloud.disk.iops_write",
+            "云主机磁盘写IOPS",
+            "云实例磁盘写入操作次数/秒",
+        ),
+        (
+            "cloud.connections",
+            "云主机TCP连接数",
+            "云实例当前 TCP 连接数",
+        ),
     ] {
         order += 1;
         items.push(make_system_item(
@@ -271,6 +311,188 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ));
     }
 
+    // ---- cloud_provider: 云服务提供商 ----
+    order = 0;
+    for (key, label, desc) in [
+        ("tencent", "腾讯云", "Tencent Cloud"),
+        ("alibaba", "阿里云", "Alibaba Cloud"),
+        ("aws", "亚马逊云", "Amazon Web Services (reserved for future use)"),
+    ] {
+        order += 1;
+        items.push(make_system_item(
+            "cloud_provider",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
+    }
+
+    // ---- cloud_instance_status: 云实例状态 ----
+    order = 0;
+    for (key, label, desc) in [
+        ("RUNNING", "运行中", "Tencent Cloud: Instance is running"),
+        ("Running", "运行中", "Alibaba Cloud: Instance is running"),
+        ("STOPPED", "已停止", "Tencent Cloud: Instance is stopped"),
+        ("Stopped", "已停止", "Alibaba Cloud: Instance is stopped"),
+        ("STARTING", "启动中", "Tencent Cloud: Instance is starting"),
+        ("Starting", "启动中", "Alibaba Cloud: Instance is starting"),
+        ("STOPPING", "停止中", "Tencent Cloud: Instance is stopping"),
+        ("Stopping", "停止中", "Alibaba Cloud: Instance is stopping"),
+    ] {
+        order += 1;
+        items.push(make_system_item(
+            "cloud_instance_status",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
+    }
+
+    // ---- cloud_charge_type: 计费类型 ----
+    order = 0;
+    for (key, label, desc) in [
+        ("PREPAID", "包年包月", "Tencent Cloud: Prepaid billing"),
+        ("PrePaid", "包年包月", "Alibaba Cloud: Prepaid billing"),
+        (
+            "POSTPAID_BY_HOUR",
+            "按量计费",
+            "Tencent Cloud: Postpaid by hour",
+        ),
+        ("PostPaid", "按量计费", "Alibaba Cloud: Postpaid billing"),
+        ("SPOTPAID", "竞价实例", "Tencent Cloud: Spot instance"),
+    ] {
+        order += 1;
+        items.push(make_system_item(
+            "cloud_charge_type",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
+    }
+
+    // ---- cloud_internet_charge_type: 网络计费类型 ----
+    order = 0;
+    for (key, label, desc) in [
+        (
+            "TRAFFIC_POSTPAID_BY_HOUR",
+            "按流量计费",
+            "Tencent Cloud: Pay by traffic usage",
+        ),
+        (
+            "PayByTraffic",
+            "按流量计费",
+            "Alibaba Cloud: Pay by traffic usage",
+        ),
+        (
+            "BANDWIDTH_POSTPAID_BY_HOUR",
+            "按带宽计费",
+            "Tencent Cloud: Pay by bandwidth (postpaid hourly)",
+        ),
+        (
+            "PayByBandwidth",
+            "按带宽计费",
+            "Alibaba Cloud: Pay by bandwidth",
+        ),
+    ] {
+        order += 1;
+        items.push(make_system_item(
+            "cloud_internet_charge_type",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
+    }
+
+    // ---- cloud_io_optimized: IO优化状态 ----
+    order = 0;
+    for (key, label, desc) in [
+        ("optimized", "已优化", "Alibaba Cloud: IO optimized instance"),
+        ("none", "非优化", "Alibaba Cloud: Non-IO optimized instance"),
+    ] {
+        order += 1;
+        items.push(make_system_item(
+            "cloud_io_optimized",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
+    }
+
+    // ---- cloud_auto_renew: 自动续费标识 ----
+    order = 0;
+    for (key, label, desc) in [
+        (
+            "NOTIFY_AND_AUTO_RENEW",
+            "自动续费",
+            "Tencent Cloud: Notify and auto-renew",
+        ),
+        (
+            "NOTIFY_AND_MANUAL_RENEW",
+            "手动续费",
+            "Tencent Cloud: Notify but require manual renewal",
+        ),
+        (
+            "DISABLE_NOTIFY_AND_MANUAL_RENEW",
+            "不续费",
+            "Tencent Cloud: Do not notify and do not renew",
+        ),
+        (
+            "enabled",
+            "自动续费",
+            "Alibaba Cloud: Auto-renewal enabled",
+        ),
+        (
+            "disabled",
+            "手动续费",
+            "Alibaba Cloud: Auto-renewal disabled",
+        ),
+    ] {
+        order += 1;
+        items.push(make_system_item(
+            "cloud_auto_renew",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
+    }
+
+    // ---- cloud_operation_state: 操作状态 ----
+    order = 0;
+    for (key, label, value, desc) in [
+        ("SUCCESS", "成功", "1", "Operation completed successfully"),
+        ("OPERATING", "执行中", "2", "Operation is in progress"),
+        ("FAILED", "失败", "3", "Operation failed"),
+    ] {
+        order += 1;
+        items.push(make_system_item(
+            "cloud_operation_state",
+            key,
+            label,
+            Some(value),
+            order,
+            Some(desc),
+            &now,
+        ));
+    }
+
     items
 }
 
@@ -295,6 +517,17 @@ pub fn default_type_seed_items() -> Vec<DictionaryType> {
             "系统级发送方配置的类型",
         ),
         ("language", "系统语言", "系统支持的语言选项"),
+        ("cloud_provider", "云服务提供商", "云服务提供商类型"),
+        ("cloud_instance_status", "云实例状态", "云实例运行状态"),
+        ("cloud_charge_type", "计费类型", "云实例计费模式"),
+        (
+            "cloud_internet_charge_type",
+            "网络计费类型",
+            "云实例网络带宽计费类型",
+        ),
+        ("cloud_io_optimized", "IO优化状态", "云实例 IO 优化状态"),
+        ("cloud_auto_renew", "自动续费标识", "云实例自动续费设置"),
+        ("cloud_operation_state", "操作状态", "云实例操作执行状态"),
     ]
     .into_iter()
     .enumerate()

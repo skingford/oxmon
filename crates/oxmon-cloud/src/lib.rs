@@ -25,6 +25,37 @@ pub struct CloudInstance {
     pub cpu_cores: Option<u32>,  // Number of vCPU cores
     pub memory_gb: Option<f64>,  // Memory in GB
     pub disk_gb: Option<f64>,    // Total disk capacity in GB (system + data disks)
+    // Lifecycle information (Phase 1)
+    pub created_time: Option<i64>,   // Unix timestamp
+    pub expired_time: Option<i64>,   // Unix timestamp (for PREPAID instances)
+    pub charge_type: Option<String>, // "PREPAID", "POSTPAID_BY_HOUR" (Tencent) or "PrePaid", "PostPaid" (Alibaba)
+    // Network configuration (Phase 1)
+    pub vpc_id: Option<String>,
+    pub subnet_id: Option<String>,
+    #[serde(default)]
+    pub security_group_ids: Vec<String>,
+    // Location information (Phase 1)
+    pub zone: Option<String>, // Availability zone
+    // Phase 2: Advanced network features
+    pub internet_max_bandwidth: Option<u32>, // Public network bandwidth limit in Mbps
+    #[serde(default)]
+    pub ipv6_addresses: Vec<String>,         // IPv6 addresses
+    pub eip_allocation_id: Option<String>,   // Elastic IP allocation ID (Alibaba)
+    pub internet_charge_type: Option<String>, // Network billing type
+    // Phase 2: System and image information
+    pub image_id: Option<String>,   // OS image ID
+    pub hostname: Option<String>,   // Hostname (mainly Alibaba)
+    pub description: Option<String>, // Instance description (mainly Alibaba)
+    // Phase 2: Compute resource extensions
+    pub gpu: Option<u32>,           // Number of GPU cores (Tencent) or GPU count (Alibaba)
+    pub io_optimized: Option<String>, // IO optimization status (Alibaba: "optimized", "none")
+    // Phase 2: Operation tracking (Tencent)
+    pub latest_operation: Option<String>,       // Latest operation performed
+    pub latest_operation_state: Option<String>, // Latest operation state (SUCCESS, OPERATING, FAILED)
+    // Phase 3: Additional metadata
+    pub project_id: Option<String>,        // Project ID (Tencent)
+    pub resource_group_id: Option<String>, // Resource group ID (Alibaba)
+    pub auto_renew_flag: Option<String>,   // Auto-renewal flag
 }
 
 /// Cloud metrics for a single instance
@@ -177,6 +208,27 @@ mod tests {
             cpu_cores: Some(2),
             memory_gb: Some(4.0),
             disk_gb: Some(50.0),
+            created_time: None,
+            expired_time: None,
+            charge_type: None,
+            vpc_id: None,
+            subnet_id: None,
+            security_group_ids: vec![],
+            zone: None,
+            internet_max_bandwidth: None,
+            ipv6_addresses: vec![],
+            eip_allocation_id: None,
+            internet_charge_type: None,
+            image_id: None,
+            hostname: None,
+            description: None,
+            gpu: None,
+            io_optimized: None,
+            latest_operation: None,
+            latest_operation_state: None,
+            project_id: None,
+            resource_group_id: None,
+            auto_renew_flag: None,
         };
 
         // Empty whitelist should match all
@@ -221,6 +273,27 @@ mod tests {
             cpu_cores: Some(2),
             memory_gb: Some(4.0),
             disk_gb: Some(50.0),
+            created_time: None,
+            expired_time: None,
+            charge_type: None,
+            vpc_id: None,
+            subnet_id: None,
+            security_group_ids: vec![],
+            zone: None,
+            internet_max_bandwidth: None,
+            ipv6_addresses: vec![],
+            eip_allocation_id: None,
+            internet_charge_type: None,
+            image_id: None,
+            hostname: None,
+            description: None,
+            gpu: None,
+            io_optimized: None,
+            latest_operation: None,
+            latest_operation_state: None,
+            project_id: None,
+            resource_group_id: None,
+            auto_renew_flag: None,
         };
 
         // Matching required tags
@@ -271,6 +344,27 @@ mod tests {
             cpu_cores: Some(2),
             memory_gb: Some(4.0),
             disk_gb: Some(50.0),
+            created_time: None,
+            expired_time: None,
+            charge_type: None,
+            vpc_id: None,
+            subnet_id: None,
+            security_group_ids: vec![],
+            zone: None,
+            internet_max_bandwidth: None,
+            ipv6_addresses: vec![],
+            eip_allocation_id: None,
+            internet_charge_type: None,
+            image_id: None,
+            hostname: None,
+            description: None,
+            gpu: None,
+            io_optimized: None,
+            latest_operation: None,
+            latest_operation_state: None,
+            project_id: None,
+            resource_group_id: None,
+            auto_renew_flag: None,
         };
 
         // Excluded tag present
