@@ -435,6 +435,9 @@ curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/instal
 ### 安装 Agent（被监控主机）
 
 ```bash
+# 基础安装
+curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent 
+
 # 指向 Server 的 gRPC 地址
 curl -fsSL https://raw.githubusercontent.com/skingford/oxmon/main/scripts/install.sh | bash -s -- agent \
   --server-endpoint 10.0.1.100:9090
