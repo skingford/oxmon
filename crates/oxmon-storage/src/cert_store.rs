@@ -4,6 +4,7 @@ use oxmon_common::types::{
     CertCheckResult, CertDomain, CreateDomainRequest, DictionaryItem, DictionaryType,
     DictionaryTypeSummary,
 };
+use rusqlite::types::ValueRef;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -2430,8 +2431,8 @@ impl CertStore {
 
     fn row_to_system_config(row: &rusqlite::Row) -> Result<SystemConfigRow> {
         let enabled_int: i32 = row.get(7)?;
-        let created: i64 = row.get(8)?;
-        let updated: i64 = row.get(9)?;
+        let created_at = Self::read_sqlite_datetime_utc(row, 8, "created_at")?;
+        let updated_at = Self::read_sqlite_datetime_utc(row, 9, "updated_at")?;
         Ok(SystemConfigRow {
             id: row.get(0)?,
             config_key: row.get(1)?,
@@ -2441,9 +2442,40 @@ impl CertStore {
             description: row.get(5)?,
             config_json: row.get(6)?,
             enabled: enabled_int != 0,
-            created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
-            updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+            created_at,
+            updated_at,
         })
+    }
+
+    fn read_sqlite_datetime_utc(
+        row: &rusqlite::Row,
+        index: usize,
+        column_name: &str,
+    ) -> Result<DateTime<Utc>> {
+        let value = row.get_ref(index)?;
+        match value {
+            ValueRef::Integer(ts) => Ok(DateTime::from_timestamp(ts, 0).unwrap_or_default()),
+            ValueRef::Real(ts) => Ok(DateTime::from_timestamp(ts as i64, 0).unwrap_or_default()),
+            ValueRef::Text(bytes) => {
+                let text = std::str::from_utf8(bytes)?.trim();
+                if let Ok(ts) = text.parse::<i64>() {
+                    return Ok(DateTime::from_timestamp(ts, 0).unwrap_or_default());
+                }
+                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(text) {
+                    return Ok(dt.with_timezone(&Utc));
+                }
+                Err(anyhow::anyhow!(
+                    "Unsupported datetime text format for column {}: {}",
+                    column_name,
+                    text
+                ))
+            }
+            ValueRef::Null => Ok(DateTime::default()),
+            ValueRef::Blob(_) => Err(anyhow::anyhow!(
+                "Unsupported datetime blob for column {}",
+                column_name
+            )),
+        }
     }
 
     // ---- AI Reports ----
