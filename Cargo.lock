@@ -1553,7 +1553,7 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "oxmon-agent"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1570,7 +1570,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-alert"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1583,7 +1583,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-collector"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1596,7 +1596,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-common"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "prost",
@@ -1613,7 +1613,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-notify"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1636,7 +1636,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-server"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "axum",
@@ -1675,7 +1675,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-storage"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "async-trait",
