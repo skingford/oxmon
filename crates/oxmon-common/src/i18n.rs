@@ -89,6 +89,34 @@ pub static TRANSLATIONS: LazyLock<Translations> = LazyLock::new(|| {
     t!("en", "alert.recovered", "[RECOVERED] {metric} has returned to normal on {agent}");
     t!("zh-CN", "alert.recovered", "[已恢复] {metric} 在 {agent} 上已恢复正常");
 
+    // ---- Cloud scale recommendation ----
+    t!("en", "alert.scale.out.recommendation", "Scale-Out Recommendation");
+    t!("zh-CN", "alert.scale.out.recommendation", "扩容建议");
+    t!("en", "alert.scale.in.recommendation", "Scale-In Recommendation");
+    t!("zh-CN", "alert.scale.in.recommendation", "缩容建议");
+    t!("en", "alert.scale.continuously_high", "usage continuously exceeds");
+    t!("zh-CN", "alert.scale.continuously_high", "使用率持续超过");
+    t!("en", "alert.scale.continuously_low", "usage continuously below");
+    t!("zh-CN", "alert.scale.continuously_low", "使用率持续低于");
+    t!("en", "alert.scale.avg_value", "Average");
+    t!("zh-CN", "alert.scale.avg_value", "平均值");
+    t!("en", "alert.scale.trend", "Trend");
+    t!("zh-CN", "alert.scale.trend", "趋势");
+    t!("en", "alert.scale.out.action", "Consider adding more instances or upgrading instance specifications.");
+    t!("zh-CN", "alert.scale.out.action", "建议增加实例数量或升级实例规格。");
+    t!("en", "alert.scale.in.action", "Consider reducing instances or downgrading specifications to save costs.");
+    t!("zh-CN", "alert.scale.in.action", "建议减少实例数量或降低规格以节约成本。");
+    t!("en", "alert.trend.rising", "Rising");
+    t!("zh-CN", "alert.trend.rising", "上升");
+    t!("en", "alert.trend.falling", "Falling");
+    t!("zh-CN", "alert.trend.falling", "下降");
+    t!("en", "alert.trend.stable", "Stable");
+    t!("zh-CN", "alert.trend.stable", "稳定");
+    t!("en", "metric.cpu", "CPU");
+    t!("zh-CN", "metric.cpu", "CPU");
+    t!("en", "metric.memory", "Memory");
+    t!("zh-CN", "metric.memory", "内存");
+
     // ---- Threshold operator display ----
     t!("en", "op.above", "above");
     t!("zh-CN", "op.above", "高于");

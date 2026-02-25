@@ -269,6 +269,38 @@ CREATE INDEX IF NOT EXISTS idx_notif_logs_status ON notification_logs(status);
 CREATE INDEX IF NOT EXISTS idx_notif_logs_alert_event ON notification_logs(alert_event_id);
 ";
 
+const CLOUD_COLLECTION_STATE_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS cloud_collection_state (
+    config_key TEXT PRIMARY KEY,
+    last_collected_at INTEGER NOT NULL,
+    last_instance_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    updated_at INTEGER NOT NULL
+);
+";
+
+const CLOUD_INSTANCES_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS cloud_instances (
+    id TEXT PRIMARY KEY,
+    instance_id TEXT NOT NULL,
+    instance_name TEXT,
+    provider TEXT NOT NULL,
+    account_config_key TEXT NOT NULL,
+    region TEXT NOT NULL,
+    public_ip TEXT,
+    private_ip TEXT,
+    os TEXT,
+    status TEXT,
+    last_seen_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(provider, instance_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cloud_instances_provider ON cloud_instances(provider);
+CREATE INDEX IF NOT EXISTS idx_cloud_instances_region ON cloud_instances(region);
+CREATE INDEX IF NOT EXISTS idx_cloud_instances_account_key ON cloud_instances(account_config_key);
+";
+
 pub struct CertStore {
     conn: Mutex<Connection>,
     _db_path: PathBuf,
@@ -334,6 +366,8 @@ impl CertStore {
         conn.execute_batch(SYSTEM_DICTIONARIES_SCHEMA)?;
         conn.execute_batch(DICTIONARY_TYPES_SCHEMA)?;
         conn.execute_batch(NOTIFICATION_LOGS_SCHEMA)?;
+        conn.execute_batch(CLOUD_COLLECTION_STATE_SCHEMA)?;
+        conn.execute_batch(CLOUD_INSTANCES_SCHEMA)?;
         // 迁移：为已有的 notification_logs 表补充新增列
         for col in &[
             "severity TEXT NOT NULL DEFAULT 'info'",
@@ -3986,6 +4020,226 @@ impl CertStore {
             chain_depth: row.get(33)?,
         })
     }
+
+    // ---- Cloud collection state methods ----
+
+    /// Get cloud collection state for a specific account
+    pub fn get_cloud_collection_state(
+        &self,
+        config_key: &str,
+    ) -> Result<Option<CloudCollectionStateRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT config_key, last_collected_at, last_instance_count, last_error, updated_at
+             FROM cloud_collection_state
+             WHERE config_key = ?1",
+        )?;
+
+        let mut rows = stmt.query([config_key])?;
+        if let Some(row) = rows.next()? {
+            let last_collected_at: i64 = row.get(1)?;
+            let updated_at: i64 = row.get(4)?;
+            Ok(Some(CloudCollectionStateRow {
+                config_key: row.get(0)?,
+                last_collected_at,
+                last_instance_count: row.get(2)?,
+                last_error: row.get(3)?,
+                updated_at,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Upsert cloud collection state
+    pub fn upsert_cloud_collection_state(
+        &self,
+        config_key: &str,
+        last_collected_at: i64,
+        last_instance_count: i32,
+        last_error: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+
+        conn.execute(
+            "INSERT INTO cloud_collection_state
+             (config_key, last_collected_at, last_instance_count, last_error, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(config_key) DO UPDATE SET
+             last_collected_at = ?2,
+             last_instance_count = ?3,
+             last_error = ?4,
+             updated_at = ?5",
+            rusqlite::params![config_key, last_collected_at, last_instance_count, last_error, now],
+        )?;
+        Ok(())
+    }
+
+    // ---- Cloud instances methods ----
+
+    /// Upsert cloud instance
+    pub fn upsert_cloud_instance(&self, instance: &CloudInstanceRow) -> Result<()> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+
+        conn.execute(
+            "INSERT INTO cloud_instances
+             (id, instance_id, instance_name, provider, account_config_key, region,
+              public_ip, private_ip, os, status, last_seen_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             ON CONFLICT(provider, instance_id) DO UPDATE SET
+             instance_name = ?3,
+             account_config_key = ?5,
+             region = ?6,
+             public_ip = ?7,
+             private_ip = ?8,
+             os = ?9,
+             status = ?10,
+             last_seen_at = ?11,
+             updated_at = ?13",
+            rusqlite::params![
+                instance.id,
+                instance.instance_id,
+                instance.instance_name,
+                instance.provider,
+                instance.account_config_key,
+                instance.region,
+                instance.public_ip,
+                instance.private_ip,
+                instance.os,
+                instance.status,
+                instance.last_seen_at,
+                now,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// List cloud instances with optional filtering
+    pub fn list_cloud_instances(
+        &self,
+        provider: Option<&str>,
+        region: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<CloudInstanceRow>> {
+        let conn = self.lock_conn();
+        let mut sql = String::from(
+            "SELECT id, instance_id, instance_name, provider, account_config_key, region,
+                    public_ip, private_ip, os, status, last_seen_at, created_at, updated_at
+             FROM cloud_instances
+             WHERE 1=1",
+        );
+
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(p) = provider {
+            sql.push_str(" AND provider = ?");
+            params.push(Box::new(p.to_string()));
+        }
+
+        if let Some(r) = region {
+            sql.push_str(" AND region = ?");
+            params.push(Box::new(r.to_string()));
+        }
+
+        sql.push_str(" ORDER BY last_seen_at DESC LIMIT ? OFFSET ?");
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let mut rows = stmt.query(param_refs.as_slice())?;
+
+        let mut instances = Vec::new();
+        while let Some(row) = rows.next()? {
+            let last_seen_at: i64 = row.get(10)?;
+            let created_at: i64 = row.get(11)?;
+            let updated_at: i64 = row.get(12)?;
+            instances.push(CloudInstanceRow {
+                id: row.get(0)?,
+                instance_id: row.get(1)?,
+                instance_name: row.get(2)?,
+                provider: row.get(3)?,
+                account_config_key: row.get(4)?,
+                region: row.get(5)?,
+                public_ip: row.get(6)?,
+                private_ip: row.get(7)?,
+                os: row.get(8)?,
+                status: row.get(9)?,
+                last_seen_at,
+                created_at,
+                updated_at,
+            });
+        }
+
+        Ok(instances)
+    }
+
+    /// Count cloud instances with optional filtering
+    pub fn count_cloud_instances(
+        &self,
+        provider: Option<&str>,
+        region: Option<&str>,
+    ) -> Result<u64> {
+        let conn = self.lock_conn();
+        let mut sql = String::from("SELECT COUNT(*) FROM cloud_instances WHERE 1=1");
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(p) = provider {
+            sql.push_str(" AND provider = ?");
+            params.push(Box::new(p.to_string()));
+        }
+
+        if let Some(r) = region {
+            sql.push_str(" AND region = ?");
+            params.push(Box::new(r.to_string()));
+        }
+
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = stmt.query_row(param_refs.as_slice(), |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
+    /// Get cloud instance by ID
+    pub fn get_cloud_instance_by_id(&self, id: &str) -> Result<Option<CloudInstanceRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, instance_id, instance_name, provider, account_config_key, region,
+                    public_ip, private_ip, os, status, last_seen_at, created_at, updated_at
+             FROM cloud_instances
+             WHERE id = ?1",
+        )?;
+
+        let mut rows = stmt.query([id])?;
+        if let Some(row) = rows.next()? {
+            let last_seen_at: i64 = row.get(10)?;
+            let created_at: i64 = row.get(11)?;
+            let updated_at: i64 = row.get(12)?;
+            Ok(Some(CloudInstanceRow {
+                id: row.get(0)?,
+                instance_id: row.get(1)?,
+                instance_name: row.get(2)?,
+                provider: row.get(3)?,
+                account_config_key: row.get(4)?,
+                region: row.get(5)?,
+                public_ip: row.get(6)?,
+                private_ip: row.get(7)?,
+                os: row.get(8)?,
+                status: row.get(9)?,
+                last_seen_at,
+                created_at,
+                updated_at,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 // ---- Data types for new tables ----
@@ -4106,6 +4360,32 @@ pub struct NotificationLogRow {
     pub recipient_details: Option<String>,
     pub api_message_id: Option<String>,
     pub api_error_code: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CloudCollectionStateRow {
+    pub config_key: String,
+    pub last_collected_at: i64,
+    pub last_instance_count: i32,
+    pub last_error: Option<String>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CloudInstanceRow {
+    pub id: String,
+    pub instance_id: String,
+    pub instance_name: Option<String>,
+    pub provider: String,
+    pub account_config_key: String,
+    pub region: String,
+    pub public_ip: Option<String>,
+    pub private_ip: Option<String>,
+    pub os: Option<String>,
+    pub status: Option<String>,
+    pub last_seen_at: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -4782,7 +5062,7 @@ mod tests {
             updated_at: now,
         };
         store
-            .batch_insert_dictionaries(&[system_item.clone()])
+            .batch_insert_dictionaries(std::slice::from_ref(&system_item))
             .unwrap();
         // Delete should fail (is_system = 1)
         assert!(!store.delete_dictionary(&system_item.id).unwrap());

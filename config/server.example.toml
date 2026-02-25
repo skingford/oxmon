@@ -45,6 +45,19 @@ tick_secs = 60                  # Scheduler tick interval
 connect_timeout_secs = 10       # TLS connection timeout per domain
 max_concurrent = 10              # Max concurrent TLS connections
 
+# Cloud Monitoring Configuration
+[cloud_check]
+enabled = true
+tick_secs = 60                  # Scheduler tick interval (check for due accounts)
+max_concurrent = 5              # Max concurrent cloud API calls
+
+# Cloud Accounts
+# Managed via REST API or CLI: oxmon-server init-cloud-accounts <config> <seed.json>
+# See config/cloud-accounts.seed.example.json for examples
+# Supported providers: tencent, alibaba
+# Cloud instances appear as virtual agents with ID format: cloud:{provider}:{instance_id}
+# Metrics: cloud.cpu.usage, cloud.memory.usage, cloud.disk.usage
+
 # Application ID validation for public routes (health, login)
 # When enabled, all unauthenticated API routes require the ox-app-id header
 [app_id]

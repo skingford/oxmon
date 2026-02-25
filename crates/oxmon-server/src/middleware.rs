@@ -95,7 +95,7 @@ pub async fn app_id_middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AppIdConfig, AuthConfig, CertCheckConfig, ServerConfig};
+    use crate::config::{AppIdConfig, AuthConfig, CertCheckConfig, CloudCheckConfig, ServerConfig};
     use crate::state::{AgentRegistry, AppState};
     use axum::body::to_bytes;
     use axum::routing::get;
@@ -132,6 +132,7 @@ mod tests {
             cors_allowed_origins: Vec::new(),
             rate_limit_enabled: false,
             cert_check: CertCheckConfig::default(),
+            cloud_check: CloudCheckConfig::default(),
             auth: AuthConfig::default(),
             app_id: app_id_config,
         };

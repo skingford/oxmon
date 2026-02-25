@@ -28,6 +28,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub cert_check: CertCheckConfig,
     #[serde(default)]
+    pub cloud_check: CloudCheckConfig,
+    #[serde(default)]
     pub auth: AuthConfig,
     #[serde(default)]
     pub app_id: AppIdConfig,
@@ -115,6 +117,26 @@ fn default_seed_severity() -> String {
     "info".to_string()
 }
 
+// ---- Cloud accounts seed file types (used by `init-cloud-accounts` CLI subcommand) ----
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudAccountsSeedFile {
+    #[serde(default)]
+    pub accounts: Vec<SeedCloudAccount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeedCloudAccount {
+    pub config_key: String,
+    pub provider: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub config: serde_json::Value,
+    #[serde(default = "default_seed_enabled")]
+    pub enabled: bool,
+}
+
 // ---- Dictionaries seed file types (used by `init-dictionaries` CLI subcommand) ----
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,6 +220,38 @@ fn default_cert_check_connect_timeout_secs() -> u64 {
 
 fn default_cert_check_max_concurrent() -> usize {
     10
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudCheckConfig {
+    #[serde(default = "default_cloud_check_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_cloud_check_tick_secs")]
+    pub tick_secs: u64,
+    #[serde(default = "default_cloud_check_max_concurrent")]
+    pub max_concurrent: usize,
+}
+
+impl Default for CloudCheckConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_cloud_check_enabled(),
+            tick_secs: default_cloud_check_tick_secs(),
+            max_concurrent: default_cloud_check_max_concurrent(),
+        }
+    }
+}
+
+fn default_cloud_check_enabled() -> bool {
+    true
+}
+
+fn default_cloud_check_tick_secs() -> u64 {
+    60 // Check for due accounts every 60 seconds
+}
+
+fn default_cloud_check_max_concurrent() -> usize {
+    5 // Max 5 concurrent API calls
 }
 
 fn default_grpc_port() -> u16 {

@@ -24,7 +24,7 @@ make aarch64-apple-darwin      # macOS Apple Silicon (native cargo)
 
 ## Architecture
 
-**Agent-Server model** for server monitoring:
+**Agent-Server model** for server monitoring with cloud integration:
 
 ```
 Agent (per monitored host)          Server (central)
@@ -34,6 +34,9 @@ Agent (per monitored host)          Server (central)
 │   (offline resilience)            ├── Notification manager (plugin system)
 └── gRPC client ──MetricBatch──►    ├── REST API (axum)
                                     ├── Certificate monitoring scheduler
+                                    ├── Cloud monitoring scheduler
+                                    │   ├── Tencent Cloud API (TC3-HMAC-SHA256)
+                                    │   └── Alibaba Cloud API (ACS v1 HMAC-SHA1)
                                     └── OpenAPI doc endpoint
 ```
 
@@ -44,10 +47,11 @@ Agent (per monitored host)          Server (central)
 | `oxmon-common` | Shared types, protobuf codegen (build.rs), `MetricDataPoint` |
 | `oxmon-collector` | Trait `Collector` + implementations for each metric type |
 | `oxmon-agent` | Agent binary: collection loop, gRPC client, offline buffering |
-| `oxmon-storage` | `StorageEngine` trait, time-partitioned SQLite (daily), cert storage, agent whitelist, token auth (`auth` module) |
+| `oxmon-storage` | `StorageEngine` trait, time-partitioned SQLite (daily), cert storage, agent whitelist, token auth (`auth` module), cloud collection state & instances |
 | `oxmon-alert` | `AlertRule` trait, rule types (threshold, rate-of-change, trend, cert-expiration), sliding window engine |
 | `oxmon-notify` | `ChannelPlugin` trait, plugin registry, DB-backed multi-instance channels, recipient management, routing by severity, silence windows. Plugins: email, webhook, sms (generic/aliyun/tencent), dingtalk, weixin |
-| `oxmon-server` | Server binary: gRPC handler, REST API, `AppState`, cert scheduler |
+| `oxmon-cloud` | Cloud provider integrations: `CloudProvider` trait, Tencent/Alibaba implementations with API signing, `CloudCollector` for concurrent metrics collection, rate limiting, retry logic |
+| `oxmon-server` | Server binary: gRPC handler, REST API, `AppState`, cert scheduler, cloud scheduler |
 
 ## Key Patterns
 
@@ -68,9 +72,11 @@ Agent (per monitored host)          Server (central)
 
 - **Multi-language (i18n)**: The `oxmon-common::i18n` module provides a lightweight translation registry (`TRANSLATIONS` singleton) keyed by `(locale, message_key)`. Supported locales: `zh-CN` (default), `en`. The global language is stored as a `language` runtime setting in `system_configs`. Alert rules receive `locale` via `evaluate(window, now, locale)` and notification channels via `send(alert, recipients, locale)`. Adding a new locale requires: (1) add translations in `i18n.rs`, (2) add a dictionary entry in `dictionary_seed.rs`, (3) add the locale to `SUPPORTED_LOCALES`.
 
+- **Cloud monitoring**: Server-side scheduler collects metrics from cloud providers (Tencent Cloud, Alibaba Cloud) via their native APIs. Cloud accounts are stored in `system_configs` table with `config_type="cloud_account"`. Each account has configurable `collection_interval_secs`. Cloud instances are discovered via provider APIs and stored in `cloud_instances` table. Collected metrics are written to the same time-partitioned storage as agent metrics. Virtual agent IDs follow format `cloud:{provider}:{instance_id}` (e.g., `cloud:tencent:ins-abc123`), enabling alert rules to target cloud instances using glob patterns. Metrics include `cloud.cpu.usage`, `cloud.memory.usage`, `cloud.disk.usage`. API signing implemented without OpenSSL: TC3-HMAC-SHA256 for Tencent, ACS v1 HMAC-SHA1 for Alibaba. Rate limiting and exponential backoff retry for Alibaba Cloud (10 req/s with token bucket). Scheduler is in `oxmon-server/src/cloud/scheduler.rs`, API routes in `oxmon-server/src/cloud/api.rs`. Credentials are redacted in API responses. Initial setup via `init-cloud-accounts` CLI subcommand or REST API.
+
 ## REST API Routes
 
-Core metrics API is in `oxmon-server/src/api.rs`. Certificate management API is in `oxmon-server/src/cert/api.rs`. Certificate details API is in `oxmon-server/src/api/certificates.rs`. Agent whitelist API is in `oxmon-server/src/api/whitelist.rs`. Alert rules & lifecycle API is in `oxmon-server/src/api/alerts.rs`. Notification channels & silence windows API is in `oxmon-server/src/api/notifications.rs`. Dashboard API is in `oxmon-server/src/api/dashboard.rs`. System management API is in `oxmon-server/src/api/system.rs`. Dictionary management API is in `oxmon-server/src/api/dictionaries.rs`. OpenAPI spec is served from `oxmon-server/src/openapi.rs`. All routes are prefixed with `/v1/`.
+Core metrics API is in `oxmon-server/src/api.rs`. Certificate management API is in `oxmon-server/src/cert/api.rs`. Certificate details API is in `oxmon-server/src/api/certificates.rs`. Agent whitelist API is in `oxmon-server/src/api/whitelist.rs`. Alert rules & lifecycle API is in `oxmon-server/src/api/alerts.rs`. Notification channels & silence windows API is in `oxmon-server/src/api/notifications.rs`. Dashboard API is in `oxmon-server/src/api/dashboard.rs`. System management API is in `oxmon-server/src/api/system.rs`. Dictionary management API is in `oxmon-server/src/api/dictionaries.rs`. Cloud accounts & instances API is in `oxmon-server/src/cloud/api.rs`. OpenAPI spec is served from `oxmon-server/src/openapi.rs`. All routes are prefixed with `/v1/`.
 
 ## CLI Subcommands
 
@@ -79,6 +85,7 @@ oxmon-server [config.toml]                                    # Start server (de
 oxmon-server init-channels <config.toml> <seed.json>          # Initialize channels from seed file
 oxmon-server init-rules <config.toml> <seed.json>             # Initialize alert rules from seed file
 oxmon-server init-dictionaries <config.toml> <seed.json>      # Initialize dictionaries from seed file
+oxmon-server init-cloud-accounts <config.toml> <seed.json>    # Initialize cloud accounts from seed file
 ```
 
 The `init-channels` subcommand reads a JSON seed file (see `config/channels.seed.example.json`) and inserts notification channels and silence windows into the database. Duplicate channel names are skipped.
@@ -87,9 +94,20 @@ The `init-rules` subcommand reads a JSON seed file (see `config/rules.seed.examp
 
 The `init-dictionaries` subcommand reads a JSON seed file (see `config/dictionaries.seed.example.json`) and inserts dictionary items into the database. Duplicate `dict_type` + `dict_key` pairs are skipped.
 
+The `init-cloud-accounts` subcommand reads a JSON seed file (see `config/cloud-accounts.seed.example.json`) and inserts cloud accounts into the database as `system_configs` with `config_type="cloud_account"`. Duplicate `config_key` values are skipped.
+
 ## Configuration
 
-Example configs are in `config/agent.example.toml` and `config/server.example.toml`. Parsed via `toml` crate in each binary's `config.rs`. Notification channels are **not** configured in TOML — use `init-channels` CLI or REST API. Alert rules are **not** configured in TOML — use `init-rules` CLI or REST API. Runtime settings (aggregation window, log retention, language) are **not** configured in TOML — they are stored in the database as `system_configs` with `config_type="runtime"` and can be managed via REST API.
+Example configs are in `config/agent.example.toml` and `config/server.example.toml`. Parsed via `toml` crate in each binary's `config.rs`. Notification channels are **not** configured in TOML — use `init-channels` CLI or REST API. Alert rules are **not** configured in TOML — use `init-rules` CLI or REST API. Cloud accounts are **not** configured in TOML — use `init-cloud-accounts` CLI or REST API. Runtime settings (aggregation window, log retention, language) are **not** configured in TOML — they are stored in the database as `system_configs` with `config_type="runtime"` and can be managed via REST API.
+
+**Cloud monitoring** is configured in `server.example.toml` under `[cloud_check]` section:
+```toml
+[cloud_check]
+enabled = true          # Enable cloud monitoring scheduler (default: true)
+tick_secs = 60          # Scheduler tick interval (default: 60)
+max_concurrent = 5      # Max concurrent cloud API calls (default: 5)
+```
+Cloud accounts are stored in the database with credentials and per-account `collection_interval_secs`. Supported providers: `tencent` (腾讯云), `alibaba` (阿里云). Cloud instances are represented as virtual agents with ID format `cloud:{provider}:{instance_id}`.
 
 **Application ID validation** is configured in `server.example.toml` under `[app_id]` section:
 ```toml

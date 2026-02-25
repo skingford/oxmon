@@ -18,6 +18,7 @@ use tracing_subscriber::EnvFilter;
 use oxmon_server::app;
 use oxmon_server::cert::scheduler::CertCheckScheduler;
 use oxmon_server::channel_seed;
+use oxmon_server::cloud::scheduler::CloudCheckScheduler;
 use oxmon_server::config::{self, SeedFile};
 use oxmon_server::grpc;
 use oxmon_server::rule_builder;
@@ -27,11 +28,12 @@ use oxmon_server::state::{AgentRegistry, AppState};
 
 fn print_usage() {
     eprintln!("Usage:");
-    eprintln!("  oxmon-server [config.toml]                                Start the server");
-    eprintln!("  oxmon-server init-channels <config.toml> <seed.json>      Initialize channels from seed file");
-    eprintln!("  oxmon-server init-rules <config.toml> <seed.json>         Initialize alert rules from seed file");
-    eprintln!("  oxmon-server init-dictionaries <config.toml> <seed.json>  Initialize dictionaries from seed file");
-    eprintln!("  oxmon-server init-configs <config.toml> <seed.json>       Initialize system configs from seed file");
+    eprintln!("  oxmon-server [config.toml]                                     Start the server");
+    eprintln!("  oxmon-server init-channels <config.toml> <seed.json>          Initialize channels from seed file");
+    eprintln!("  oxmon-server init-rules <config.toml> <seed.json>             Initialize alert rules from seed file");
+    eprintln!("  oxmon-server init-dictionaries <config.toml> <seed.json>      Initialize dictionaries from seed file");
+    eprintln!("  oxmon-server init-configs <config.toml> <seed.json>           Initialize system configs from seed file");
+    eprintln!("  oxmon-server init-cloud-accounts <config.toml> <seed.json>    Initialize cloud accounts from seed file");
 }
 
 #[tokio::main]
@@ -94,6 +96,17 @@ async fn main() -> Result<()> {
                 anyhow::anyhow!("init-configs requires <seed.json> argument")
             })?;
             run_init_configs(config_path, seed_path)
+        }
+        Some("init-cloud-accounts") => {
+            let config_path = args.get(2).ok_or_else(|| {
+                print_usage();
+                anyhow::anyhow!("init-cloud-accounts requires <config.toml> and <seed.json> arguments")
+            })?;
+            let seed_path = args.get(3).ok_or_else(|| {
+                print_usage();
+                anyhow::anyhow!("init-cloud-accounts requires <seed.json> argument")
+            })?;
+            run_init_cloud_accounts(config_path, seed_path)
         }
         Some("--help" | "-h") => {
             print_usage();
@@ -333,6 +346,61 @@ fn run_init_configs(config_path: &str, seed_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Initialize cloud accounts from a JSON seed file.
+fn run_init_cloud_accounts(config_path: &str, seed_path: &str) -> Result<()> {
+    use oxmon_storage::cert_store::SystemConfigRow;
+
+    let config = config::ServerConfig::load(config_path)?;
+    let cert_store = CertStore::new(Path::new(&config.data_dir))?;
+
+    let seed_content = std::fs::read_to_string(seed_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read seed file '{}': {}", seed_path, e))?;
+    let seed: config::CloudAccountsSeedFile = serde_json::from_str(&seed_content)
+        .map_err(|e| anyhow::anyhow!("Failed to parse seed file '{}': {}", seed_path, e))?;
+
+    // List existing cloud accounts for dedup
+    let existing = cert_store.list_system_configs(Some("cloud_account"), None, None, 10000, 0)?;
+    let existing_keys: std::collections::HashSet<String> =
+        existing.iter().map(|c| c.config_key.clone()).collect();
+
+    let mut created = 0u32;
+    let mut skipped = 0u32;
+
+    for account in &seed.accounts {
+        if existing_keys.contains(&account.config_key) {
+            tracing::warn!(config_key = %account.config_key, "Cloud account already exists, skipping");
+            skipped += 1;
+            continue;
+        }
+
+        let row = SystemConfigRow {
+            id: oxmon_common::id::next_id(),
+            config_key: account.config_key.clone(),
+            config_type: "cloud_account".to_string(),
+            provider: Some(account.provider.clone()),
+            display_name: account.display_name.clone(),
+            description: account.description.clone(),
+            config_json: account.config.to_string(),
+            enabled: account.enabled,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        match cert_store.insert_system_config(&row) {
+            Ok(inserted) => {
+                tracing::info!(config_key = %account.config_key, id = %inserted.id, "Cloud account created");
+                created += 1;
+            }
+            Err(e) => {
+                tracing::error!(config_key = %account.config_key, error = %e, "Failed to create cloud account");
+            }
+        }
+    }
+
+    tracing::info!(created, skipped, "init-cloud-accounts completed");
+    Ok(())
+}
+
 async fn run_server(config_path: &str) -> Result<()> {
     let config = config::ServerConfig::load(config_path)?;
 
@@ -499,7 +567,7 @@ async fn run_server(config_path: &str) -> Result<()> {
     // Cert check scheduler
     let cert_check_handle = if config.cert_check.enabled {
         let scheduler = CertCheckScheduler::new(
-            cert_store,
+            cert_store.clone(),
             storage.clone(),
             config.cert_check.default_interval_secs,
             config.cert_check.tick_secs,
@@ -511,6 +579,22 @@ async fn run_server(config_path: &str) -> Result<()> {
         }))
     } else {
         tracing::info!("Certificate check scheduler disabled");
+        None
+    };
+
+    // Cloud metrics scheduler
+    let cloud_check_handle = if config.cloud_check.enabled {
+        let scheduler = CloudCheckScheduler::new(
+            cert_store.clone(),
+            storage.clone(),
+            config.cloud_check.tick_secs,
+            config.cloud_check.max_concurrent,
+        );
+        Some(tokio::spawn(async move {
+            scheduler.run().await;
+        }))
+    } else {
+        tracing::info!("Cloud metrics scheduler disabled");
         None
     };
 
@@ -535,6 +619,9 @@ async fn run_server(config_path: &str) -> Result<()> {
 
     cleanup_handle.abort();
     if let Some(h) = cert_check_handle {
+        h.abort();
+    }
+    if let Some(h) = cloud_check_handle {
         h.abort();
     }
     tracing::info!("Server stopped");

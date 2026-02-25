@@ -81,6 +81,7 @@ pub fn build_test_context() -> Result<TestContext> {
         cors_allowed_origins: Vec::new(),
         rate_limit_enabled: false,
         cert_check: Default::default(),
+        cloud_check: Default::default(),
         auth: Default::default(),
         app_id: Default::default(),
     };

@@ -15,6 +15,7 @@ oxmon-common = { workspace = true }
 oxmon-storage = { workspace = true }
 oxmon-alert = { workspace = true }
 oxmon-notify = { workspace = true }
+oxmon-cloud = { workspace = true }
 tokio = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }

@@ -112,6 +112,15 @@ async fn openapi_paths_should_be_covered_by_test_matrix() {
         "POST /v1/system/configs",
         "PUT /v1/system/configs/{id}",
         "DELETE /v1/system/configs/{id}",
+        // New endpoints: cloud monitoring
+        "GET /v1/cloud/accounts",
+        "POST /v1/cloud/accounts",
+        "GET /v1/cloud/accounts/{id}",
+        "PUT /v1/cloud/accounts/{id}",
+        "DELETE /v1/cloud/accounts/{id}",
+        "POST /v1/cloud/accounts/{id}/test",
+        "POST /v1/cloud/accounts/{id}/collect",
+        "GET /v1/cloud/instances",
     ]
     .into_iter()
     .map(|s| s.to_string())

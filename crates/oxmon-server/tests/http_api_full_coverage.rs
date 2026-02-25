@@ -2,7 +2,7 @@ mod common;
 
 use axum::http::StatusCode;
 use common::{
-    add_whitelist_agent, assert_err_envelope, assert_ok_envelope, build_test_context, decode_data,
+    add_whitelist_agent, assert_err_envelope, assert_ok_envelope, build_test_context,
     encrypt_password_with_state, ensure_cert_domain_with_result, login_and_get_token,
     make_json_body, request_json, request_no_body,
 };

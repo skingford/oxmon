@@ -1,0 +1,43 @@
+{
+  "accounts": [
+    {
+      "config_key": "tencent-prod",
+      "provider": "tencent",
+      "display_name": "腾讯云生产环境",
+      "description": "生产环境云主机监控",
+      "enabled": true,
+      "config": {
+        "secret_id": "your-tencent-secret-id",
+        "secret_key": "your-tencent-secret-key",
+        "regions": ["ap-guangzhou", "ap-shanghai"],
+        "collection_interval_secs": 300
+      }
+    },
+    {
+      "config_key": "alibaba-prod",
+      "provider": "alibaba",
+      "display_name": "阿里云生产环境",
+      "description": "生产环境 ECS 监控",
+      "enabled": true,
+      "config": {
+        "access_key_id": "your-alibaba-access-key-id",
+        "access_key_secret": "your-alibaba-access-key-secret",
+        "regions": ["cn-hangzhou", "cn-beijing"],
+        "collection_interval_secs": 300
+      }
+    },
+    {
+      "config_key": "tencent-test",
+      "provider": "tencent",
+      "display_name": "腾讯云测试环境",
+      "description": "测试环境云主机监控",
+      "enabled": false,
+      "config": {
+        "secret_id": "your-tencent-test-secret-id",
+        "secret_key": "your-tencent-test-secret-key",
+        "regions": ["ap-guangzhou"],
+        "collection_interval_secs": 600
+      }
+    }
+  ]
+}

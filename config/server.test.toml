@@ -1,0 +1,32 @@
+# oxmon Server Test Configuration
+
+grpc_port = 9090
+http_port = 8080
+data_dir = "data-test"
+retention_days = 7
+require_agent_auth = false
+agent_collection_interval_secs = 10
+cors_allowed_origins = []
+rate_limit_enabled = false
+
+[auth]
+jwt_secret = "test-secret-key-for-cloud-monitoring"
+token_expire_secs = 86400
+default_username = "admin"
+default_password = "changeme"
+
+[cert_check]
+enabled = false
+default_interval_secs = 86400
+tick_secs = 60
+connect_timeout_secs = 10
+max_concurrent = 10
+
+[cloud_check]
+enabled = true
+tick_secs = 30  # 30秒检查一次，便于快速测试
+max_concurrent = 5
+
+[app_id]
+require_app_id = false
+allowed_app_ids = []

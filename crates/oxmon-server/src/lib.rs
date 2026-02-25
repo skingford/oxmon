@@ -3,6 +3,7 @@ pub mod app;
 pub mod auth;
 pub mod cert;
 pub mod channel_seed;
+pub mod cloud;
 pub mod config;
 pub mod dictionary_seed;
 pub mod grpc;

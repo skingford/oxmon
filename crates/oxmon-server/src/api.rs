@@ -1086,4 +1086,5 @@ pub fn protected_routes() -> OpenApiRouter<AppState> {
         .merge(system::system_routes())
         .merge(dictionaries::dictionary_routes())
         .merge(sys_configs::sys_config_routes())
+        .merge(crate::cloud::cloud_routes())
 }

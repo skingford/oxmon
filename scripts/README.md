@@ -155,3 +155,85 @@ curl -X PUT -H "Authorization: Bearer $TOKEN" \
 ```
 
 详细 API 文档：http://localhost:8080/openapi.json
+
+## 云监控测试脚本
+
+### test-cloud-monitoring.sh
+
+自动化测试脚本,用于端到端测试云监控功能。
+
+**依赖**:
+- Python 3
+- curl
+- openssl
+
+**使用方法**:
+```bash
+# 1. 启动服务器
+./target/release/oxmon-server config/server.test.toml
+
+# 2. 在另一个终端运行测试脚本
+./scripts/test-cloud-monitoring.sh
+```
+
+脚本会引导您完成以下步骤:
+1. 检查服务器状态
+2. 自动登录获取认证 token (使用 RSA-OAEP-SHA256 加密)
+3. 选择云厂商(腾讯云/阿里云)
+4. 输入云账户凭证
+5. 创建云账户配置
+6. 测试云 API 连接
+7. 触发手动指标采集
+8. 查询云实例列表
+9. 查询各类指标数据(CPU、内存、网络、磁盘IOPS、连接数)
+
+### 密码加密辅助脚本
+
+#### encrypt_password_openssl.sh (推荐)
+
+使用 openssl 命令行工具进行 RSA-OAEP-SHA256 加密,无需额外依赖。
+
+**使用方法**:
+```bash
+PUBLIC_KEY=$(curl -s http://localhost:8080/v1/auth/public-key | \
+    python3 -c "import sys, json; print(json.load(sys.stdin)['data']['public_key'])")
+
+ENCRYPTED=$(./scripts/encrypt_password_openssl.sh "$PUBLIC_KEY" "your-password")
+echo "$ENCRYPTED"
+```
+
+#### encrypt_password.py
+
+使用 Python cryptography 库进行加密(需要手动安装依赖)。
+
+**安装依赖**:
+```bash
+pip3 install --user cryptography
+```
+
+**使用方法**:
+```bash
+PUBLIC_KEY=$(curl -s http://localhost:8080/v1/auth/public-key | \
+    python3 -c "import sys, json; print(json.load(sys.stdin)['data']['public_key'])")
+
+ENCRYPTED=$(python3 scripts/encrypt_password.py "$PUBLIC_KEY" "your-password")
+echo "$ENCRYPTED"
+```
+
+## 云监控注意事项
+
+1. **加密格式**: 密码在加密前会被包装成 JSON payload:
+   ```json
+   {
+     "password": "your-password",
+     "timestamp": 1234567890
+   }
+   ```
+
+2. **config_key 规则**: 创建云账户时,`config_key` 必须以 `cloud_` 开头,例如:
+   - `cloud_tencent_prod`
+   - `cloud_alibaba_test`
+
+3. **地域格式**: 输入多个地域时使用逗号分隔,不要有空格:
+   - 正确: `ap-guangzhou,ap-shanghai`
+   - 错误: `ap-guangzhou, ap-shanghai`
