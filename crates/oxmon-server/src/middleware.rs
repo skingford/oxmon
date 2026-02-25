@@ -133,6 +133,7 @@ mod tests {
             rate_limit_enabled: false,
             cert_check: CertCheckConfig::default(),
             cloud_check: CloudCheckConfig::default(),
+            ai_check: crate::config::AICheckConfig::default(),
             auth: AuthConfig::default(),
             app_id: app_id_config,
         };

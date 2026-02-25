@@ -116,6 +116,11 @@ impl ZhipuProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
+            tracing::error!(
+                status = %status,
+                body = %body,
+                "Zhipu API request failed"
+            );
             anyhow::bail!("Zhipu API error {}: {}", status, body);
         }
 
@@ -148,7 +153,7 @@ impl ZhipuProvider {
         );
 
         for (idx, chunk) in input.current_metrics.chunks(BATCH_SIZE).enumerate() {
-            tracing::debug!(
+            tracing::info!(
                 batch_index = idx,
                 batch_size = chunk.len(),
                 "Processing batch"
@@ -161,8 +166,15 @@ impl ZhipuProvider {
                 report_date: input.report_date.clone(),
             };
 
-            let prompt = crate::prompt::build_analysis_prompt(&batch_input)?;
-            let result = self.call_api(&prompt).await?;
+            tracing::info!("Building analysis prompt");
+            let prompt = crate::prompt::build_analysis_prompt(&batch_input)
+                .context("Failed to build analysis prompt")?;
+
+            tracing::info!(prompt_length = prompt.len(), "Calling Zhipu API");
+            let result = self.call_api(&prompt).await
+                .context(format!("Failed to call API for batch {}", idx))?;
+
+            tracing::info!(result_length = result.len(), "Batch analysis completed");
             batch_results.push(result);
         }
 
