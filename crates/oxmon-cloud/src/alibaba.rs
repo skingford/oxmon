@@ -69,7 +69,8 @@ impl AlibabaCloudProvider {
         let mut mac = HmacSha1::new_from_slice(key.as_bytes())
             .map_err(|e| anyhow::anyhow!("HMAC error: {}", e))?;
         mac.update(string_to_sign.as_bytes());
-        let signature = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+        let signature =
+            base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
 
         Ok(signature)
     }
@@ -241,7 +242,14 @@ impl AlibabaCloudProvider {
 
             let endpoint = ECS_ENDPOINT_TEMPLATE.replace("{region}", region);
             let response = self
-                .call_api_with_retry(&endpoint, "DescribeInstances", "2014-05-26", Some(region), params, 5)
+                .call_api_with_retry(
+                    &endpoint,
+                    "DescribeInstances",
+                    "2014-05-26",
+                    Some(region),
+                    params,
+                    5,
+                )
                 .await?;
 
             let total_count = response
@@ -306,7 +314,8 @@ impl AlibabaCloudProvider {
                             .and_then(|v| v.get("IpAddress"))
                             .and_then(|v| v.as_array())
                         {
-                            if let Some(first_ip) = private_ip_arr.first().and_then(|v| v.as_str()) {
+                            if let Some(first_ip) = private_ip_arr.first().and_then(|v| v.as_str())
+                            {
                                 private_ip = first_ip.to_string();
                             }
                         }
@@ -314,7 +323,11 @@ impl AlibabaCloudProvider {
 
                     // Parse tags
                     let mut tags = std::collections::HashMap::new();
-                    if let Some(tag_list) = inst.get("Tags").and_then(|v| v.get("Tag")).and_then(|v| v.as_array()) {
+                    if let Some(tag_list) = inst
+                        .get("Tags")
+                        .and_then(|v| v.get("Tag"))
+                        .and_then(|v| v.as_array())
+                    {
                         for tag in tag_list {
                             if let (Some(key), Some(value)) = (
                                 tag.get("TagKey").and_then(|v| v.as_str()),
@@ -332,10 +345,7 @@ impl AlibabaCloudProvider {
                         .unwrap_or("")
                         .to_string();
 
-                    let cpu_cores = inst
-                        .get("Cpu")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as u32);
+                    let cpu_cores = inst.get("Cpu").and_then(|v| v.as_u64()).map(|v| v as u32);
 
                     // Memory is in MB, convert to GB
                     let memory_gb = inst
@@ -379,7 +389,9 @@ impl AlibabaCloudProvider {
 
                     let mut security_group_ids = Vec::new();
                     if let Some(sg_obj) = inst.get("SecurityGroupIds") {
-                        if let Some(sg_arr) = sg_obj.get("SecurityGroupId").and_then(|v| v.as_array()) {
+                        if let Some(sg_arr) =
+                            sg_obj.get("SecurityGroupId").and_then(|v| v.as_array())
+                        {
                             for sg in sg_arr {
                                 if let Some(sg_id) = sg.as_str() {
                                     security_group_ids.push(sg_id.to_string());
@@ -402,7 +414,9 @@ impl AlibabaCloudProvider {
 
                     let mut ipv6_addresses = Vec::new();
                     if let Some(ipv6_obj) = inst.get("Ipv6Addresses") {
-                        if let Some(ipv6_arr) = ipv6_obj.get("Ipv6Address").and_then(|v| v.as_array()) {
+                        if let Some(ipv6_arr) =
+                            ipv6_obj.get("Ipv6Address").and_then(|v| v.as_array())
+                        {
                             for ipv6 in ipv6_arr {
                                 if let Some(addr) = ipv6.as_str() {
                                     ipv6_addresses.push(addr.to_string());
@@ -519,7 +533,11 @@ impl AlibabaCloudProvider {
     }
 
     /// Populate disk information for instances by calling DescribeDisks API
-    async fn populate_disk_info(&self, region: &str, instances: &mut [CloudInstance]) -> Result<()> {
+    async fn populate_disk_info(
+        &self,
+        region: &str,
+        instances: &mut [CloudInstance],
+    ) -> Result<()> {
         if instances.is_empty() {
             return Ok(());
         }
@@ -543,7 +561,14 @@ impl AlibabaCloudProvider {
 
             let endpoint = ECS_ENDPOINT_TEMPLATE.replace("{region}", region);
             let response = match self
-                .call_api_with_retry(&endpoint, "DescribeDisks", "2014-05-26", Some(region), params, 3)
+                .call_api_with_retry(
+                    &endpoint,
+                    "DescribeDisks",
+                    "2014-05-26",
+                    Some(region),
+                    params,
+                    3,
+                )
                 .await
             {
                 Ok(r) => r,
@@ -609,7 +634,9 @@ impl AlibabaCloudProvider {
         instance_id: &str,
     ) -> Result<Option<f64>> {
         let now = Utc::now();
-        let start_time = (now - chrono::Duration::minutes(30)).timestamp_millis().to_string();
+        let start_time = (now - chrono::Duration::minutes(30))
+            .timestamp_millis()
+            .to_string();
         let end_time = now.timestamp_millis().to_string();
         let dimensions = format!(r#"[{{"instanceId":"{}"}}]"#, instance_id);
 
@@ -622,7 +649,14 @@ impl AlibabaCloudProvider {
         params.insert("EndTime".to_string(), end_time);
 
         let response = self
-            .call_api_with_retry(CMS_ENDPOINT, "DescribeMetricLast", "2019-01-01", None, params, 5)
+            .call_api_with_retry(
+                CMS_ENDPOINT,
+                "DescribeMetricLast",
+                "2019-01-01",
+                None,
+                params,
+                5,
+            )
             .await?;
 
         let datapoints_str = response
@@ -634,8 +668,8 @@ impl AlibabaCloudProvider {
             return Ok(None);
         }
 
-        let datapoints: Vec<serde_json::Value> = serde_json::from_str(datapoints_str)
-            .context("Failed to parse datapoints JSON")?;
+        let datapoints: Vec<serde_json::Value> =
+            serde_json::from_str(datapoints_str).context("Failed to parse datapoints JSON")?;
 
         if datapoints.is_empty() {
             return Ok(None);
@@ -795,7 +829,10 @@ mod tests {
         assert_eq!(percent_encode(":"), "%3A");
 
         // Test mixed content
-        assert_eq!(percent_encode("key=value&foo=bar"), "key%3Dvalue%26foo%3Dbar");
+        assert_eq!(
+            percent_encode("key=value&foo=bar"),
+            "key%3Dvalue%26foo%3Dbar"
+        );
     }
 
     #[test]
@@ -811,7 +848,11 @@ mod tests {
 
         let mut pairs = Vec::new();
         for key in sorted_keys {
-            pairs.push(format!("{}={}", percent_encode(key), percent_encode(&params[key])));
+            pairs.push(format!(
+                "{}={}",
+                percent_encode(key),
+                percent_encode(&params[key])
+            ));
         }
         let canonical_query = pairs.join("&");
 

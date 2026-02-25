@@ -96,7 +96,11 @@ impl AlertEngine {
         self.ingest_with_locale(data_point, oxmon_common::i18n::DEFAULT_LOCALE)
     }
 
-    pub fn ingest_with_locale(&mut self, data_point: &MetricDataPoint, locale: &str) -> Vec<AlertOutput> {
+    pub fn ingest_with_locale(
+        &mut self,
+        data_point: &MetricDataPoint,
+        locale: &str,
+    ) -> Vec<AlertOutput> {
         let now = Utc::now();
         let mut outputs = Vec::new();
 
@@ -181,8 +185,11 @@ impl AlertEngine {
 
                     let recovery_message = {
                         use oxmon_common::i18n::TRANSLATIONS;
-                        let tmpl = TRANSLATIONS.get(locale, "alert.recovered",
-                            "[RECOVERED] {metric} has returned to normal on {agent}");
+                        let tmpl = TRANSLATIONS.get(
+                            locale,
+                            "alert.recovered",
+                            "[RECOVERED] {metric} has returned to normal on {agent}",
+                        );
                         tmpl.replace("{metric}", &data_point.metric_name)
                             .replace("{agent}", &data_point.agent_id)
                     };

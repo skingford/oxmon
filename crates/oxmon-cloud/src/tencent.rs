@@ -57,7 +57,11 @@ impl TencentCloudProvider {
         // Step 1: Build canonical request
         let canonical_uri = "/";
         let canonical_querystring = "";
-        let canonical_headers = format!("content-type:application/json\nhost:{}\nx-tc-action:{}\n", host, action.to_lowercase());
+        let canonical_headers = format!(
+            "content-type:application/json\nhost:{}\nx-tc-action:{}\n",
+            host,
+            action.to_lowercase()
+        );
         let signed_headers = "content-type;host;x-tc-action";
 
         let hashed_payload = format!("{:x}", Sha256::digest(payload.as_bytes()));
@@ -65,7 +69,8 @@ impl TencentCloudProvider {
             "POST\n{}\n{}\n{}\n{}\n{}",
             canonical_uri, canonical_querystring, canonical_headers, signed_headers, hashed_payload
         );
-        let hashed_canonical_request = format!("{:x}", Sha256::digest(canonical_request.as_bytes()));
+        let hashed_canonical_request =
+            format!("{:x}", Sha256::digest(canonical_request.as_bytes()));
 
         // Step 2: Build string to sign
         let credential_scope = format!("{}/{}/tc3_request", date, service);
@@ -75,7 +80,10 @@ impl TencentCloudProvider {
         );
 
         // Step 3: Calculate signature
-        let secret_date = hmac_sha256(format!("TC3{}", self.secret_key).as_bytes(), date.as_bytes())?;
+        let secret_date = hmac_sha256(
+            format!("TC3{}", self.secret_key).as_bytes(),
+            date.as_bytes(),
+        )?;
         let secret_service = hmac_sha256(&secret_date, service.as_bytes())?;
         let secret_signing = hmac_sha256(&secret_service, b"tc3_request")?;
         let signature = hex::encode(hmac_sha256(&secret_signing, string_to_sign.as_bytes())?);
@@ -119,7 +127,10 @@ impl TencentCloudProvider {
             .context("Failed to send request to Tencent Cloud API")?;
 
         let status = response.status();
-        let body = response.text().await.context("Failed to read response body")?;
+        let body = response
+            .text()
+            .await
+            .context("Failed to read response body")?;
 
         if !status.is_success() {
             return Err(anyhow::anyhow!(
@@ -129,14 +140,20 @@ impl TencentCloudProvider {
             ));
         }
 
-        let json: serde_json::Value = serde_json::from_str(&body)
-            .context("Failed to parse response as JSON")?;
+        let json: serde_json::Value =
+            serde_json::from_str(&body).context("Failed to parse response as JSON")?;
 
         // Check for API error in response
         if let Some(response_obj) = json.get("Response") {
             if let Some(error) = response_obj.get("Error") {
-                let code = error.get("Code").and_then(|c| c.as_str()).unwrap_or("Unknown");
-                let message = error.get("Message").and_then(|m| m.as_str()).unwrap_or("Unknown");
+                let code = error
+                    .get("Code")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("Unknown");
+                let message = error
+                    .get("Message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("Unknown");
                 return Err(anyhow::anyhow!(
                     "Tencent Cloud API error: code={}, message={}",
                     code,
@@ -171,9 +188,7 @@ impl TencentCloudProvider {
                 )
                 .await?;
 
-            let response_obj = response
-                .get("Response")
-                .context("Missing Response field")?;
+            let response_obj = response.get("Response").context("Missing Response field")?;
 
             let total_count = response_obj
                 .get("TotalCount")
@@ -239,10 +254,7 @@ impl TencentCloudProvider {
                         .unwrap_or("")
                         .to_string();
 
-                    let cpu_cores = inst
-                        .get("CPU")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as u32);
+                    let cpu_cores = inst.get("CPU").and_then(|v| v.as_u64()).map(|v| v as u32);
 
                     let memory_gb = inst
                         .get("Memory")
@@ -341,10 +353,7 @@ impl TencentCloudProvider {
                         .map(|s| s.to_string());
 
                     // Phase 2: Compute resource extensions
-                    let gpu = inst
-                        .get("GPU")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as u32);
+                    let gpu = inst.get("GPU").and_then(|v| v.as_u64()).map(|v| v as u32);
 
                     // Phase 2: Operation tracking
                     let latest_operation = inst
@@ -395,7 +404,7 @@ impl TencentCloudProvider {
                         eip_allocation_id: None, // Tencent uses different EIP model
                         internet_charge_type,
                         image_id,
-                        hostname: None, // Tencent doesn't expose hostname in API
+                        hostname: None,    // Tencent doesn't expose hostname in API
                         description: None, // Tencent doesn't have description field
                         gpu,
                         io_optimized: None, // Tencent doesn't have IO optimization flag
@@ -431,8 +440,8 @@ impl TencentCloudProvider {
         instance_id: &str,
     ) -> Result<Option<f64>> {
         let now = Utc::now();
-        let start_time = (now - chrono::Duration::minutes(10))
-            .to_rfc3339_opts(SecondsFormat::Secs, true);
+        let start_time =
+            (now - chrono::Duration::minutes(10)).to_rfc3339_opts(SecondsFormat::Secs, true);
         let end_time = now.to_rfc3339_opts(SecondsFormat::Secs, true);
 
         let payload = serde_json::json!({
@@ -460,9 +469,7 @@ impl TencentCloudProvider {
             )
             .await?;
 
-        let response_obj = response
-            .get("Response")
-            .context("Missing Response field")?;
+        let response_obj = response.get("Response").context("Missing Response field")?;
 
         if let Some(data_points) = response_obj.get("DataPoints").and_then(|v| v.as_array()) {
             if let Some(first_point) = data_points.first() {
@@ -592,8 +599,8 @@ impl CloudProvider for TencentCloudProvider {
 
 /// HMAC-SHA256 helper function
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
-    let mut mac = HmacSha256::new_from_slice(key)
-        .map_err(|e| anyhow::anyhow!("HMAC error: {}", e))?;
+    let mut mac =
+        HmacSha256::new_from_slice(key).map_err(|e| anyhow::anyhow!("HMAC error: {}", e))?;
     mac.update(data);
     Ok(mac.finalize().into_bytes().to_vec())
 }
@@ -635,7 +642,14 @@ mod tests {
         let payload = "{}";
 
         // Test signature generation (this will fail with real API but tests the logic)
-        let result = provider.sign_tc3("cvm", CVM_ENDPOINT, "DescribeInstances", CVM_VERSION, payload, timestamp);
+        let result = provider.sign_tc3(
+            "cvm",
+            CVM_ENDPOINT,
+            "DescribeInstances",
+            CVM_VERSION,
+            payload,
+            timestamp,
+        );
 
         // Just ensure it doesn't panic and returns a signature
         assert!(result.is_ok());

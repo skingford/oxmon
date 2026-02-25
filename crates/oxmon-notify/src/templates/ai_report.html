@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{title}}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: #1f2937;
+            background: #f9fafb;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            color: #ffffff;
+            padding: 40px;
+            border-bottom: 4px solid #1e40af;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 16px;
+            font-weight: 600;
+        }
+
+        .meta {
+            display: flex;
+            gap: 24px;
+            font-size: 14px;
+            opacity: 0.95;
+            flex-wrap: wrap;
+        }
+
+        .meta-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .risk-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .risk-high { background: #fef2f2; color: #dc2626; border: 2px solid #dc2626; }
+        .risk-medium { background: #fffbeb; color: #f59e0b; border: 2px solid #f59e0b; }
+        .risk-low { background: #f0fdf4; color: #16a34a; border: 2px solid #16a34a; }
+        .risk-normal { background: #f0f9ff; color: #0284c7; border: 2px solid #0284c7; }
+
+        .content {
+            padding: 40px;
+        }
+
+        .section {
+            margin-bottom: 32px;
+        }
+
+        .content h2 {
+            color: #1e3a8a;
+            font-size: 20px;
+            margin-bottom: 16px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+
+        .content h3 {
+            color: #374151;
+            font-size: 16px;
+            margin: 20px 0 12px 0;
+        }
+
+        .content p, .content li {
+            color: #4b5563;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .content ul, .content ol {
+            margin-left: 20px;
+            margin-bottom: 16px;
+        }
+
+        .content strong {
+            color: #1f2937;
+            font-weight: 600;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 14px;
+        }
+
+        th {
+            background: #f3f4f6;
+            color: #374151;
+            font-weight: 600;
+            text-align: left;
+            padding: 12px;
+            border-bottom: 2px solid #d1d5db;
+        }
+
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        tr:hover {
+            background: #f9fafb;
+        }
+
+        code {
+            background: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: "Courier New", monospace;
+            font-size: 13px;
+            color: #dc2626;
+        }
+
+        pre {
+            background: #1f2937;
+            color: #e5e7eb;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 16px 0;
+        }
+
+        pre code {
+            background: transparent;
+            color: inherit;
+            padding: 0;
+        }
+
+        .footer {
+            background: #f9fafb;
+            padding: 24px 40px;
+            text-align: center;
+            color: #6b7280;
+            font-size: 13px;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .footer p {
+            margin: 4px 0;
+        }
+
+        .powered-by {
+            margin-top: 12px;
+            font-weight: 600;
+            color: #3b82f6;
+        }
+
+        @media print {
+            body { background: #fff; padding: 0; }
+            .container { box-shadow: none; }
+        }
+
+        @media (max-width: 768px) {
+            .header { padding: 24px; }
+            .content { padding: 24px; }
+            .header h1 { font-size: 22px; }
+            .meta { flex-direction: column; gap: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 {{title}}</h1>
+            <div class="meta">
+                <div class="meta-item">
+                    <span>📅</span>
+                    <span>{{report_date}}</span>
+                </div>
+                <div class="meta-item">
+                    <span>🖥️</span>
+                    <span>{{total_agents}} 台服务器</span>
+                </div>
+                <div class="meta-item">
+                    <span>🤖</span>
+                    <span>{{ai_model}}</span>
+                </div>
+                <div class="meta-item">
+                    <span class="risk-badge risk-{{risk_level}}">{{risk_level_label}}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="content">
+            {{ai_analysis_html}}
+        </div>
+
+        <div class="footer">
+            <p>本报告由 Oxmon AI 自动生成</p>
+            <p class="powered-by">Powered by {{ai_provider}} · {{ai_model}}</p>
+            <p style="margin-top: 8px; font-size: 12px;">生成时间：{{created_at}}</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -65,9 +65,14 @@ async fn get_system_config(
             cert_check_tick_secs: config.cert_check.tick_secs,
             cert_check_max_concurrent: config.cert_check.max_concurrent,
             notification_aggregation_window_secs,
-            alert_rules_count: state.cert_store.count_alert_rules(None, None, None, None, None).unwrap_or(0) as usize,
-            notification_channels_count: state.cert_store.count_notification_channels(None, None, None, None).unwrap_or(0)
-                as usize,
+            alert_rules_count: state
+                .cert_store
+                .count_alert_rules(None, None, None, None, None)
+                .unwrap_or(0) as usize,
+            notification_channels_count: state
+                .cert_store
+                .count_notification_channels(None, None, None, None)
+                .unwrap_or(0) as usize,
             language,
         },
     )

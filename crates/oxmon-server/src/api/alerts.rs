@@ -101,7 +101,13 @@ async fn list_alert_rules(
     let severity = params.severity_eq.as_deref();
     let enabled = params.enabled_eq;
 
-    let total = match state.cert_store.count_alert_rules(name_contains, rule_type, metric_contains, severity, enabled) {
+    let total = match state.cert_store.count_alert_rules(
+        name_contains,
+        rule_type,
+        metric_contains,
+        severity,
+        enabled,
+    ) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count alert rules");
@@ -115,10 +121,15 @@ async fn list_alert_rules(
         }
     };
 
-    match state
-        .cert_store
-        .list_alert_rules(name_contains, rule_type, metric_contains, severity, enabled, limit, offset)
-    {
+    match state.cert_store.list_alert_rules(
+        name_contains,
+        rule_type,
+        metric_contains,
+        severity,
+        enabled,
+        limit,
+        offset,
+    ) {
         Ok(rules) => {
             let items: Vec<AlertRuleResponse> = rules
                 .into_iter()
@@ -132,14 +143,7 @@ async fn list_alert_rules(
                     enabled: r.enabled,
                 })
                 .collect();
-            success_paginated_response(
-                StatusCode::OK,
-                &trace_id,
-                items,
-                total,
-                limit,
-                offset,
-            )
+            success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to list alert rules");
@@ -302,11 +306,7 @@ async fn create_alert_rule(
             {
                 tracing::error!(error = %e, "Failed to reload alert engine after rule creation");
             }
-            crate::api::success_id_response(
-                StatusCode::CREATED,
-                &trace_id,
-                rule.id,
-            )
+            crate::api::success_id_response(StatusCode::CREATED, &trace_id, rule.id)
         }
         Err(e) => {
             let msg = e.to_string();
@@ -370,11 +370,7 @@ async fn update_alert_rule(
             {
                 tracing::error!(error = %e, "Failed to reload alert engine after rule update");
             }
-            crate::api::success_id_response(
-                StatusCode::OK,
-                &trace_id,
-                rule.id,
-            )
+            crate::api::success_id_response(StatusCode::OK, &trace_id, rule.id)
         }
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
@@ -478,11 +474,7 @@ async fn set_alert_rule_enabled(
                     "Failed to reload alert engine after rule enable/disable"
                 );
             }
-            crate::api::success_id_response(
-                StatusCode::OK,
-                &trace_id,
-                rule.id,
-            )
+            crate::api::success_id_response(StatusCode::OK, &trace_id, rule.id)
         }
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
@@ -528,11 +520,17 @@ struct AlertHistoryQueryParams {
     timestamp_lte: Option<DateTime<Utc>>,
     /// 每页条数（默认 20）
     #[param(required = false)]
-    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
     limit: Option<u64>,
     /// 偏移量（默认 0）
     #[param(required = false)]
-    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
     offset: Option<u64>,
 }
 
@@ -845,32 +843,35 @@ async fn active_alerts(
     let rule_id = params.rule_id_eq.as_deref();
     let metric_name = params.metric_name_eq.as_deref();
 
-    let total = match state.storage.count_active_alerts(agent_id_contains, severity, rule_id, metric_name) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to count active alerts");
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Database error",
-            )
-            .into_response();
-        }
-    };
+    let total =
+        match state
+            .storage
+            .count_active_alerts(agent_id_contains, severity, rule_id, metric_name)
+        {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to count active alerts");
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &trace_id,
+                    "storage_error",
+                    "Database error",
+                )
+                .into_response();
+            }
+        };
 
-    match state
-        .storage
-        .query_active_alerts(agent_id_contains, severity, rule_id, metric_name, limit, offset)
-    {
-        Ok(events) => success_paginated_response(
-            StatusCode::OK,
-            &trace_id,
-            events,
-            total,
-            limit,
-            offset,
-        ),
+    match state.storage.query_active_alerts(
+        agent_id_contains,
+        severity,
+        rule_id,
+        metric_name,
+        limit,
+        offset,
+    ) {
+        Ok(events) => {
+            success_paginated_response(StatusCode::OK, &trace_id, events, total, limit, offset)
+        }
         Err(e) => {
             tracing::error!(error = %e, "Failed to query active alerts");
             error_response(

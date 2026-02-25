@@ -48,12 +48,20 @@ impl WeixinChannel {
         let labels_line = if labels_str.is_empty() {
             String::new()
         } else {
-            format!("\n> **{}**: {}", t.get(locale, "notify.labels", "Labels"), labels_str)
+            format!(
+                "\n> **{}**: {}",
+                t.get(locale, "notify.labels", "Labels"),
+                labels_str
+            )
         };
         let rule_line = if alert.rule_name.is_empty() {
             String::new()
         } else {
-            format!("\n> **{}**: {}", t.get(locale, "notify.rule", "Rule"), alert.rule_name)
+            format!(
+                "\n> **{}**: {}",
+                t.get(locale, "notify.rule", "Rule"),
+                alert.rule_name
+            )
         };
         format!(
             "### [oxmon][{severity}]{recovered_tag} {rule_display} - {agent}\n\
@@ -187,7 +195,12 @@ impl WeixinChannel {
 
 #[async_trait]
 impl NotificationChannel for WeixinChannel {
-    async fn send(&self, alert: &AlertEvent, recipients: &[String], locale: &str) -> Result<SendResponse> {
+    async fn send(
+        &self,
+        alert: &AlertEvent,
+        recipients: &[String],
+        locale: &str,
+    ) -> Result<SendResponse> {
         let content = Self::format_markdown(alert, locale);
         let payload = serde_json::json!({
             "msgtype": "markdown",

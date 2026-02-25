@@ -64,9 +64,8 @@ impl CloudCheckScheduler {
 
         for config in configs {
             // Check if this account is due for collection
-            let account_config: CloudAccountConfig =
-                serde_json::from_str(&config.config_json)
-                    .context("Failed to parse cloud account config")?;
+            let account_config: CloudAccountConfig = serde_json::from_str(&config.config_json)
+                .context("Failed to parse cloud account config")?;
 
             // Check last collection time from cloud_collection_state table
             let state = self
@@ -186,47 +185,49 @@ impl CloudCheckScheduler {
                 Some(serde_json::to_string(&instance.tags).unwrap_or_default())
             };
 
-            if let Err(e) = self.cert_store.upsert_cloud_instance(&oxmon_storage::cert_store::CloudInstanceRow {
-                id: String::new(), // ID将由 upsert_cloud_instance 内部生成
-                instance_id: instance.instance_id.clone(),
-                instance_name: Some(instance.instance_name.clone()),
-                provider: provider_type.to_string(),
-                account_config_key: config_key,
-                region: instance.region.clone(),
-                public_ip: Some(instance.public_ip.clone()),
-                private_ip: Some(instance.private_ip.clone()),
-                os: Some(instance.os.clone()),
-                status: Some(instance.status.clone()),
-                last_seen_at: now,
-                created_at: now,
-                updated_at: now,
-                instance_type: Some(instance.instance_type.clone()),
-                cpu_cores: instance.cpu_cores.map(|v| v as i32),
-                memory_gb: instance.memory_gb,
-                disk_gb: instance.disk_gb,
-                created_time: instance.created_time,
-                expired_time: instance.expired_time,
-                charge_type: instance.charge_type.clone(),
-                vpc_id: instance.vpc_id.clone(),
-                subnet_id: instance.subnet_id.clone(),
-                security_group_ids: security_group_ids_json,
-                zone: instance.zone.clone(),
-                internet_max_bandwidth: instance.internet_max_bandwidth.map(|v| v as i32),
-                ipv6_addresses: ipv6_addresses_json,
-                eip_allocation_id: instance.eip_allocation_id.clone(),
-                internet_charge_type: instance.internet_charge_type.clone(),
-                image_id: instance.image_id.clone(),
-                hostname: instance.hostname.clone(),
-                description: instance.description.clone(),
-                gpu: instance.gpu.map(|v| v as i32),
-                io_optimized: instance.io_optimized.clone(),
-                latest_operation: instance.latest_operation.clone(),
-                latest_operation_state: instance.latest_operation_state.clone(),
-                tags: tags_json,
-                project_id: instance.project_id.clone(),
-                resource_group_id: instance.resource_group_id.clone(),
-                auto_renew_flag: instance.auto_renew_flag.clone(),
-            }) {
+            if let Err(e) = self.cert_store.upsert_cloud_instance(
+                &oxmon_storage::cert_store::CloudInstanceRow {
+                    id: String::new(), // ID将由 upsert_cloud_instance 内部生成
+                    instance_id: instance.instance_id.clone(),
+                    instance_name: Some(instance.instance_name.clone()),
+                    provider: provider_type.to_string(),
+                    account_config_key: config_key,
+                    region: instance.region.clone(),
+                    public_ip: Some(instance.public_ip.clone()),
+                    private_ip: Some(instance.private_ip.clone()),
+                    os: Some(instance.os.clone()),
+                    status: Some(instance.status.clone()),
+                    last_seen_at: now,
+                    created_at: now,
+                    updated_at: now,
+                    instance_type: Some(instance.instance_type.clone()),
+                    cpu_cores: instance.cpu_cores.map(|v| v as i32),
+                    memory_gb: instance.memory_gb,
+                    disk_gb: instance.disk_gb,
+                    created_time: instance.created_time,
+                    expired_time: instance.expired_time,
+                    charge_type: instance.charge_type.clone(),
+                    vpc_id: instance.vpc_id.clone(),
+                    subnet_id: instance.subnet_id.clone(),
+                    security_group_ids: security_group_ids_json,
+                    zone: instance.zone.clone(),
+                    internet_max_bandwidth: instance.internet_max_bandwidth.map(|v| v as i32),
+                    ipv6_addresses: ipv6_addresses_json,
+                    eip_allocation_id: instance.eip_allocation_id.clone(),
+                    internet_charge_type: instance.internet_charge_type.clone(),
+                    image_id: instance.image_id.clone(),
+                    hostname: instance.hostname.clone(),
+                    description: instance.description.clone(),
+                    gpu: instance.gpu.map(|v| v as i32),
+                    io_optimized: instance.io_optimized.clone(),
+                    latest_operation: instance.latest_operation.clone(),
+                    latest_operation_state: instance.latest_operation_state.clone(),
+                    tags: tags_json,
+                    project_id: instance.project_id.clone(),
+                    resource_group_id: instance.resource_group_id.clone(),
+                    auto_renew_flag: instance.auto_renew_flag.clone(),
+                },
+            ) {
                 tracing::error!(
                     instance_id = instance.instance_id,
                     error = %e,

@@ -30,6 +30,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub cloud_check: CloudCheckConfig,
     #[serde(default)]
+    pub ai_check: AICheckConfig,
+    #[serde(default)]
     pub auth: AuthConfig,
     #[serde(default)]
     pub app_id: AppIdConfig,
@@ -127,6 +129,26 @@ pub struct CloudAccountsSeedFile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeedCloudAccount {
+    pub config_key: String,
+    pub provider: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub config: serde_json::Value,
+    #[serde(default = "default_seed_enabled")]
+    pub enabled: bool,
+}
+
+// ---- AI accounts seed file types (used by `init-ai-accounts` CLI subcommand) ----
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AIAccountsSeedFile {
+    #[serde(default)]
+    pub ai_accounts: Vec<SeedAIAccount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeedAIAccount {
     pub config_key: String,
     pub provider: String,
     pub display_name: String,
@@ -252,6 +274,49 @@ fn default_cloud_check_tick_secs() -> u64 {
 
 fn default_cloud_check_max_concurrent() -> usize {
     5 // Max 5 concurrent API calls
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AICheckConfig {
+    /// 是否启用 AI 报告调度器
+    #[serde(default = "default_ai_check_enabled")]
+    pub enabled: bool,
+    /// 调度器轮询间隔（秒）
+    #[serde(default = "default_ai_check_tick_secs")]
+    pub tick_secs: u64,
+    /// 历史数据查询天数
+    #[serde(default = "default_ai_check_history_days")]
+    pub history_days: i32,
+    /// 分批处理阈值（Agent 数量）
+    #[serde(default = "default_ai_check_batch_size")]
+    pub batch_size: usize,
+}
+
+impl Default for AICheckConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_ai_check_enabled(),
+            tick_secs: default_ai_check_tick_secs(),
+            history_days: default_ai_check_history_days(),
+            batch_size: default_ai_check_batch_size(),
+        }
+    }
+}
+
+fn default_ai_check_enabled() -> bool {
+    true
+}
+
+fn default_ai_check_tick_secs() -> u64 {
+    3600 // Check for due AI accounts every hour
+}
+
+fn default_ai_check_history_days() -> i32 {
+    7
+}
+
+fn default_ai_check_batch_size() -> usize {
+    20
 }
 
 fn default_grpc_port() -> u16 {

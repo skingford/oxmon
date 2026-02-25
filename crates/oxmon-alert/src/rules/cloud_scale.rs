@@ -8,7 +8,7 @@ use oxmon_common::types::{AlertEvent, MetricDataPoint, Severity};
 pub struct CloudScaleRecommendationRule {
     pub id: String,
     pub name: String,
-    pub metric: String, // e.g., "cloud.cpu.usage" or "cloud.memory.usage"
+    pub metric: String,        // e.g., "cloud.cpu.usage" or "cloud.memory.usage"
     pub agent_pattern: String, // e.g., "cloud:*"
     pub severity: Severity,
     pub high_threshold: f64, // e.g., 80.0 (%)
@@ -34,7 +34,8 @@ impl CloudScaleRecommendationRule {
         // Simple trend: compare first half avg vs second half avg
         let mid = window.len() / 2;
         let first_half: f64 = window[..mid].iter().map(|dp| dp.value).sum::<f64>() / mid as f64;
-        let second_half: f64 = window[mid..].iter().map(|dp| dp.value).sum::<f64>() / (window.len() - mid) as f64;
+        let second_half: f64 =
+            window[mid..].iter().map(|dp| dp.value).sum::<f64>() / (window.len() - mid) as f64;
 
         let diff = second_half - first_half;
         if diff > 5.0 {
@@ -47,7 +48,11 @@ impl CloudScaleRecommendationRule {
     }
 
     /// Check if values consistently exceed high threshold (scale-out signal)
-    fn check_scale_out(&self, window: &[MetricDataPoint], cutoff: DateTime<Utc>) -> Option<(f64, Trend)> {
+    fn check_scale_out(
+        &self,
+        window: &[MetricDataPoint],
+        cutoff: DateTime<Utc>,
+    ) -> Option<(f64, Trend)> {
         let recent: Vec<_> = window.iter().filter(|dp| dp.timestamp >= cutoff).collect();
 
         if recent.is_empty() {
@@ -57,7 +62,8 @@ impl CloudScaleRecommendationRule {
         // All recent points must be above high threshold
         if recent.iter().all(|dp| dp.value > self.high_threshold) {
             let avg = recent.iter().map(|dp| dp.value).sum::<f64>() / recent.len() as f64;
-            let trend = self.calculate_trend(&recent.iter().map(|dp| (*dp).clone()).collect::<Vec<_>>());
+            let trend =
+                self.calculate_trend(&recent.iter().map(|dp| (*dp).clone()).collect::<Vec<_>>());
             Some((avg, trend))
         } else {
             None
@@ -65,7 +71,11 @@ impl CloudScaleRecommendationRule {
     }
 
     /// Check if values consistently below low threshold (scale-in signal)
-    fn check_scale_in(&self, window: &[MetricDataPoint], cutoff: DateTime<Utc>) -> Option<(f64, Trend)> {
+    fn check_scale_in(
+        &self,
+        window: &[MetricDataPoint],
+        cutoff: DateTime<Utc>,
+    ) -> Option<(f64, Trend)> {
         let recent: Vec<_> = window.iter().filter(|dp| dp.timestamp >= cutoff).collect();
 
         if recent.is_empty() {
@@ -75,7 +85,8 @@ impl CloudScaleRecommendationRule {
         // All recent points must be below low threshold
         if recent.iter().all(|dp| dp.value < self.low_threshold) {
             let avg = recent.iter().map(|dp| dp.value).sum::<f64>() / recent.len() as f64;
-            let trend = self.calculate_trend(&recent.iter().map(|dp| (*dp).clone()).collect::<Vec<_>>());
+            let trend =
+                self.calculate_trend(&recent.iter().map(|dp| (*dp).clone()).collect::<Vec<_>>());
             Some((avg, trend))
         } else {
             None
@@ -108,7 +119,12 @@ impl AlertRule for CloudScaleRecommendationRule {
         self.silence_secs
     }
 
-    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>, locale: &str) -> Option<AlertEvent> {
+    fn evaluate(
+        &self,
+        window: &[MetricDataPoint],
+        now: DateTime<Utc>,
+        locale: &str,
+    ) -> Option<AlertEvent> {
         if window.is_empty() {
             return None;
         }
@@ -136,15 +152,27 @@ impl AlertRule for CloudScaleRecommendationRule {
 
             let message = format!(
                 "{}: {} {} {}% ({}: {:.1}%, {}: {}). {}",
-                TRANSLATIONS.get(locale, "alert.scale.out.recommendation", "Scale-Out Recommendation"),
+                TRANSLATIONS.get(
+                    locale,
+                    "alert.scale.out.recommendation",
+                    "Scale-Out Recommendation"
+                ),
                 latest.agent_id,
                 metric_type,
-                TRANSLATIONS.get(locale, "alert.scale.continuously_high", "usage continuously exceeds"),
+                TRANSLATIONS.get(
+                    locale,
+                    "alert.scale.continuously_high",
+                    "usage continuously exceeds"
+                ),
                 TRANSLATIONS.get(locale, "alert.scale.avg_value", "Average"),
                 avg_value,
                 TRANSLATIONS.get(locale, "alert.scale.trend", "Trend"),
                 trend_str,
-                TRANSLATIONS.get(locale, "alert.scale.out.action", "Consider adding more instances or upgrading instance specifications.")
+                TRANSLATIONS.get(
+                    locale,
+                    "alert.scale.out.action",
+                    "Consider adding more instances or upgrading instance specifications."
+                )
             );
 
             return Some(AlertEvent {
@@ -185,15 +213,27 @@ impl AlertRule for CloudScaleRecommendationRule {
 
             let message = format!(
                 "{}: {} {} {} ({}: {:.1}%, {}: {}). {}",
-                TRANSLATIONS.get(locale, "alert.scale.in.recommendation", "Scale-In Recommendation"),
+                TRANSLATIONS.get(
+                    locale,
+                    "alert.scale.in.recommendation",
+                    "Scale-In Recommendation"
+                ),
                 latest.agent_id,
                 metric_type,
-                TRANSLATIONS.get(locale, "alert.scale.continuously_low", "usage continuously below"),
+                TRANSLATIONS.get(
+                    locale,
+                    "alert.scale.continuously_low",
+                    "usage continuously below"
+                ),
                 TRANSLATIONS.get(locale, "alert.scale.avg_value", "Average"),
                 avg_value,
                 TRANSLATIONS.get(locale, "alert.scale.trend", "Trend"),
                 trend_str,
-                TRANSLATIONS.get(locale, "alert.scale.in.action", "Consider reducing instances or downgrading specifications to save costs.")
+                TRANSLATIONS.get(
+                    locale,
+                    "alert.scale.in.action",
+                    "Consider reducing instances or downgrading specifications to save costs."
+                )
             );
 
             return Some(AlertEvent {

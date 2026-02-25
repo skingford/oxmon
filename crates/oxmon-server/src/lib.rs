@@ -1,3 +1,5 @@
+pub mod ai;
+pub mod ai_seed;
 pub mod api;
 pub mod app;
 pub mod auth;

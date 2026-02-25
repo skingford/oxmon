@@ -6,6 +6,7 @@ members = [
     "crates/oxmon-alert",
     "crates/oxmon-notify",
     "crates/oxmon-cloud",
+    "crates/oxmon-ai",
     "crates/oxmon-agent",
     "crates/oxmon-server",
 ]
@@ -107,6 +108,7 @@ oxmon-storage = { path = "crates/oxmon-storage" }
 oxmon-alert = { path = "crates/oxmon-alert" }
 oxmon-notify = { path = "crates/oxmon-notify" }
 oxmon-cloud = { path = "crates/oxmon-cloud" }
+oxmon-ai = { path = "crates/oxmon-ai" }
 
 [workspace.lints.rust]
 future-incompatible = "warn"

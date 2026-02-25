@@ -1,5 +1,8 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response as common_error_response, success_id_response, success_paginated_response, success_response};
+use crate::api::{
+    error_response as common_error_response, success_id_response, success_paginated_response,
+    success_response,
+};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
@@ -154,7 +157,10 @@ async fn create_domains_batch(
 
     match state.cert_store.insert_domains_batch(&req.domains) {
         Ok(domains) => {
-            let ids: Vec<crate::api::IdResponse> = domains.into_iter().map(|d| crate::api::IdResponse { id: d.id }).collect();
+            let ids: Vec<crate::api::IdResponse> = domains
+                .into_iter()
+                .map(|d| crate::api::IdResponse { id: d.id })
+                .collect();
             success_response(StatusCode::CREATED, &trace_id, ids)
         }
         Err(e) => {
@@ -230,10 +236,10 @@ async fn list_domains(
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
 
-    let total = match state.cert_store.count_domains(
-        params.enabled_eq,
-        params.domain_contains.as_deref(),
-    ) {
+    let total = match state
+        .cert_store
+        .count_domains(params.enabled_eq, params.domain_contains.as_deref())
+    {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count domains");
@@ -253,14 +259,9 @@ async fn list_domains(
         limit,
         offset,
     ) {
-        Ok(domains) => success_paginated_response(
-            StatusCode::OK,
-            &trace_id,
-            domains,
-            total,
-            limit,
-            offset,
-        ),
+        Ok(domains) => {
+            success_paginated_response(StatusCode::OK, &trace_id, domains, total, limit, offset)
+        }
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
             common_error_response(
@@ -479,7 +480,10 @@ async fn cert_status_all(
     let is_valid = params.is_valid_eq;
     let days_lte = params.days_until_expiry_lte;
 
-    let total = match state.cert_store.count_latest_results(domain_contains, is_valid, days_lte) {
+    let total = match state
+        .cert_store
+        .count_latest_results(domain_contains, is_valid, days_lte)
+    {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count latest results");
@@ -493,15 +497,13 @@ async fn cert_status_all(
         }
     };
 
-    match state.cert_store.query_latest_results(domain_contains, is_valid, days_lte, limit, offset) {
-        Ok(results) => success_paginated_response(
-            StatusCode::OK,
-            &trace_id,
-            results,
-            total,
-            limit,
-            offset,
-        ),
+    match state
+        .cert_store
+        .query_latest_results(domain_contains, is_valid, days_lte, limit, offset)
+    {
+        Ok(results) => {
+            success_paginated_response(StatusCode::OK, &trace_id, results, total, limit, offset)
+        }
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
             common_error_response(

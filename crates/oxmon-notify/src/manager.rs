@@ -323,7 +323,10 @@ impl NotificationManager {
             }
 
             let start = Instant::now();
-            let result = instance.channel.send(event, &instance.recipients, &locale).await;
+            let result = instance
+                .channel
+                .send(event, &instance.recipients, &locale)
+                .await;
             let duration_ms = start.elapsed().as_millis() as i64;
 
             let (send_result, response) = match result {

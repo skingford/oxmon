@@ -320,29 +320,35 @@ async fn list_agents(
     };
 
     // 获取总数
-    let total = match state.cert_store.count_agents_from_db_with_filter(&filter).map_err(|e| {
-        tracing::error!(error = %e, "Failed to count agents");
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &trace_id,
-            "internal_error",
-            "Database error",
-        )
-    }) {
+    let total = match state
+        .cert_store
+        .count_agents_from_db_with_filter(&filter)
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to count agents");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        }) {
         Ok(v) => v,
         Err(resp) => return resp,
     };
 
     // 从数据库查询 agent 列表
-    let agents = match state.cert_store.list_agents_from_db_with_filter(&filter, limit, offset).map_err(|e| {
-        tracing::error!(error = %e, "Failed to list agents from database");
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &trace_id,
-            "internal_error",
-            "Database error",
-        )
-    }) {
+    let agents = match state
+        .cert_store
+        .list_agents_from_db_with_filter(&filter, limit, offset)
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to list agents from database");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        }) {
         Ok(v) => v,
         Err(resp) => return resp,
     };
@@ -406,15 +412,18 @@ async fn get_agent(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     // 先尝试按 agent_id 查询
-    let agent_entry = match state.cert_store.get_agent_by_id_or_agent_id(&id).map_err(|e| {
-        tracing::error!(error = %e, "Failed to query agent");
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &trace_id,
-            "internal_error",
-            "Database error",
-        )
-    }) {
+    let agent_entry = match state
+        .cert_store
+        .get_agent_by_id_or_agent_id(&id)
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to query agent");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        }) {
         Ok(Some(v)) => v,
         Ok(None) => {
             return error_response(
@@ -490,15 +499,18 @@ async fn update_agent_info(
     Json(req): Json<UpdateAgentRequest>,
 ) -> impl IntoResponse {
     // 查找 agent
-    let agent_entry = match state.cert_store.get_agent_by_id_or_agent_id(&id).map_err(|e| {
-        tracing::error!(error = %e, "Failed to query agent");
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &trace_id,
-            "internal_error",
-            "Database error",
-        )
-    }) {
+    let agent_entry = match state
+        .cert_store
+        .get_agent_by_id_or_agent_id(&id)
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to query agent");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        }) {
         Ok(Some(v)) => v,
         Ok(None) => {
             return error_response(
@@ -533,7 +545,9 @@ async fn update_agent_info(
     }
 
     // 如果 agent 在白名单中，同步更新白名单表
-    if let Ok(Some(whitelist_entry)) = state.cert_store.get_agent_by_agent_id(&agent_entry.agent_id)
+    if let Ok(Some(whitelist_entry)) = state
+        .cert_store
+        .get_agent_by_agent_id(&agent_entry.agent_id)
     {
         if let Err(e) = state
             .cert_store
@@ -571,15 +585,18 @@ async fn delete_agent_record(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     // 查找 agent
-    let agent_entry = match state.cert_store.get_agent_by_id_or_agent_id(&id).map_err(|e| {
-        tracing::error!(error = %e, "Failed to query agent");
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &trace_id,
-            "internal_error",
-            "Database error",
-        )
-    }) {
+    let agent_entry = match state
+        .cert_store
+        .get_agent_by_id_or_agent_id(&id)
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to query agent");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        }) {
         Ok(Some(v)) => v,
         Ok(None) => {
             return error_response(
@@ -593,7 +610,9 @@ async fn delete_agent_record(
     };
 
     // 如果 agent 在白名单中，先删除白名单条目
-    if let Ok(Some(whitelist_entry)) = state.cert_store.get_agent_by_agent_id(&agent_entry.agent_id)
+    if let Ok(Some(whitelist_entry)) = state
+        .cert_store
+        .get_agent_by_agent_id(&agent_entry.agent_id)
     {
         if let Err(e) = state
             .cert_store
@@ -667,15 +686,18 @@ async fn agent_latest(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     // 先将数据库 id 解析为 agent_id，因为 metrics 按 agent_id 存储
-    let agent_entry = match state.cert_store.get_agent_by_id_or_agent_id(&id).map_err(|e| {
-        tracing::error!(error = %e, "Failed to query agent");
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &trace_id,
-            "internal_error",
-            "Database error",
-        )
-    }) {
+    let agent_entry = match state
+        .cert_store
+        .get_agent_by_id_or_agent_id(&id)
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to query agent");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        }) {
         Ok(Some(v)) => v,
         Ok(None) => {
             return error_response(
@@ -691,10 +713,14 @@ async fn agent_latest(
 
     let to = Utc::now();
     let from = to - chrono::Duration::days(2);
-    let rows = match state
-        .storage
-        .query_metrics_paginated(from, to, Some(&agent_entry.agent_id), None, 1, 0)
-    {
+    let rows = match state.storage.query_metrics_paginated(
+        from,
+        to,
+        Some(&agent_entry.agent_id),
+        None,
+        1,
+        0,
+    ) {
         Ok(rows) => rows,
         Err(err) => {
             tracing::error!(id = %id, error = %err, "failed to query latest metric");

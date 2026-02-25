@@ -5,9 +5,7 @@ use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::Json;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-use oxmon_common::types::{
-    ChangePasswordRequest, LoginRequest, LoginResponse, PublicKeyResponse,
-};
+use oxmon_common::types::{ChangePasswordRequest, LoginRequest, LoginResponse, PublicKeyResponse};
 use oxmon_storage::auth::{hash_token, verify_token};
 use serde::{Deserialize, Serialize};
 

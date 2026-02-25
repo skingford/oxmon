@@ -341,12 +341,10 @@ mod tests {
 
         let result = enc.decrypt_password(&encrypted);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Timestamp expired")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Timestamp expired"));
     }
 
     #[test]

@@ -67,6 +67,8 @@ struct CloudInstanceResponse {
     public_ip: Option<String>,
     private_ip: Option<String>,
     os: Option<String>,
+    /// 原始云厂商状态归一化后的状态（running/pending/stopped/error/unknown）
+    normalized_status: String,
     status: Option<String>,
     last_seen_at: String,
     created_at: String,
@@ -163,6 +165,8 @@ struct CloudInstanceDetailResponse {
     private_ip: Option<String>,
     /// 操作系统
     os: Option<String>,
+    /// 归一化状态（running/pending/stopped/error/unknown）
+    normalized_status: String,
     /// 实例状态（Running / Stopped 等）
     status: Option<String>,
 
@@ -285,7 +289,12 @@ struct TriggerCollectionResponse {
 fn redact_cloud_config(config: &serde_json::Value) -> serde_json::Value {
     let mut redacted = config.clone();
     if let Some(obj) = redacted.as_object_mut() {
-        for key in &["secret_id", "secret_key", "access_key_id", "access_key_secret"] {
+        for key in &[
+            "secret_id",
+            "secret_key",
+            "access_key_id",
+            "access_key_secret",
+        ] {
             if obj.contains_key(*key) {
                 obj.insert(key.to_string(), serde_json::json!("***"));
             }
@@ -322,18 +331,23 @@ fn row_to_cloud_account_response(row: SystemConfigRow) -> CloudAccountResponse {
 
 fn cloud_instance_row_to_response(row: CloudInstanceRow) -> CloudInstanceResponse {
     // 反序列化安全组ID数组
-    let security_group_ids = row.security_group_ids
+    let security_group_ids = row
+        .security_group_ids
         .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
         .unwrap_or_default();
 
     // 反序列化IPv6地址数组
-    let ipv6_addresses = row.ipv6_addresses
+    let ipv6_addresses = row
+        .ipv6_addresses
         .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
         .unwrap_or_default();
 
     // 反序列化tags对象
-    let tags = row.tags
-        .and_then(|json| serde_json::from_str::<std::collections::HashMap<String, String>>(&json).ok())
+    let tags = row
+        .tags
+        .and_then(|json| {
+            serde_json::from_str::<std::collections::HashMap<String, String>>(&json).ok()
+        })
         .unwrap_or_default();
 
     CloudInstanceResponse {
@@ -346,6 +360,7 @@ fn cloud_instance_row_to_response(row: CloudInstanceRow) -> CloudInstanceRespons
         public_ip: row.public_ip,
         private_ip: row.private_ip,
         os: row.os,
+        normalized_status: normalize_cloud_instance_status(row.status.as_deref()).to_string(),
         status: row.status,
         last_seen_at: chrono::DateTime::from_timestamp(row.last_seen_at, 0)
             .unwrap_or_default()
@@ -388,17 +403,40 @@ fn cloud_instance_row_to_response(row: CloudInstanceRow) -> CloudInstanceRespons
     }
 }
 
+fn normalize_cloud_instance_status(status: Option<&str>) -> &'static str {
+    let normalized = status.unwrap_or_default().trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "" | "unknown" | "unk" | "none" | "null" | "nil" | "-" => "unknown",
+        "running" | "active" | "online" | "started" | "up" | "1" => "running",
+        "stopped" | "stop" | "offline" | "terminated" | "shutdown" | "shutoff" | "down" | "0" => {
+            "stopped"
+        }
+        "pending" | "starting" | "stopping" | "provisioning" | "initializing" | "booting"
+        | "creating" | "rebooting" | "restarting" | "resetting" | "reinstalling" | "migrating"
+        | "2" => "pending",
+        "failed" | "error" | "err" | "unhealthy" | "launch_failed" | "create_failed"
+        | "start_failed" | "stop_failed" | "reboot_failed" | "3" => "error",
+        _ => "unknown",
+    }
+}
+
 /// 云账户列表查询参数
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 struct ListCloudAccountParams {
     /// 每页条数（默认 20）
     #[param(required = false)]
-    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
     limit: Option<u64>,
     /// 偏移量（默认 0）
     #[param(required = false)]
-    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
     offset: Option<u64>,
     /// 按启用状态过滤
     #[param(required = false)]
@@ -425,22 +463,23 @@ async fn list_cloud_accounts(
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
 
-    let total = match state
-        .cert_store
-        .count_system_configs(Some("cloud_account"), None, params.enabled)
-    {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to count cloud accounts");
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Database error",
-            )
-            .into_response();
-        }
-    };
+    let total =
+        match state
+            .cert_store
+            .count_system_configs(Some("cloud_account"), None, params.enabled)
+        {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to count cloud accounts");
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &trace_id,
+                    "storage_error",
+                    "Database error",
+                )
+                .into_response();
+            }
+        };
 
     match state.cert_store.list_system_configs(
         Some("cloud_account"),
@@ -450,8 +489,10 @@ async fn list_cloud_accounts(
         offset,
     ) {
         Ok(rows) => {
-            let resp: Vec<CloudAccountResponse> =
-                rows.into_iter().map(row_to_cloud_account_response).collect();
+            let resp: Vec<CloudAccountResponse> = rows
+                .into_iter()
+                .map(row_to_cloud_account_response)
+                .collect();
             success_paginated_response(StatusCode::OK, &trace_id, resp, total, limit, offset)
         }
         Err(e) => {
@@ -1073,7 +1114,10 @@ async fn trigger_cloud_account_collection(
 
                     let resp = TriggerCollectionResponse {
                         success: true,
-                        message: format!("Successfully collected metrics from {} instances", metrics.len()),
+                        message: format!(
+                            "Successfully collected metrics from {} instances",
+                            metrics.len()
+                        ),
                         collected_count: Some(metrics.len()),
                     };
                     success_response(StatusCode::OK, &trace_id, resp)
@@ -1105,11 +1149,17 @@ async fn trigger_cloud_account_collection(
 struct ListCloudInstancesParams {
     /// 每页条数（默认 20）
     #[param(required = false)]
-    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
     limit: Option<u64>,
     /// 偏移量（默认 0）
     #[param(required = false)]
-    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
     offset: Option<u64>,
     /// 按供应商过滤
     #[param(required = false)]
@@ -1117,6 +1167,12 @@ struct ListCloudInstancesParams {
     /// 按区域过滤
     #[param(required = false)]
     region: Option<String>,
+    /// 按归一化状态过滤（running/pending/stopped/error/unknown）
+    #[param(required = false)]
+    status: Option<String>,
+    /// 关键字搜索（实例ID/名称/IP/区域等）
+    #[param(required = false)]
+    search: Option<String>,
 }
 
 /// 列出所有云实例
@@ -1142,6 +1198,8 @@ async fn list_cloud_instances(
     let total = match state.cert_store.count_cloud_instances(
         params.provider.as_deref(),
         params.region.as_deref(),
+        params.status.as_deref(),
+        params.search.as_deref(),
     ) {
         Ok(c) => c,
         Err(e) => {
@@ -1159,6 +1217,8 @@ async fn list_cloud_instances(
     match state.cert_store.list_cloud_instances(
         params.provider.as_deref(),
         params.region.as_deref(),
+        params.status.as_deref(),
+        params.search.as_deref(),
         limit,
         offset,
     ) {
@@ -1279,18 +1339,23 @@ async fn get_cloud_instance_detail(
 
     // 6. Assemble the response
     // 反序列化安全组ID数组
-    let security_group_ids = instance.security_group_ids
+    let security_group_ids = instance
+        .security_group_ids
         .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
         .unwrap_or_default();
 
     // 反序列化IPv6地址数组
-    let ipv6_addresses = instance.ipv6_addresses
+    let ipv6_addresses = instance
+        .ipv6_addresses
         .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
         .unwrap_or_default();
 
     // 反序列化tags对象
-    let tags = instance.tags
-        .and_then(|json| serde_json::from_str::<std::collections::HashMap<String, String>>(&json).ok())
+    let tags = instance
+        .tags
+        .and_then(|json| {
+            serde_json::from_str::<std::collections::HashMap<String, String>>(&json).ok()
+        })
         .unwrap_or_default();
 
     let resp = CloudInstanceDetailResponse {
@@ -1303,6 +1368,7 @@ async fn get_cloud_instance_detail(
         public_ip: instance.public_ip,
         private_ip: instance.private_ip,
         os: instance.os,
+        normalized_status: normalize_cloud_instance_status(instance.status.as_deref()).to_string(),
         status: instance.status,
         instance_type: instance.instance_type,
         cpu_cores: instance.cpu_cores,

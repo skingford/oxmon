@@ -39,7 +39,12 @@ impl AlertRule for TrendPredictionRule {
         self.silence_secs
     }
 
-    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>, locale: &str) -> Option<AlertEvent> {
+    fn evaluate(
+        &self,
+        window: &[MetricDataPoint],
+        now: DateTime<Utc>,
+        locale: &str,
+    ) -> Option<AlertEvent> {
         if window.len() < self.min_data_points {
             return None;
         }
@@ -109,11 +114,13 @@ impl AlertRule for TrendPredictionRule {
             use oxmon_common::i18n::TRANSLATIONS;
             if time_to_threshold < 3600.0 {
                 let minutes = (time_to_threshold / 60.0).round() as i64;
-                TRANSLATIONS.get(locale, "time.minutes", "{n} minutes")
+                TRANSLATIONS
+                    .get(locale, "time.minutes", "{n} minutes")
                     .replace("{n}", &minutes.to_string())
             } else {
                 let hours = time_to_threshold / 3600.0;
-                TRANSLATIONS.get(locale, "time.hours", "{n} hours")
+                TRANSLATIONS
+                    .get(locale, "time.hours", "{n} hours")
                     .replace("{n}", &format!("{:.1}", hours))
             }
         };

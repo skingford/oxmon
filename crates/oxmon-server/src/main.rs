@@ -15,6 +15,7 @@ use tokio::time::{interval, Duration};
 use tonic::transport::Server as TonicServer;
 use tracing_subscriber::EnvFilter;
 
+use oxmon_server::ai::scheduler::AIReportScheduler;
 use oxmon_server::app;
 use oxmon_server::cert::scheduler::CertCheckScheduler;
 use oxmon_server::channel_seed;
@@ -34,6 +35,7 @@ fn print_usage() {
     eprintln!("  oxmon-server init-dictionaries <config.toml> <seed.json>      Initialize dictionaries from seed file");
     eprintln!("  oxmon-server init-configs <config.toml> <seed.json>           Initialize system configs from seed file");
     eprintln!("  oxmon-server init-cloud-accounts <config.toml> <seed.json>    Initialize cloud accounts from seed file");
+    eprintln!("  oxmon-server init-ai-accounts <config.toml> <seed.json>       Initialize AI accounts from seed file");
 }
 
 #[tokio::main]
@@ -100,13 +102,26 @@ async fn main() -> Result<()> {
         Some("init-cloud-accounts") => {
             let config_path = args.get(2).ok_or_else(|| {
                 print_usage();
-                anyhow::anyhow!("init-cloud-accounts requires <config.toml> and <seed.json> arguments")
+                anyhow::anyhow!(
+                    "init-cloud-accounts requires <config.toml> and <seed.json> arguments"
+                )
             })?;
             let seed_path = args.get(3).ok_or_else(|| {
                 print_usage();
                 anyhow::anyhow!("init-cloud-accounts requires <seed.json> argument")
             })?;
             run_init_cloud_accounts(config_path, seed_path)
+        }
+        Some("init-ai-accounts") => {
+            let config_path = args.get(2).ok_or_else(|| {
+                print_usage();
+                anyhow::anyhow!("init-ai-accounts requires <config.toml> and <seed.json> arguments")
+            })?;
+            let seed_path = args.get(3).ok_or_else(|| {
+                print_usage();
+                anyhow::anyhow!("init-ai-accounts requires <seed.json> argument")
+            })?;
+            run_init_ai_accounts(config_path, seed_path)
         }
         Some("--help" | "-h") => {
             print_usage();
@@ -401,6 +416,61 @@ fn run_init_cloud_accounts(config_path: &str, seed_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Initialize AI accounts from a JSON seed file.
+fn run_init_ai_accounts(config_path: &str, seed_path: &str) -> Result<()> {
+    use oxmon_storage::cert_store::SystemConfigRow;
+
+    let config = config::ServerConfig::load(config_path)?;
+    let cert_store = CertStore::new(Path::new(&config.data_dir))?;
+
+    let seed_content = std::fs::read_to_string(seed_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read seed file '{}': {}", seed_path, e))?;
+    let seed: config::AIAccountsSeedFile = serde_json::from_str(&seed_content)
+        .map_err(|e| anyhow::anyhow!("Failed to parse seed file '{}': {}", seed_path, e))?;
+
+    // List existing AI accounts for dedup
+    let existing = cert_store.list_system_configs(Some("ai_account"), None, None, 10000, 0)?;
+    let existing_keys: std::collections::HashSet<String> =
+        existing.iter().map(|c| c.config_key.clone()).collect();
+
+    let mut created = 0u32;
+    let mut skipped = 0u32;
+
+    for account in &seed.ai_accounts {
+        if existing_keys.contains(&account.config_key) {
+            tracing::warn!(config_key = %account.config_key, "AI account already exists, skipping");
+            skipped += 1;
+            continue;
+        }
+
+        let row = SystemConfigRow {
+            id: oxmon_common::id::next_id(),
+            config_key: account.config_key.clone(),
+            config_type: "ai_account".to_string(),
+            provider: Some(account.provider.clone()),
+            display_name: account.display_name.clone(),
+            description: account.description.clone(),
+            config_json: account.config.to_string(),
+            enabled: account.enabled,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        match cert_store.insert_system_config(&row) {
+            Ok(inserted) => {
+                tracing::info!(config_key = %account.config_key, id = %inserted.id, "AI account created");
+                created += 1;
+            }
+            Err(e) => {
+                tracing::error!(config_key = %account.config_key, error = %e, "Failed to create AI account");
+            }
+        }
+    }
+
+    tracing::info!(created, skipped, "init-ai-accounts completed");
+    Ok(())
+}
+
 async fn run_server(config_path: &str) -> Result<()> {
     let config = config::ServerConfig::load(config_path)?;
 
@@ -503,6 +573,11 @@ async fn run_server(config_path: &str) -> Result<()> {
         tracing::error!(error = %e, "Failed to initialize default system dictionaries");
     }
 
+    // Initialize default AI accounts (one-time, only when table is empty)
+    if let Err(e) = oxmon_server::ai_seed::init_default_ai_accounts(&cert_store) {
+        tracing::error!(error = %e, "Failed to initialize default AI accounts");
+    }
+
     let state = AppState {
         storage: storage.clone(),
         alert_engine,
@@ -598,6 +673,21 @@ async fn run_server(config_path: &str) -> Result<()> {
         None
     };
 
+    // AI report scheduler
+    let ai_check_handle = if config.ai_check.enabled {
+        let scheduler = Arc::new(AIReportScheduler::new(
+            cert_store.clone(),
+            Duration::from_secs(config.ai_check.tick_secs),
+            config.ai_check.history_days,
+        ));
+        Some(tokio::spawn(async move {
+            scheduler.start().await;
+        }))
+    } else {
+        tracing::info!("AI report scheduler disabled");
+        None
+    };
+
     tracing::info!(grpc = %grpc_addr, http = %http_addr, "Server started");
 
     // Run all services concurrently
@@ -622,6 +712,9 @@ async fn run_server(config_path: &str) -> Result<()> {
         h.abort();
     }
     if let Some(h) = cloud_check_handle {
+        h.abort();
+    }
+    if let Some(h) = ai_check_handle {
         h.abort();
     }
     tracing::info!("Server stopped");

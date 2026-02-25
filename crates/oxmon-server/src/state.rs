@@ -50,7 +50,7 @@ impl AgentRegistry {
                     last_seen: *last_seen,
                     active: now - *last_seen < timeout,
                     collection_interval_secs: None, // 从数据库查询
-                    description: None,               // 从数据库查询
+                    description: None,              // 从数据库查询
                 }
             })
             .collect()
@@ -70,7 +70,7 @@ impl AgentRegistry {
             last_seen: *last_seen,
             active: now - *last_seen < timeout,
             collection_interval_secs: None, // 从数据库查询
-            description: None,               // 从数据库查询
+            description: None,              // 从数据库查询
         })
     }
 }

@@ -1,5 +1,7 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response, success_id_response, success_paginated_response, success_response};
+use crate::api::{
+    error_response, success_id_response, success_paginated_response, success_response,
+};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::response::IntoResponse;
@@ -32,11 +34,17 @@ struct WhitelistListQueryParams {
     description_contains: Option<String>,
     /// 每页条数（默认 20）
     #[param(required = false)]
-    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
     limit: Option<u64>,
     /// 偏移量（默认 0）
     #[param(required = false)]
-    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
     offset: Option<u64>,
 }
 
@@ -128,19 +136,15 @@ async fn add_agent(
     };
 
     // 初始化 agent 到 agents 表（包含 collection_interval_secs）
-    if let Err(resp) = state
-        .cert_store
-        .upsert_agent(&req.agent_id)
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to initialize agent");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "internal_error",
-                "Database error",
-            )
-        })
-    {
+    if let Err(resp) = state.cert_store.upsert_agent(&req.agent_id).map_err(|e| {
+        tracing::error!(error = %e, "Failed to initialize agent");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
+            "internal_error",
+            "Database error",
+        )
+    }) {
         return resp;
     }
 
@@ -207,28 +211,34 @@ async fn list_whitelist_agents(
         description_contains: params.description_contains,
     };
 
-    let total = match state.cert_store.count_agents_with_filter(&filter).map_err(|e| {
-        tracing::error!(error = %e, "Failed to count agents");
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &trace_id,
-            "internal_error",
-            "Database error",
-        )
-    }) {
+    let total = match state
+        .cert_store
+        .count_agents_with_filter(&filter)
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to count agents");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        }) {
         Ok(v) => v,
         Err(resp) => return resp,
     };
 
-    let agents = match state.cert_store.list_agents_with_filter(&filter, limit, offset).map_err(|e| {
-        tracing::error!(error = %e, "Failed to list agents");
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &trace_id,
-            "internal_error",
-            "Database error",
-        )
-    }) {
+    let agents = match state
+        .cert_store
+        .list_agents_with_filter(&filter, limit, offset)
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to list agents");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        }) {
         Ok(v) => v,
         Err(resp) => return resp,
     };

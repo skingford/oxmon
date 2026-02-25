@@ -98,11 +98,17 @@ fn row_to_response(row: SystemConfigRow) -> SystemConfigResponse {
 struct ListSystemConfigParams {
     /// 每页条数（默认 20）
     #[param(required = false)]
-    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
     limit: Option<u64>,
     /// 偏移量（默认 0）
     #[param(required = false)]
-    #[serde(default, deserialize_with = "crate::api::pagination::deserialize_optional_u64")]
+    #[serde(
+        default,
+        deserialize_with = "crate::api::pagination::deserialize_optional_u64"
+    )]
     offset: Option<u64>,
     /// 按配置类型过滤（如 runtime）
     #[param(required = false)]
@@ -287,7 +293,9 @@ async fn create_system_config(
     };
 
     match state.cert_store.insert_system_config(&row) {
-        Ok(inserted) => crate::api::success_id_response(StatusCode::CREATED, &trace_id, inserted.id),
+        Ok(inserted) => {
+            crate::api::success_id_response(StatusCode::CREATED, &trace_id, inserted.id)
+        }
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("UNIQUE constraint") {

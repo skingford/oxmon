@@ -64,48 +64,124 @@ pub static TRANSLATIONS: LazyLock<Translations> = LazyLock::new(|| {
     // ---- Alert messages ----
 
     // Threshold rule
-    t!("en", "alert.threshold", "{metric}{labels} has been {op} {threshold:.1} for the configured duration on {agent}");
-    t!("zh-CN", "alert.threshold", "{metric}{labels} 在 {agent} 上持续{op} {threshold:.1}");
+    t!(
+        "en",
+        "alert.threshold",
+        "{metric}{labels} has been {op} {threshold:.1} for the configured duration on {agent}"
+    );
+    t!(
+        "zh-CN",
+        "alert.threshold",
+        "{metric}{labels} 在 {agent} 上持续{op} {threshold:.1}"
+    );
 
     // Rate of change rule
-    t!("en", "alert.rate_of_change", "{metric}{labels} changed by {rate:.1}% (threshold: {rate_threshold:.1}%) on {agent}");
-    t!("zh-CN", "alert.rate_of_change", "{metric}{labels} 在 {agent} 上变化了 {rate:.1}%（阈值: {rate_threshold:.1}%）");
+    t!(
+        "en",
+        "alert.rate_of_change",
+        "{metric}{labels} changed by {rate:.1}% (threshold: {rate_threshold:.1}%) on {agent}"
+    );
+    t!(
+        "zh-CN",
+        "alert.rate_of_change",
+        "{metric}{labels} 在 {agent} 上变化了 {rate:.1}%（阈值: {rate_threshold:.1}%）"
+    );
 
     // Trend prediction rule
     t!("en", "alert.trend_prediction", "{metric}{labels} predicted to reach threshold {threshold:.1} in {time_display} (host: {agent})");
-    t!("zh-CN", "alert.trend_prediction", "{metric}{labels} 预计在 {time_display} 后达到阈值 {threshold:.1}（主机: {agent}）");
+    t!(
+        "zh-CN",
+        "alert.trend_prediction",
+        "{metric}{labels} 预计在 {time_display} 后达到阈值 {threshold:.1}（主机: {agent}）"
+    );
 
     // Certificate expiration
-    t!("en", "alert.cert_expired", "Certificate expired: {domain} (expired {days:.0} days ago)");
-    t!("zh-CN", "alert.cert_expired", "证书已过期: {domain} (已过期 {days:.0} 天)");
+    t!(
+        "en",
+        "alert.cert_expired",
+        "Certificate expired: {domain} (expired {days:.0} days ago)"
+    );
+    t!(
+        "zh-CN",
+        "alert.cert_expired",
+        "证书已过期: {domain} (已过期 {days:.0} 天)"
+    );
 
     t!("en", "alert.cert_expiring_critical", "Certificate expiring soon: {domain} ({days:.0} days left, below {threshold} day critical threshold)");
-    t!("zh-CN", "alert.cert_expiring_critical", "证书即将过期: {domain} (剩余 {days:.0} 天，低于 {threshold} 天严重阈值)");
+    t!(
+        "zh-CN",
+        "alert.cert_expiring_critical",
+        "证书即将过期: {domain} (剩余 {days:.0} 天，低于 {threshold} 天严重阈值)"
+    );
 
     t!("en", "alert.cert_expiring_warning", "Certificate expiring soon: {domain} ({days:.0} days left, below {threshold} day warning threshold)");
-    t!("zh-CN", "alert.cert_expiring_warning", "证书即将过期: {domain} (剩余 {days:.0} 天，低于 {threshold} 天警告阈值)");
+    t!(
+        "zh-CN",
+        "alert.cert_expiring_warning",
+        "证书即将过期: {domain} (剩余 {days:.0} 天，低于 {threshold} 天警告阈值)"
+    );
 
     // Recovery
-    t!("en", "alert.recovered", "[RECOVERED] {metric} has returned to normal on {agent}");
-    t!("zh-CN", "alert.recovered", "[已恢复] {metric} 在 {agent} 上已恢复正常");
+    t!(
+        "en",
+        "alert.recovered",
+        "[RECOVERED] {metric} has returned to normal on {agent}"
+    );
+    t!(
+        "zh-CN",
+        "alert.recovered",
+        "[已恢复] {metric} 在 {agent} 上已恢复正常"
+    );
 
     // ---- Cloud scale recommendation ----
-    t!("en", "alert.scale.out.recommendation", "Scale-Out Recommendation");
+    t!(
+        "en",
+        "alert.scale.out.recommendation",
+        "Scale-Out Recommendation"
+    );
     t!("zh-CN", "alert.scale.out.recommendation", "扩容建议");
-    t!("en", "alert.scale.in.recommendation", "Scale-In Recommendation");
+    t!(
+        "en",
+        "alert.scale.in.recommendation",
+        "Scale-In Recommendation"
+    );
     t!("zh-CN", "alert.scale.in.recommendation", "缩容建议");
-    t!("en", "alert.scale.continuously_high", "usage continuously exceeds");
+    t!(
+        "en",
+        "alert.scale.continuously_high",
+        "usage continuously exceeds"
+    );
     t!("zh-CN", "alert.scale.continuously_high", "使用率持续超过");
-    t!("en", "alert.scale.continuously_low", "usage continuously below");
+    t!(
+        "en",
+        "alert.scale.continuously_low",
+        "usage continuously below"
+    );
     t!("zh-CN", "alert.scale.continuously_low", "使用率持续低于");
     t!("en", "alert.scale.avg_value", "Average");
     t!("zh-CN", "alert.scale.avg_value", "平均值");
     t!("en", "alert.scale.trend", "Trend");
     t!("zh-CN", "alert.scale.trend", "趋势");
-    t!("en", "alert.scale.out.action", "Consider adding more instances or upgrading instance specifications.");
-    t!("zh-CN", "alert.scale.out.action", "建议增加实例数量或升级实例规格。");
-    t!("en", "alert.scale.in.action", "Consider reducing instances or downgrading specifications to save costs.");
-    t!("zh-CN", "alert.scale.in.action", "建议减少实例数量或降低规格以节约成本。");
+    t!(
+        "en",
+        "alert.scale.out.action",
+        "Consider adding more instances or upgrading instance specifications."
+    );
+    t!(
+        "zh-CN",
+        "alert.scale.out.action",
+        "建议增加实例数量或升级实例规格。"
+    );
+    t!(
+        "en",
+        "alert.scale.in.action",
+        "Consider reducing instances or downgrading specifications to save costs."
+    );
+    t!(
+        "zh-CN",
+        "alert.scale.in.action",
+        "建议减少实例数量或降低规格以节约成本。"
+    );
     t!("en", "alert.trend.rising", "Rising");
     t!("zh-CN", "alert.trend.rising", "上升");
     t!("en", "alert.trend.falling", "Falling");
@@ -212,8 +288,7 @@ mod tests {
     fn test_all_keys_have_both_locales() {
         let t = &*TRANSLATIONS;
         // Collect all unique keys
-        let keys: std::collections::HashSet<&str> =
-            t.map.keys().map(|(_, key)| *key).collect();
+        let keys: std::collections::HashSet<&str> = t.map.keys().map(|(_, key)| *key).collect();
 
         for key in &keys {
             assert!(

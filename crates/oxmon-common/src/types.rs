@@ -644,3 +644,37 @@ pub struct UpdateNotificationChannelRequest {
     /// 收件人列表（可选，会替换现有收件人）
     pub recipients: Option<Vec<String>>,
 }
+
+// ============ AI Reports ============
+
+/// AI 报告数据行（数据库行）
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct AIReportRow {
+    pub id: String,
+    pub report_date: String,
+    pub ai_account_id: String,
+    pub ai_provider: String,
+    pub ai_model: String,
+    pub total_agents: i32,
+    pub risk_level: String,
+    pub ai_analysis: String,
+    pub html_content: String,
+    pub raw_metrics_json: String,
+    pub notified: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 创建 AI 报告请求
+#[derive(Debug, Clone)]
+pub struct CreateAIReportRequest {
+    pub report_date: String,
+    pub ai_account_id: String,
+    pub ai_provider: String,
+    pub ai_model: String,
+    pub total_agents: i32,
+    pub risk_level: String,
+    pub ai_analysis: String,
+    pub html_content: String,
+    pub raw_metrics_json: String,
+}

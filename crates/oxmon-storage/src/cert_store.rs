@@ -228,6 +228,27 @@ CREATE TABLE IF NOT EXISTS dictionary_types (
 );
 ";
 
+const AI_REPORTS_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS ai_reports (
+    id TEXT PRIMARY KEY,
+    report_date TEXT NOT NULL UNIQUE,
+    ai_account_id TEXT NOT NULL,
+    ai_provider TEXT NOT NULL,
+    ai_model TEXT NOT NULL,
+    total_agents INTEGER NOT NULL,
+    risk_level TEXT NOT NULL,
+    ai_analysis TEXT NOT NULL,
+    html_content TEXT NOT NULL,
+    raw_metrics_json TEXT NOT NULL,
+    notified INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_reports_date ON ai_reports(report_date);
+CREATE INDEX IF NOT EXISTS idx_ai_reports_provider ON ai_reports(ai_provider);
+CREATE INDEX IF NOT EXISTS idx_ai_reports_account ON ai_reports(ai_account_id);
+";
+
 const USERS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -365,6 +386,7 @@ impl CertStore {
         conn.execute_batch(NOTIFICATION_SILENCE_WINDOWS_SCHEMA)?;
         conn.execute_batch(SYSTEM_DICTIONARIES_SCHEMA)?;
         conn.execute_batch(DICTIONARY_TYPES_SCHEMA)?;
+        conn.execute_batch(AI_REPORTS_SCHEMA)?;
         conn.execute_batch(NOTIFICATION_LOGS_SCHEMA)?;
         conn.execute_batch(CLOUD_COLLECTION_STATE_SCHEMA)?;
         conn.execute_batch(CLOUD_INSTANCES_SCHEMA)?;
@@ -563,7 +585,9 @@ impl CertStore {
             return Ok(());
         }
 
-        tracing::info!("Phase 1: Adding id_v2 column to cloud_instances and generating Snowflake IDs");
+        tracing::info!(
+            "Phase 1: Adding id_v2 column to cloud_instances and generating Snowflake IDs"
+        );
 
         // 添加临时列
         conn.execute_batch("ALTER TABLE cloud_instances ADD COLUMN id_v2 TEXT;")?;
@@ -583,7 +607,10 @@ impl CertStore {
             )?;
         }
 
-        tracing::info!("Phase 1 completed: {} records updated with Snowflake IDs", count);
+        tracing::info!(
+            "Phase 1 completed: {} records updated with Snowflake IDs",
+            count
+        );
         Ok(())
     }
 
@@ -713,21 +740,39 @@ impl CertStore {
         tracing::info!("Adding Phase 1 fields to cloud_instances table");
 
         // 添加生命周期字段
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN created_time INTEGER", [])?;
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN expired_time INTEGER", [])?;
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN charge_type TEXT", [])?;
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN created_time INTEGER",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN expired_time INTEGER",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN charge_type TEXT",
+            [],
+        )?;
 
         // 添加网络配置字段
         conn.execute("ALTER TABLE cloud_instances ADD COLUMN vpc_id TEXT", [])?;
         conn.execute("ALTER TABLE cloud_instances ADD COLUMN subnet_id TEXT", [])?;
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN security_group_ids TEXT", [])?; // JSON array
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN security_group_ids TEXT",
+            [],
+        )?; // JSON array
 
         // 添加位置字段
         conn.execute("ALTER TABLE cloud_instances ADD COLUMN zone TEXT", [])?;
 
         // 创建索引
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_vpc ON cloud_instances(vpc_id)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_zone ON cloud_instances(zone)", [])?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cloud_instances_vpc ON cloud_instances(vpc_id)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cloud_instances_zone ON cloud_instances(zone)",
+            [],
+        )?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_charge_type ON cloud_instances(charge_type)", [])?;
 
         tracing::info!("Phase 1 fields migration completed");
@@ -757,34 +802,73 @@ impl CertStore {
         tracing::info!("Adding Phase 2 & 3 fields to cloud_instances table");
 
         // Phase 2: Advanced network features
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN internet_max_bandwidth INTEGER", [])?;
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN ipv6_addresses TEXT", [])?; // JSON array
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN eip_allocation_id TEXT", [])?;
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN internet_charge_type TEXT", [])?;
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN internet_max_bandwidth INTEGER",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN ipv6_addresses TEXT",
+            [],
+        )?; // JSON array
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN eip_allocation_id TEXT",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN internet_charge_type TEXT",
+            [],
+        )?;
 
         // Phase 2: System and image information
         conn.execute("ALTER TABLE cloud_instances ADD COLUMN image_id TEXT", [])?;
         conn.execute("ALTER TABLE cloud_instances ADD COLUMN hostname TEXT", [])?;
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN description TEXT", [])?;
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN description TEXT",
+            [],
+        )?;
 
         // Phase 2: Compute resource extensions
         conn.execute("ALTER TABLE cloud_instances ADD COLUMN gpu INTEGER", [])?;
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN io_optimized TEXT", [])?;
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN io_optimized TEXT",
+            [],
+        )?;
 
         // Phase 2: Operation tracking
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN latest_operation TEXT", [])?;
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN latest_operation_state TEXT", [])?;
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN latest_operation TEXT",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN latest_operation_state TEXT",
+            [],
+        )?;
 
         // Phase 3: Additional metadata
         conn.execute("ALTER TABLE cloud_instances ADD COLUMN tags TEXT", [])?; // JSON object
         conn.execute("ALTER TABLE cloud_instances ADD COLUMN project_id TEXT", [])?;
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN resource_group_id TEXT", [])?;
-        conn.execute("ALTER TABLE cloud_instances ADD COLUMN auto_renew_flag TEXT", [])?;
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN resource_group_id TEXT",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE cloud_instances ADD COLUMN auto_renew_flag TEXT",
+            [],
+        )?;
 
         // 创建索引
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_image ON cloud_instances(image_id)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_hostname ON cloud_instances(hostname)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_project ON cloud_instances(project_id)", [])?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cloud_instances_image ON cloud_instances(image_id)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cloud_instances_hostname ON cloud_instances(hostname)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cloud_instances_project ON cloud_instances(project_id)",
+            [],
+        )?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_resource_group ON cloud_instances(resource_group_id)", [])?;
 
         tracing::info!("Phase 2 & 3 fields migration completed");
@@ -794,7 +878,10 @@ impl CertStore {
     fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
         // Validate table name to prevent SQL injection via format!
         if !table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            return Err(anyhow::anyhow!("table_has_column: invalid table name '{}'", table));
+            return Err(anyhow::anyhow!(
+                "table_has_column: invalid table name '{}'",
+                table
+            ));
         }
         let sql = format!("PRAGMA table_info({})", table);
         let mut stmt = conn.prepare(&sql)?;
@@ -1143,7 +1230,8 @@ impl CertStore {
             params.push(Box::new(v));
         }
         let conn = self.lock_conn();
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
@@ -1185,12 +1273,15 @@ impl CertStore {
         }
         let limit_idx = params.len() + 1;
         let offset_idx = params.len() + 2;
-        sql.push_str(&format!(" ORDER BY r.checked_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+        sql.push_str(&format!(
+            " ORDER BY r.checked_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
+        ));
         params.push(Box::new(limit as i64));
         params.push(Box::new(offset as i64));
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok(Self::row_to_check_result(row))
         })?;
@@ -1488,7 +1579,11 @@ impl CertStore {
 
     /// 更新 agent 白名单条目
     /// - `description`: None = 不修改; Some(None) = 设为 NULL; Some(Some(v)) = 设为 v
-    pub fn update_agent_whitelist(&self, id: &str, description: Option<Option<&str>>) -> Result<bool> {
+    pub fn update_agent_whitelist(
+        &self,
+        id: &str,
+        description: Option<Option<&str>>,
+    ) -> Result<bool> {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
 
@@ -1506,7 +1601,10 @@ impl CertStore {
         sql.push_str(&format!(" WHERE id = ?{}", param_idx));
         params.push(Box::new(id.to_string()));
 
-        let updated = conn.execute(&sql, rusqlite::params_from_iter(params.iter().map(|b| b.as_ref())))?;
+        let updated = conn.execute(
+            &sql,
+            rusqlite::params_from_iter(params.iter().map(|b| b.as_ref())),
+        )?;
         Ok(updated > 0)
     }
 
@@ -1740,12 +1838,15 @@ impl CertStore {
         }
         let limit_idx = params.len() + 1;
         let offset_idx = params.len() + 2;
-        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+        sql.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
+        ));
         params.push(Box::new(limit as i64));
         params.push(Box::new(offset as i64));
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok(Self::row_to_alert_rule(row))
         })?;
@@ -1792,7 +1893,8 @@ impl CertStore {
             params.push(Box::new(v as i32));
         }
         let conn = self.lock_conn();
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
@@ -1996,12 +2098,15 @@ impl CertStore {
         }
         let limit_idx = params.len() + 1;
         let offset_idx = params.len() + 2;
-        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+        sql.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
+        ));
         params.push(Box::new(limit as i64));
         params.push(Box::new(offset as i64));
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok(Self::row_to_notification_channel(row))
         })?;
@@ -2042,7 +2147,8 @@ impl CertStore {
             params.push(Box::new(v.to_string()));
         }
         let conn = self.lock_conn();
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
@@ -2215,12 +2321,15 @@ impl CertStore {
         }
         let limit_idx = params.len() + 1;
         let offset_idx = params.len() + 2;
-        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+        sql.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
+        ));
         params.push(Box::new(limit as i64));
         params.push(Box::new(offset as i64));
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok(Self::row_to_system_config(row))
         })?;
@@ -2255,7 +2364,8 @@ impl CertStore {
             params.push(Box::new(v as i32));
         }
         let conn = self.lock_conn();
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
@@ -2331,6 +2441,164 @@ impl CertStore {
             description: row.get(5)?,
             config_json: row.get(6)?,
             enabled: enabled_int != 0,
+            created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
+            updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
+        })
+    }
+
+    // ---- AI Reports ----
+
+    pub fn save_ai_report(
+        &self,
+        report: &oxmon_common::types::CreateAIReportRequest,
+    ) -> Result<String> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        let report_id = oxmon_common::id::next_id();
+
+        conn.execute(
+            "INSERT INTO ai_reports (id, report_date, ai_account_id, ai_provider, ai_model, total_agents, risk_level, ai_analysis, html_content, raw_metrics_json, notified, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12)",
+            rusqlite::params![
+                &report_id,
+                &report.report_date,
+                &report.ai_account_id,
+                &report.ai_provider,
+                &report.ai_model,
+                report.total_agents,
+                &report.risk_level,
+                &report.ai_analysis,
+                &report.html_content,
+                &report.raw_metrics_json,
+                now,
+                now,
+            ],
+        )?;
+
+        Ok(report_id)
+    }
+
+    pub fn get_ai_report_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<oxmon_common::types::AIReportRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, report_date, ai_account_id, ai_provider, ai_model, total_agents, risk_level, ai_analysis, html_content, raw_metrics_json, notified, created_at, updated_at
+             FROM ai_reports WHERE id = ?1",
+        )?;
+        let mut rows =
+            stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_ai_report(row)))?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(Some(r)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_ai_report_by_date(
+        &self,
+        date: &str,
+    ) -> Result<Option<oxmon_common::types::AIReportRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, report_date, ai_account_id, ai_provider, ai_model, total_agents, risk_level, ai_analysis, html_content, raw_metrics_json, notified, created_at, updated_at
+             FROM ai_reports WHERE report_date = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![date], |row| {
+            Ok(Self::row_to_ai_report(row))
+        })?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(Some(r)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_latest_ai_report_by_account(
+        &self,
+        account_config_key: &str,
+    ) -> Result<Option<oxmon_common::types::AIReportRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, report_date, ai_account_id, ai_provider, ai_model, total_agents, risk_level, ai_analysis, html_content, raw_metrics_json, notified, created_at, updated_at
+             FROM ai_reports WHERE ai_account_id IN (SELECT id FROM system_configs WHERE config_key = ?1)
+             ORDER BY created_at DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![account_config_key], |row| {
+            Ok(Self::row_to_ai_report(row))
+        })?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(Some(r)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_ai_reports(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<oxmon_common::types::AIReportRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, report_date, ai_account_id, ai_provider, ai_model, total_agents, risk_level, ai_analysis, html_content, raw_metrics_json, notified, created_at, updated_at
+             FROM ai_reports ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+            Ok(Self::row_to_ai_report(row))
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row??);
+        }
+        Ok(results)
+    }
+
+    pub fn count_ai_reports(&self) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM ai_reports", [], |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
+    pub fn mark_ai_report_notified(&self, id: &str) -> Result<()> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+        conn.execute(
+            "UPDATE ai_reports SET notified = 1, updated_at = ?1 WHERE id = ?2",
+            rusqlite::params![now, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_ai_report(&self, id: &str) -> Result<bool> {
+        let conn = self.lock_conn();
+        let deleted = conn.execute(
+            "DELETE FROM ai_reports WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        Ok(deleted > 0)
+    }
+
+    fn row_to_ai_report(row: &rusqlite::Row) -> Result<oxmon_common::types::AIReportRow> {
+        let notified_int: i32 = row.get(10)?;
+        let created: i64 = row.get(11)?;
+        let updated: i64 = row.get(12)?;
+        Ok(oxmon_common::types::AIReportRow {
+            id: row.get(0)?,
+            report_date: row.get(1)?,
+            ai_account_id: row.get(2)?,
+            ai_provider: row.get(3)?,
+            ai_model: row.get(4)?,
+            total_agents: row.get(5)?,
+            risk_level: row.get(6)?,
+            ai_analysis: row.get(7)?,
+            html_content: row.get(8)?,
+            raw_metrics_json: row.get(9)?,
+            notified: notified_int != 0,
             created_at: DateTime::from_timestamp(created, 0).unwrap_or_default(),
             updated_at: DateTime::from_timestamp(updated, 0).unwrap_or_default(),
         })
@@ -2435,12 +2703,15 @@ impl CertStore {
         }
         let limit_idx = params.len() + 1;
         let offset_idx = params.len() + 2;
-        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+        sql.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
+        ));
         params.push(Box::new(limit as i64));
         params.push(Box::new(offset as i64));
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok(Self::row_to_silence_window(row))
         })?;
@@ -2452,8 +2723,7 @@ impl CertStore {
     }
 
     pub fn count_silence_windows(&self, recurrence: Option<&str>) -> Result<u64> {
-        let mut sql =
-            String::from("SELECT COUNT(*) FROM notification_silence_windows WHERE 1=1");
+        let mut sql = String::from("SELECT COUNT(*) FROM notification_silence_windows WHERE 1=1");
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         if let Some(v) = recurrence {
             let idx = params.len() + 1;
@@ -2461,7 +2731,8 @@ impl CertStore {
             params.push(Box::new(v.to_string()));
         }
         let conn = self.lock_conn();
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
@@ -2923,8 +3194,8 @@ impl CertStore {
     /// 获取 agent 的采集间隔配置（从 agents 表）
     pub fn get_agent_collection_interval(&self, agent_id: &str) -> Result<Option<u64>> {
         let conn = self.lock_conn();
-        let mut stmt = conn
-            .prepare("SELECT collection_interval_secs FROM agents WHERE agent_id = ?1")?;
+        let mut stmt =
+            conn.prepare("SELECT collection_interval_secs FROM agents WHERE agent_id = ?1")?;
         let mut rows = stmt.query_map(rusqlite::params![agent_id], |row| {
             let interval: Option<i64> = row.get(0)?;
             Ok(interval.map(|v| v as u64))
@@ -2964,7 +3235,15 @@ impl CertStore {
             ))
         })?;
         match rows.next() {
-            Some(Ok((id, agent_id, created, updated, description, encrypted_token, collection_interval_secs))) => {
+            Some(Ok((
+                id,
+                agent_id,
+                created,
+                updated,
+                description,
+                encrypted_token,
+                collection_interval_secs,
+            ))) => {
                 let token = encrypted_token.and_then(|e| self.token_encryptor.decrypt(&e).ok());
                 Ok(Some(oxmon_common::types::AgentWhitelistEntry {
                     id,
@@ -2983,11 +3262,11 @@ impl CertStore {
 
     /// 批量获取白名单中 agent_id -> created_at 的映射。
     /// 用于 list_agents 避免 N+1 查询。
-    pub fn get_whitelist_created_at_map(&self) -> Result<std::collections::HashMap<String, DateTime<Utc>>> {
+    pub fn get_whitelist_created_at_map(
+        &self,
+    ) -> Result<std::collections::HashMap<String, DateTime<Utc>>> {
         let conn = self.lock_conn();
-        let mut stmt = conn.prepare(
-            "SELECT agent_id, created_at FROM agent_whitelist",
-        )?;
+        let mut stmt = conn.prepare("SELECT agent_id, created_at FROM agent_whitelist")?;
         let rows = stmt.query_map([], |row| {
             let agent_id: String = row.get(0)?;
             let created: i64 = row.get(1)?;
@@ -3059,22 +3338,26 @@ impl CertStore {
         sql.push_str(&format!(" WHERE agent_id = ?{}", param_idx));
         params.push(Box::new(agent_id.to_string()));
 
-        let updated = conn.execute(&sql, rusqlite::params_from_iter(params.iter().map(|b| b.as_ref())))?;
+        let updated = conn.execute(
+            &sql,
+            rusqlite::params_from_iter(params.iter().map(|b| b.as_ref())),
+        )?;
         Ok(updated > 0)
     }
 
     /// 根据数据库 id 删除 agents 表记录
     pub fn delete_agent_from_db(&self, id: &str) -> Result<bool> {
         let conn = self.lock_conn();
-        let deleted = conn.execute(
-            "DELETE FROM agents WHERE id = ?1",
-            rusqlite::params![id],
-        )?;
+        let deleted = conn.execute("DELETE FROM agents WHERE id = ?1", rusqlite::params![id])?;
         Ok(deleted > 0)
     }
 
     /// 从数据库查询 agent 列表（支持分页）
-    pub fn list_agents_from_db(&self, limit: usize, offset: usize) -> Result<Vec<oxmon_common::types::AgentInfo>> {
+    pub fn list_agents_from_db(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<oxmon_common::types::AgentInfo>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, agent_id, last_seen, collection_interval_secs, description FROM agents ORDER BY last_seen DESC LIMIT ?1 OFFSET ?2",
@@ -3085,7 +3368,13 @@ impl CertStore {
             let last_seen: i64 = row.get(2)?;
             let interval: Option<i64> = row.get(3)?;
             let description: Option<String> = row.get(4)?;
-            Ok((id, agent_id, last_seen, interval.map(|v| v as u64), description))
+            Ok((
+                id,
+                agent_id,
+                last_seen,
+                interval.map(|v| v as u64),
+                description,
+            ))
         })?;
 
         let mut agents = Vec::new();
@@ -3144,7 +3433,13 @@ impl CertStore {
             let last_seen: i64 = row.get(2)?;
             let interval: Option<i64> = row.get(3)?;
             let description: Option<String> = row.get(4)?;
-            Ok((id, agent_id, last_seen, interval.map(|v| v as u64), description))
+            Ok((
+                id,
+                agent_id,
+                last_seen,
+                interval.map(|v| v as u64),
+                description,
+            ))
         })?;
 
         let mut agents = Vec::new();
@@ -3166,11 +3461,13 @@ impl CertStore {
     }
 
     /// 从数据库查询单个 agent
-    pub fn get_agent_from_db(&self, agent_id: &str) -> Result<Option<(DateTime<Utc>, DateTime<Utc>)>> {
+    pub fn get_agent_from_db(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<(DateTime<Utc>, DateTime<Utc>)>> {
         let conn = self.lock_conn();
-        let mut stmt = conn.prepare(
-            "SELECT first_seen, last_seen FROM agents WHERE agent_id = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT first_seen, last_seen FROM agents WHERE agent_id = ?1")?;
         let mut rows = stmt.query_map(rusqlite::params![agent_id], |row| {
             let first_seen: i64 = row.get(0)?;
             let last_seen: i64 = row.get(1)?;
@@ -3189,7 +3486,10 @@ impl CertStore {
     }
 
     /// 根据数据库 id 或 agent_id 查询 agent 完整记录
-    pub fn get_agent_by_id_or_agent_id(&self, id: &str) -> Result<Option<oxmon_common::types::AgentEntry>> {
+    pub fn get_agent_by_id_or_agent_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<oxmon_common::types::AgentEntry>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, agent_id, first_seen, last_seen, collection_interval_secs, description, created_at, updated_at
@@ -3215,18 +3515,25 @@ impl CertStore {
         })?;
 
         match rows.next() {
-            Some(Ok((id, agent_id, first_seen_ts, last_seen_ts, collection_interval_secs, description, created_at_ts, updated_at_ts))) => {
-                Ok(Some(oxmon_common::types::AgentEntry {
-                    id,
-                    agent_id,
-                    first_seen: DateTime::from_timestamp(first_seen_ts, 0).unwrap_or_default(),
-                    last_seen: DateTime::from_timestamp(last_seen_ts, 0).unwrap_or_default(),
-                    collection_interval_secs,
-                    description,
-                    created_at: DateTime::from_timestamp(created_at_ts, 0).unwrap_or_default(),
-                    updated_at: DateTime::from_timestamp(updated_at_ts, 0).unwrap_or_default(),
-                }))
-            }
+            Some(Ok((
+                id,
+                agent_id,
+                first_seen_ts,
+                last_seen_ts,
+                collection_interval_secs,
+                description,
+                created_at_ts,
+                updated_at_ts,
+            ))) => Ok(Some(oxmon_common::types::AgentEntry {
+                id,
+                agent_id,
+                first_seen: DateTime::from_timestamp(first_seen_ts, 0).unwrap_or_default(),
+                last_seen: DateTime::from_timestamp(last_seen_ts, 0).unwrap_or_default(),
+                collection_interval_secs,
+                description,
+                created_at: DateTime::from_timestamp(created_at_ts, 0).unwrap_or_default(),
+                updated_at: DateTime::from_timestamp(updated_at_ts, 0).unwrap_or_default(),
+            })),
             Some(Err(e)) => Err(e.into()),
             None => Ok(None),
         }
@@ -3751,7 +4058,8 @@ impl CertStore {
             "SELECT id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at
              FROM system_dictionaries WHERE dict_type = ?1",
         );
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(dict_type.to_string())];
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(dict_type.to_string())];
         if enabled_only {
             sql.push_str(" AND enabled = 1");
         }
@@ -3767,13 +4075,18 @@ impl CertStore {
         }
         let limit_idx = params.len() + 1;
         let offset_idx = params.len() + 2;
-        sql.push_str(&format!(" ORDER BY sort_order ASC, created_at ASC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"));
+        sql.push_str(&format!(
+            " ORDER BY sort_order ASC, created_at ASC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
+        ));
         params.push(Box::new(limit as i64));
         params.push(Box::new(offset as i64));
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt.query_map(param_refs.as_slice(), |row| Ok(Self::row_to_dictionary(row)))?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok(Self::row_to_dictionary(row))
+        })?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row??);
@@ -3808,7 +4121,8 @@ impl CertStore {
         params.push(Box::new(offset as i64));
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(param_refs.as_slice(), |row| {
             let dict_type: String = row.get(0)?;
             let count: i64 = row.get(1)?;
@@ -3909,9 +4223,9 @@ impl CertStore {
         key_contains: Option<&str>,
         label_contains: Option<&str>,
     ) -> Result<u64> {
-        let mut sql =
-            String::from("SELECT COUNT(*) FROM system_dictionaries WHERE dict_type = ?1");
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(dict_type.to_string())];
+        let mut sql = String::from("SELECT COUNT(*) FROM system_dictionaries WHERE dict_type = ?1");
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(dict_type.to_string())];
         if enabled_only {
             sql.push_str(" AND enabled = 1");
         }
@@ -3926,7 +4240,8 @@ impl CertStore {
             params.push(Box::new(like_pattern(v)));
         }
         let conn = self.lock_conn();
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
@@ -3993,7 +4308,8 @@ impl CertStore {
             params.push(Box::new(like_pattern(v)));
         }
         let conn = self.lock_conn();
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
@@ -4419,7 +4735,13 @@ impl CertStore {
              last_instance_count = ?3,
              last_error = ?4,
              updated_at = ?5",
-            rusqlite::params![config_key, last_collected_at, last_instance_count, last_error, now],
+            rusqlite::params![
+                config_key,
+                last_collected_at,
+                last_instance_count,
+                last_error,
+                now
+            ],
         )?;
         Ok(())
     }
@@ -4532,6 +4854,8 @@ impl CertStore {
         &self,
         provider: Option<&str>,
         region: Option<&str>,
+        status: Option<&str>,
+        search: Option<&str>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<CloudInstanceRow>> {
@@ -4561,13 +4885,60 @@ impl CertStore {
             params.push(Box::new(r.to_string()));
         }
 
+        if let Some(s) = status {
+            let normalized = s.trim().to_lowercase();
+            if !normalized.is_empty() && normalized != "all" {
+                sql.push_str(
+                    " AND (
+                        CASE
+                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('', 'unknown', 'unk', 'none', 'null', 'nil', '-') THEN 'unknown'
+                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('running', 'active', 'online', 'started', 'up', '1') THEN 'running'
+                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('stopped', 'stop', 'offline', 'terminated', 'shutdown', 'shutoff', 'down', '0') THEN 'stopped'
+                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN (
+                                'pending', 'starting', 'stopping', 'provisioning', 'initializing', 'booting',
+                                'creating', 'rebooting', 'restarting', 'resetting', 'reinstalling', 'migrating', '2'
+                            ) THEN 'pending'
+                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN (
+                                'failed', 'error', 'err', 'unhealthy',
+                                'launch_failed', 'create_failed', 'start_failed', 'stop_failed', 'reboot_failed', '3'
+                            ) THEN 'error'
+                            ELSE 'unknown'
+                        END
+                    ) = ?",
+                );
+                params.push(Box::new(normalized));
+            }
+        }
+
+        if let Some(keyword) = search {
+            let keyword = keyword.trim().to_lowercase();
+            if !keyword.is_empty() {
+                let like = format!("%{}%", keyword);
+                sql.push_str(
+                    " AND (
+                        LOWER(instance_id) LIKE ?
+                        OR LOWER(COALESCE(instance_name, '')) LIKE ?
+                        OR LOWER(account_config_key) LIKE ?
+                        OR LOWER(provider) LIKE ?
+                        OR LOWER(region) LIKE ?
+                        OR LOWER(COALESCE(public_ip, '')) LIKE ?
+                        OR LOWER(COALESCE(private_ip, '')) LIKE ?
+                        OR LOWER(COALESCE(os, '')) LIKE ?
+                        OR LOWER(COALESCE(status, '')) LIKE ?
+                    )",
+                );
+                for _ in 0..9 {
+                    params.push(Box::new(like.clone()));
+                }
+            }
+        }
+
         sql.push_str(" ORDER BY last_seen_at DESC LIMIT ? OFFSET ?");
         params.push(Box::new(limit as i64));
         params.push(Box::new(offset as i64));
 
         let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::ToSql> =
-            params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut rows = stmt.query(param_refs.as_slice())?;
 
         let mut instances = Vec::new();
@@ -4626,6 +4997,8 @@ impl CertStore {
         &self,
         provider: Option<&str>,
         region: Option<&str>,
+        status: Option<&str>,
+        search: Option<&str>,
     ) -> Result<u64> {
         let conn = self.lock_conn();
         let mut sql = String::from("SELECT COUNT(*) FROM cloud_instances WHERE 1=1");
@@ -4641,9 +5014,56 @@ impl CertStore {
             params.push(Box::new(r.to_string()));
         }
 
+        if let Some(s) = status {
+            let normalized = s.trim().to_lowercase();
+            if !normalized.is_empty() && normalized != "all" {
+                sql.push_str(
+                    " AND (
+                        CASE
+                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('', 'unknown', 'unk', 'none', 'null', 'nil', '-') THEN 'unknown'
+                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('running', 'active', 'online', 'started', 'up', '1') THEN 'running'
+                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('stopped', 'stop', 'offline', 'terminated', 'shutdown', 'shutoff', 'down', '0') THEN 'stopped'
+                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN (
+                                'pending', 'starting', 'stopping', 'provisioning', 'initializing', 'booting',
+                                'creating', 'rebooting', 'restarting', 'resetting', 'reinstalling', 'migrating', '2'
+                            ) THEN 'pending'
+                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN (
+                                'failed', 'error', 'err', 'unhealthy',
+                                'launch_failed', 'create_failed', 'start_failed', 'stop_failed', 'reboot_failed', '3'
+                            ) THEN 'error'
+                            ELSE 'unknown'
+                        END
+                    ) = ?",
+                );
+                params.push(Box::new(normalized));
+            }
+        }
+
+        if let Some(keyword) = search {
+            let keyword = keyword.trim().to_lowercase();
+            if !keyword.is_empty() {
+                let like = format!("%{}%", keyword);
+                sql.push_str(
+                    " AND (
+                        LOWER(instance_id) LIKE ?
+                        OR LOWER(COALESCE(instance_name, '')) LIKE ?
+                        OR LOWER(account_config_key) LIKE ?
+                        OR LOWER(provider) LIKE ?
+                        OR LOWER(region) LIKE ?
+                        OR LOWER(COALESCE(public_ip, '')) LIKE ?
+                        OR LOWER(COALESCE(private_ip, '')) LIKE ?
+                        OR LOWER(COALESCE(os, '')) LIKE ?
+                        OR LOWER(COALESCE(status, '')) LIKE ?
+                    )",
+                );
+                for _ in 0..9 {
+                    params.push(Box::new(like.clone()));
+                }
+            }
+        }
+
         let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::ToSql> =
-            params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let count: i64 = stmt.query_row(param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
@@ -5643,8 +6063,18 @@ mod tests {
                 })
                 .unwrap();
         }
-        assert_eq!(store.count_dictionaries_by_type("test_type", false, None, None).unwrap(), 3);
-        assert_eq!(store.count_dictionaries_by_type("nonexistent", false, None, None).unwrap(), 0);
+        assert_eq!(
+            store
+                .count_dictionaries_by_type("test_type", false, None, None)
+                .unwrap(),
+            3
+        );
+        assert_eq!(
+            store
+                .count_dictionaries_by_type("nonexistent", false, None, None)
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -6242,7 +6672,11 @@ mod tests {
 
         // 验证迁移前的数据
         let old_id_1: String = conn
-            .query_row("SELECT id FROM cloud_instances WHERE instance_id = 'ins-abc123'", [], |row| row.get(0))
+            .query_row(
+                "SELECT id FROM cloud_instances WHERE instance_id = 'ins-abc123'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(old_id_1, "tencent::ins-abc123");
 
@@ -6253,22 +6687,38 @@ mod tests {
 
         // 验证迁移后的数据
         let new_id_1: String = conn
-            .query_row("SELECT id FROM cloud_instances WHERE instance_id = 'ins-abc123'", [], |row| row.get(0))
+            .query_row(
+                "SELECT id FROM cloud_instances WHERE instance_id = 'ins-abc123'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
 
         // 新ID应该是数字字符串（雪花ID）
-        assert!(new_id_1.parse::<i64>().is_ok(), "New ID should be numeric: {}", new_id_1);
+        assert!(
+            new_id_1.parse::<i64>().is_ok(),
+            "New ID should be numeric: {}",
+            new_id_1
+        );
         assert_ne!(new_id_1, "tencent::ins-abc123", "ID should have changed");
 
         // 验证instance_id保持不变
         let instance_id: String = conn
-            .query_row("SELECT instance_id FROM cloud_instances WHERE id = ?1", [&new_id_1], |row| row.get(0))
+            .query_row(
+                "SELECT instance_id FROM cloud_instances WHERE id = ?1",
+                [&new_id_1],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(instance_id, "ins-abc123");
 
         // 验证第二条记录
         let new_id_2: String = conn
-            .query_row("SELECT id FROM cloud_instances WHERE instance_id = 'i-xyz789'", [], |row| row.get(0))
+            .query_row(
+                "SELECT id FROM cloud_instances WHERE instance_id = 'i-xyz789'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert!(new_id_2.parse::<i64>().is_ok());
         assert_ne!(new_id_2, "alibaba::i-xyz789");
@@ -6288,11 +6738,13 @@ mod tests {
                 now,
             ],
         );
-        assert!(result.is_err(), "UNIQUE constraint should prevent duplicate instance_id");
+        assert!(
+            result.is_err(),
+            "UNIQUE constraint should prevent duplicate instance_id"
+        );
 
         // 验证表结构正确（不应该有id_v2列）
         let has_id_v2 = CertStore::table_has_column(&conn, "cloud_instances", "id_v2").unwrap();
         assert!(!has_id_v2, "id_v2 column should not exist after migration");
     }
 }
-

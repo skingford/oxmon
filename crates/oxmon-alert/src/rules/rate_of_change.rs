@@ -38,7 +38,12 @@ impl AlertRule for RateOfChangeRule {
         self.silence_secs
     }
 
-    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>, locale: &str) -> Option<AlertEvent> {
+    fn evaluate(
+        &self,
+        window: &[MetricDataPoint],
+        now: DateTime<Utc>,
+        locale: &str,
+    ) -> Option<AlertEvent> {
         if window.len() < 2 {
             return None;
         }
@@ -66,7 +71,10 @@ impl AlertRule for RateOfChangeRule {
                 tmpl.replace("{metric}", &self.metric)
                     .replace("{labels}", &labels_display)
                     .replace("{rate:.1}", &format!("{:.1}", rate))
-                    .replace("{rate_threshold:.1}", &format!("{:.1}", self.rate_threshold))
+                    .replace(
+                        "{rate_threshold:.1}",
+                        &format!("{:.1}", self.rate_threshold),
+                    )
                     .replace("{agent}", &last.agent_id)
             };
             Some(AlertEvent {

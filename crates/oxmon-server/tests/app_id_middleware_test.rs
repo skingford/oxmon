@@ -29,8 +29,8 @@ async fn login_without_app_id_when_disabled_should_work() {
         "encrypted_password": encrypted
     });
 
-    let (status, body, _) = request_json(&ctx.app, "POST", "/v1/auth/login", None, Some(payload))
-        .await;
+    let (status, body, _) =
+        request_json(&ctx.app, "POST", "/v1/auth/login", None, Some(payload)).await;
 
     // Should succeed with valid credentials
     assert_eq!(status, StatusCode::OK);

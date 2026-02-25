@@ -51,6 +51,19 @@ enabled = true
 tick_secs = 60                  # Scheduler tick interval (check for due accounts)
 max_concurrent = 5              # Max concurrent cloud API calls
 
+# AI Report Configuration
+[ai_check]
+enabled = true
+tick_secs = 3600                # Scheduler tick interval (check for due AI accounts every hour)
+history_days = 7                # Query historical data for the last N days
+batch_size = 20                 # Batch size for processing agents (split when > 20)
+
+# AI Accounts
+# Managed via REST API or CLI: oxmon-server init-ai-accounts <config> <seed.json>
+# See config/ai-accounts.seed.example.json for examples
+# Supported providers: zhipu (GLM-4/GLM-5), kimi, minimax, claude, codex, custom
+# Each AI account has configurable collection_interval_secs for report generation frequency
+
 # Cloud Accounts
 # Managed via REST API or CLI: oxmon-server init-cloud-accounts <config> <seed.json>
 # See config/cloud-accounts.seed.example.json for examples

@@ -74,7 +74,12 @@ impl AlertRule for CertExpirationRule {
         self.silence_secs
     }
 
-    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>, locale: &str) -> Option<AlertEvent> {
+    fn evaluate(
+        &self,
+        window: &[MetricDataPoint],
+        now: DateTime<Utc>,
+        locale: &str,
+    ) -> Option<AlertEvent> {
         // 获取最新的数据点
         let latest = window.last()?;
 
@@ -90,8 +95,11 @@ impl AlertRule for CertExpirationRule {
         let message = {
             use oxmon_common::i18n::TRANSLATIONS;
             if days <= 0.0 {
-                let tmpl = TRANSLATIONS.get(locale, "alert.cert_expired",
-                    "Certificate expired: {domain} (expired {days:.0} days ago)");
+                let tmpl = TRANSLATIONS.get(
+                    locale,
+                    "alert.cert_expired",
+                    "Certificate expired: {domain} (expired {days:.0} days ago)",
+                );
                 tmpl.replace("{domain}", &domain)
                     .replace("{days:.0}", &format!("{:.0}", -days))
             } else if severity == Severity::Critical {

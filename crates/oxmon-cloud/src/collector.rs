@@ -38,7 +38,11 @@ impl CloudCollector {
                     all_instances.extend(instances);
                 }
                 Err(e) => {
-                    tracing::error!("Failed to list instances from provider {}: {}", provider.name(), e);
+                    tracing::error!(
+                        "Failed to list instances from provider {}: {}",
+                        provider.name(),
+                        e
+                    );
                 }
             }
         }

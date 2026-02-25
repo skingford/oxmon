@@ -84,7 +84,12 @@ impl AlertRule for ThresholdRule {
         self.silence_secs
     }
 
-    fn evaluate(&self, window: &[MetricDataPoint], now: DateTime<Utc>, locale: &str) -> Option<AlertEvent> {
+    fn evaluate(
+        &self,
+        window: &[MetricDataPoint],
+        now: DateTime<Utc>,
+        locale: &str,
+    ) -> Option<AlertEvent> {
         if window.is_empty() {
             return None;
         }

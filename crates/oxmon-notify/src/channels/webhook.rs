@@ -68,7 +68,12 @@ impl WebhookChannel {
 
 #[async_trait]
 impl NotificationChannel for WebhookChannel {
-    async fn send(&self, alert: &AlertEvent, recipients: &[String], _locale: &str) -> Result<SendResponse> {
+    async fn send(
+        &self,
+        alert: &AlertEvent,
+        recipients: &[String],
+        _locale: &str,
+    ) -> Result<SendResponse> {
         let body = self.render_body(alert);
         let mut response = SendResponse {
             retry_count: 0,

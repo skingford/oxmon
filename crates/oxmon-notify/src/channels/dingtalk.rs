@@ -90,12 +90,20 @@ impl DingTalkChannel {
         let labels_line = if labels_str.is_empty() {
             String::new()
         } else {
-            format!("\n- **{}**: {}", t.get(locale, "notify.labels", "Labels"), labels_str)
+            format!(
+                "\n- **{}**: {}",
+                t.get(locale, "notify.labels", "Labels"),
+                labels_str
+            )
         };
         let rule_line = if alert.rule_name.is_empty() {
             String::new()
         } else {
-            format!("\n- **{}**: {}", t.get(locale, "notify.rule", "Rule"), alert.rule_name)
+            format!(
+                "\n- **{}**: {}",
+                t.get(locale, "notify.rule", "Rule"),
+                alert.rule_name
+            )
         };
 
         // 构建 @ 标记文本
@@ -240,11 +248,79 @@ impl DingTalkChannel {
             error: last_err,
         }
     }
+
+    /// 发送 AI 报告通知（包含查看链接）
+    pub async fn send_ai_report_notification(
+        &self,
+        report_date: &str,
+        risk_level: &str,
+        total_agents: i32,
+        report_url: String,
+        locale: &str,
+    ) -> Result<()> {
+        let risk_emoji = match risk_level {
+            "high" => "🔴",
+            "medium" => "🟡",
+            "low" => "🟢",
+            _ => "✅",
+        };
+
+        let (title, content) = if locale == "zh-CN" {
+            let title = format!("{} 服务器巡检报告", risk_emoji);
+            let content = format!(
+                "### {} 服务器每日巡检报告\n\n\
+                 - **日期**: {}\n\
+                 - **服务器总数**: {} 台\n\
+                 - **风险等级**: {} {}\n\n\
+                 [📄 查看完整报告]({})",
+                risk_emoji, report_date, total_agents, risk_emoji, risk_level, report_url
+            );
+            (title, content)
+        } else {
+            let title = format!("{} Server Inspection Report", risk_emoji);
+            let content = format!(
+                "### {} Daily Server Inspection Report\n\n\
+                 - **Date**: {}\n\
+                 - **Total Servers**: {}\n\
+                 - **Risk Level**: {} {}\n\n\
+                 [📄 View Full Report]({})",
+                risk_emoji, report_date, total_agents, risk_emoji, risk_level, report_url
+            );
+            (title, content)
+        };
+
+        let payload = serde_json::json!({
+            "msgtype": "markdown",
+            "markdown": {
+                "title": title,
+                "text": content,
+            },
+            "at": {
+                "isAtAll": self.is_at_all,
+                "atMobiles": self.at_mobiles,
+                "atUserIds": self.at_user_ids,
+            }
+        });
+
+        let signed_url = self.sign_url(&self.webhook_url);
+        let result = self.send_to_url(&signed_url, &payload).await;
+
+        if let Some(err) = result.error {
+            return Err(err);
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl NotificationChannel for DingTalkChannel {
-    async fn send(&self, alert: &AlertEvent, recipients: &[String], locale: &str) -> Result<SendResponse> {
+    async fn send(
+        &self,
+        alert: &AlertEvent,
+        recipients: &[String],
+        locale: &str,
+    ) -> Result<SendResponse> {
         let (title, text) = self.format_markdown(alert, locale);
 
         // 构建 at 字段

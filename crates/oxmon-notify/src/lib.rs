@@ -8,6 +8,7 @@
 pub mod channels;
 pub mod manager;
 pub mod plugin;
+pub mod report_template;
 pub mod routing;
 pub mod utils;
 

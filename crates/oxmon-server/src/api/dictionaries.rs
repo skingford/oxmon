@@ -1,5 +1,7 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response, success_id_response, success_paginated_response, success_response};
+use crate::api::{
+    error_response, success_id_response, success_paginated_response, success_response,
+};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
@@ -7,8 +9,8 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use oxmon_common::types::{
-    CreateDictionaryRequest, CreateDictionaryTypeRequest, DictionaryItem,
-    DictionaryTypeSummary, UpdateDictionaryRequest, UpdateDictionaryTypeRequest,
+    CreateDictionaryRequest, CreateDictionaryTypeRequest, DictionaryItem, DictionaryTypeSummary,
+    UpdateDictionaryRequest, UpdateDictionaryTypeRequest,
 };
 use serde::Deserialize;
 use utoipa::IntoParams;
@@ -89,8 +91,13 @@ async fn list_dict_types(
         }
     };
 
-    match state.cert_store.list_all_dict_types(dict_type_contains, limit, offset) {
-        Ok(types) => success_paginated_response(StatusCode::OK, &trace_id, types, total, limit, offset),
+    match state
+        .cert_store
+        .list_all_dict_types(dict_type_contains, limit, offset)
+    {
+        Ok(types) => {
+            success_paginated_response(StatusCode::OK, &trace_id, types, total, limit, offset)
+        }
         Err(e) => {
             tracing::error!(error = %e, "Failed to list dictionary types");
             error_response(
@@ -133,7 +140,12 @@ async fn list_by_type(
     let key_contains = query.key_contains.as_deref();
     let label_contains = query.label_contains.as_deref();
 
-    let total = match state.cert_store.count_dictionaries_by_type(&dict_type, query.enabled_only, key_contains, label_contains) {
+    let total = match state.cert_store.count_dictionaries_by_type(
+        &dict_type,
+        query.enabled_only,
+        key_contains,
+        label_contains,
+    ) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, dict_type = %dict_type, "Failed to count dictionaries by type");
@@ -155,7 +167,9 @@ async fn list_by_type(
         limit,
         offset,
     ) {
-        Ok(items) => success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset),
+        Ok(items) => {
+            success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
+        }
         Err(e) => {
             tracing::error!(error = %e, dict_type = %dict_type, "Failed to list dictionaries by type");
             error_response(
@@ -331,9 +345,7 @@ async fn delete_dictionary(
                 .into_response();
             }
             match state.cert_store.delete_dictionary(&id) {
-                Ok(true) => {
-                    success_id_response(StatusCode::OK, &trace_id, id)
-                }
+                Ok(true) => success_id_response(StatusCode::OK, &trace_id, id),
                 Ok(false) => error_response(
                     StatusCode::NOT_FOUND,
                     &trace_id,

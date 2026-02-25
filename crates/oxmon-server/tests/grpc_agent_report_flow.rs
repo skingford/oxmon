@@ -35,7 +35,9 @@ async fn grpc_report_should_write_metrics_and_be_queryable_via_rest() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let items = body["data"]["items"].as_array().expect("data.items should be array");
+    let items = body["data"]["items"]
+        .as_array()
+        .expect("data.items should be array");
     assert!(!items.is_empty());
 
     // 先通过列表接口获取 agent 的数据库 id

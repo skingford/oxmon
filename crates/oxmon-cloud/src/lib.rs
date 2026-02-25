@@ -1,6 +1,6 @@
-pub mod tencent;
 pub mod alibaba;
 pub mod collector;
+pub mod tencent;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -21,10 +21,10 @@ pub struct CloudInstance {
     pub tags: std::collections::HashMap<String, String>,
     // Hardware specifications
     #[serde(default)]
-    pub instance_type: String,   // e.g., "S5.LARGE8", "ecs.c6.xlarge"
-    pub cpu_cores: Option<u32>,  // Number of vCPU cores
-    pub memory_gb: Option<f64>,  // Memory in GB
-    pub disk_gb: Option<f64>,    // Total disk capacity in GB (system + data disks)
+    pub instance_type: String, // e.g., "S5.LARGE8", "ecs.c6.xlarge"
+    pub cpu_cores: Option<u32>, // Number of vCPU cores
+    pub memory_gb: Option<f64>, // Memory in GB
+    pub disk_gb: Option<f64>,   // Total disk capacity in GB (system + data disks)
     // Lifecycle information (Phase 1)
     pub created_time: Option<i64>,   // Unix timestamp
     pub expired_time: Option<i64>,   // Unix timestamp (for PREPAID instances)
@@ -39,18 +39,18 @@ pub struct CloudInstance {
     // Phase 2: Advanced network features
     pub internet_max_bandwidth: Option<u32>, // Public network bandwidth limit in Mbps
     #[serde(default)]
-    pub ipv6_addresses: Vec<String>,         // IPv6 addresses
+    pub ipv6_addresses: Vec<String>, // IPv6 addresses
     pub eip_allocation_id: Option<String>,   // Elastic IP allocation ID (Alibaba)
     pub internet_charge_type: Option<String>, // Network billing type
     // Phase 2: System and image information
-    pub image_id: Option<String>,   // OS image ID
-    pub hostname: Option<String>,   // Hostname (mainly Alibaba)
+    pub image_id: Option<String>,    // OS image ID
+    pub hostname: Option<String>,    // Hostname (mainly Alibaba)
     pub description: Option<String>, // Instance description (mainly Alibaba)
     // Phase 2: Compute resource extensions
-    pub gpu: Option<u32>,           // Number of GPU cores (Tencent) or GPU count (Alibaba)
+    pub gpu: Option<u32>, // Number of GPU cores (Tencent) or GPU count (Alibaba)
     pub io_optimized: Option<String>, // IO optimization status (Alibaba: "optimized", "none")
     // Phase 2: Operation tracking (Tencent)
-    pub latest_operation: Option<String>,       // Latest operation performed
+    pub latest_operation: Option<String>, // Latest operation performed
     pub latest_operation_state: Option<String>, // Latest operation state (SUCCESS, OPERATING, FAILED)
     // Phase 3: Additional metadata
     pub project_id: Option<String>,        // Project ID (Tencent)
@@ -80,10 +80,10 @@ pub struct CloudMetrics {
     pub collected_at: DateTime<Utc>,
     // Hardware specifications
     #[serde(default)]
-    pub instance_type: String,   // e.g., "S5.LARGE8", "ecs.c6.xlarge"
-    pub cpu_cores: Option<u32>,  // Number of vCPU cores
-    pub memory_gb: Option<f64>,  // Memory in GB
-    pub disk_gb: Option<f64>,    // Total disk capacity in GB
+    pub instance_type: String, // e.g., "S5.LARGE8", "ecs.c6.xlarge"
+    pub cpu_cores: Option<u32>, // Number of vCPU cores
+    pub memory_gb: Option<f64>, // Memory in GB
+    pub disk_gb: Option<f64>,   // Total disk capacity in GB
 }
 
 /// Instance filter configuration
@@ -181,7 +181,10 @@ pub fn build_provider(
             account_name,
             config,
         )?)),
-        _ => Err(anyhow::anyhow!("Unsupported cloud provider: {}", provider_type)),
+        _ => Err(anyhow::anyhow!(
+            "Unsupported cloud provider: {}",
+            provider_type
+        )),
     }
 }
 

@@ -220,10 +220,7 @@ async fn do_check(domain: &str, port: i32, timeout_secs: u64) -> Result<CertInfo
     .map_err(|e| anyhow::anyhow!("TLS handshake failed: {e}"))?;
 
     // 提取验证结果
-    let captured_error = verify_error
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone());
+    let captured_error = verify_error.lock().ok().and_then(|guard| guard.clone());
 
     let chain_valid = captured_error.is_none();
     let error = captured_error.map(|e| format!("TLS verification failed: {e}"));

@@ -1,5 +1,7 @@
 use crate::api::pagination::{deserialize_optional_u64, PaginationParams};
-use crate::api::{error_response, success_empty_response, success_paginated_response, success_response};
+use crate::api::{
+    error_response, success_empty_response, success_paginated_response, success_response,
+};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
@@ -7,9 +9,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use oxmon_common::types::UpdateNotificationChannelRequest;
-use oxmon_storage::cert_store::{
-    NotificationChannelRow, NotificationLogFilter, SilenceWindowRow,
-};
+use oxmon_storage::cert_store::{NotificationChannelRow, NotificationLogFilter, SilenceWindowRow};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -53,7 +53,15 @@ fn mask_sensitive_config(config_json: &str) -> String {
 }
 
 fn mask_sensitive_fields(value: &mut serde_json::Value) {
-    const SENSITIVE_KEYWORDS: &[&str] = &["password", "secret", "key", "token", "credential", "api_key", "apikey"];
+    const SENSITIVE_KEYWORDS: &[&str] = &[
+        "password",
+        "secret",
+        "key",
+        "token",
+        "credential",
+        "api_key",
+        "apikey",
+    ];
     match value {
         serde_json::Value::Object(map) => {
             for (k, v) in map.iter_mut() {
@@ -158,7 +166,12 @@ async fn list_channels(
     let enabled = params.enabled_eq;
     let min_severity = params.min_severity_eq.as_deref();
 
-    let total = match state.cert_store.count_notification_channels(name_contains, channel_type, enabled, min_severity) {
+    let total = match state.cert_store.count_notification_channels(
+        name_contains,
+        channel_type,
+        enabled,
+        min_severity,
+    ) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count notification channels");
@@ -172,7 +185,14 @@ async fn list_channels(
         }
     };
 
-    match state.cert_store.list_notification_channels(name_contains, channel_type, enabled, min_severity, limit, offset) {
+    match state.cert_store.list_notification_channels(
+        name_contains,
+        channel_type,
+        enabled,
+        min_severity,
+        limit,
+        offset,
+    ) {
         Ok(channels) => {
             let mut result = Vec::with_capacity(channels.len());
             for ch in channels {
@@ -685,7 +705,10 @@ async fn list_silence_windows(
         }
     };
 
-    match state.cert_store.list_silence_windows(recurrence, limit, offset) {
+    match state
+        .cert_store
+        .list_silence_windows(recurrence, limit, offset)
+    {
         Ok(windows) => {
             success_paginated_response(StatusCode::OK, &trace_id, windows, total, limit, offset)
         }
@@ -929,12 +952,10 @@ async fn update_silence_window(
         }
     }
 
-    match state.cert_store.update_silence_window(
-        &id,
-        req.start_time,
-        req.end_time,
-        req.recurrence,
-    ) {
+    match state
+        .cert_store
+        .update_silence_window(&id, req.start_time, req.end_time, req.recurrence)
+    {
         Ok(Some(window)) => crate::api::success_id_response(StatusCode::OK, &trace_id, window.id),
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
@@ -1144,14 +1165,7 @@ async fn list_notification_logs(
                     api_error_code: r.api_error_code,
                 })
                 .collect();
-            success_paginated_response(
-                StatusCode::OK,
-                &trace_id,
-                items,
-                total,
-                limit,
-                offset,
-            )
+            success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to list notification logs");
@@ -1336,7 +1350,11 @@ pub fn notification_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(get_channel_by_id, update_channel, delete_channel))
         .routes(routes!(test_channel))
         .routes(routes!(list_silence_windows, create_silence_window))
-        .routes(routes!(get_silence_window, update_silence_window, delete_silence_window))
+        .routes(routes!(
+            get_silence_window,
+            update_silence_window,
+            delete_silence_window
+        ))
         .routes(routes!(list_notification_logs))
         .routes(routes!(get_notification_log))
         .routes(routes!(notification_log_summary))

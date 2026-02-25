@@ -4,6 +4,7 @@ use crate::{NotificationChannel, RecipientResult, SendResponse};
 use anyhow::Result;
 use async_trait::async_trait;
 use lettre::message::header::ContentType;
+use lettre::message::{MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use oxmon_common::types::AlertEvent;
@@ -50,12 +51,20 @@ impl EmailChannel {
         let labels_line = if labels_str.is_empty() {
             String::new()
         } else {
-            format!("\n{}: {}", t.get(locale, "notify.labels", "Labels"), labels_str)
+            format!(
+                "\n{}: {}",
+                t.get(locale, "notify.labels", "Labels"),
+                labels_str
+            )
         };
         let rule_line = if alert.rule_name.is_empty() {
             String::new()
         } else {
-            format!("\n{}: {}", t.get(locale, "notify.rule", "Rule"), alert.rule_name)
+            format!(
+                "\n{}: {}",
+                t.get(locale, "notify.rule", "Rule"),
+                alert.rule_name
+            )
         };
         let status_tag = if alert.status == 3 {
             format!(" {}", t.get(locale, "notify.recovered_tag", "[RECOVERED]"))
@@ -83,11 +92,119 @@ impl EmailChannel {
             time = alert.timestamp,
         )
     }
+
+    /// 发送 HTML 邮件（用于 AI 报告等）
+    pub async fn send_html(
+        &self,
+        subject: &str,
+        html_body: String,
+        plain_body: String,
+        recipients: &[String],
+    ) -> Result<SendResponse> {
+        let request_body = serde_json::json!({
+            "from_name": self.from_name,
+            "from_email": self.from_email,
+            "subject": subject,
+            "html_body_length": html_body.len(),
+            "plain_body_length": plain_body.len(),
+        });
+        let request_body_str = serde_json::to_string(&request_body).unwrap_or_default();
+        let request_body_truncated = truncate_string(&request_body_str, MAX_BODY_LENGTH);
+
+        let mut response = SendResponse {
+            retry_count: 0,
+            request_body: Some(request_body_truncated),
+            ..Default::default()
+        };
+
+        if recipients.is_empty() {
+            return Ok(response);
+        }
+
+        let mut total_retries = 0u32;
+        let mut recipient_results = Vec::new();
+
+        for recipient in recipients {
+            let from_address = format!("{} <{}>", self.from_name, self.from_email);
+
+            // 构建 MultiPart alternative（HTML + 纯文本回退）
+            let email_body = MultiPart::alternative()
+                .singlepart(
+                    SinglePart::builder()
+                        .header(ContentType::TEXT_PLAIN)
+                        .body(plain_body.clone()),
+                )
+                .singlepart(
+                    SinglePart::builder()
+                        .header(ContentType::TEXT_HTML)
+                        .body(html_body.clone()),
+                );
+
+            let email = Message::builder()
+                .from(from_address.parse()?)
+                .to(recipient.parse()?)
+                .subject(subject)
+                .multipart(email_body)?;
+
+            let mut last_err = None;
+            let mut attempts = 0u32;
+            for attempt in 0..3 {
+                attempts = attempt + 1;
+                match self.transport.send(email.clone()).await {
+                    Ok(_) => {
+                        last_err = None;
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            attempt = attempts,
+                            recipient = %recipient,
+                            error = %e,
+                            "HTML email send failed, retrying"
+                        );
+                        last_err = Some(e);
+                        if attempt < 2 {
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                100 * 2u64.pow(attempt),
+                            ))
+                            .await;
+                        }
+                    }
+                }
+            }
+
+            total_retries += attempts.saturating_sub(1);
+
+            if let Some(e) = last_err {
+                tracing::error!(recipient = %recipient, error = %e, "HTML email send failed after 3 retries");
+                recipient_results.push(RecipientResult {
+                    recipient: recipient.clone(),
+                    status: "failed".to_string(),
+                    error: Some(e.to_string()),
+                });
+            } else {
+                recipient_results.push(RecipientResult {
+                    recipient: recipient.clone(),
+                    status: "success".to_string(),
+                    error: None,
+                });
+            }
+        }
+
+        response.retry_count = total_retries;
+        response.recipient_results = recipient_results;
+        Ok(response)
+    }
 }
 
 #[async_trait]
 impl NotificationChannel for EmailChannel {
-    async fn send(&self, alert: &AlertEvent, recipients: &[String], locale: &str) -> Result<SendResponse> {
+    async fn send(
+        &self,
+        alert: &AlertEvent,
+        recipients: &[String],
+        locale: &str,
+    ) -> Result<SendResponse> {
         use oxmon_common::i18n::TRANSLATIONS;
         let recovered_tag = if alert.status == 3 {
             TRANSLATIONS.get(locale, "notify.recovered_tag", "[RECOVERED]")

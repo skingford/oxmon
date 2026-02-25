@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use crate::{api, auth, cert, logging, openapi};
+use crate::{ai, api, auth, cert, logging, openapi};
 use axum::middleware;
 use axum::Router;
 use std::sync::Arc;
@@ -59,12 +59,14 @@ pub fn build_http_app(state: AppState) -> Router {
     let (login_router, login_spec) = api::auth_routes().split_for_parts();
     let (protected_router, protected_spec) = api::protected_routes().split_for_parts();
     let (cert_router, cert_spec) = cert::api::cert_routes().split_for_parts();
+    let (ai_router, ai_spec) = ai::api::ai_routes().split_for_parts();
 
     let mut merged_spec = ApiDoc::openapi();
     merged_spec.merge(public_spec);
     merged_spec.merge(login_spec);
     merged_spec.merge(protected_spec);
     merged_spec.merge(cert_spec);
+    merged_spec.merge(ai_spec);
     let spec = Arc::new(merged_spec.clone());
 
     let cors = if state.config.cors_allowed_origins.is_empty() {
@@ -103,31 +105,30 @@ pub fn build_http_app(state: AppState) -> Router {
         login_router
     };
 
-    let protected_branch = if rate_limit_enabled {
-        let api_governor_conf = Arc::new(
-            GovernorConfigBuilder::default()
-                .per_second(1)
-                .burst_size(60)
-                .finish()
-                .expect("failed to build API rate limiter config"),
-        );
-        protected_router
-            .merge(cert_router)
-            .layer(GovernorLayer {
-                config: api_governor_conf,
-            })
-            .layer(middleware::from_fn_with_state(
-                state.clone(),
-                auth::jwt_auth_middleware,
-            ))
-    } else {
-        protected_router
-            .merge(cert_router)
-            .layer(middleware::from_fn_with_state(
-                state.clone(),
-                auth::jwt_auth_middleware,
-            ))
-    };
+    let protected_branch =
+        if rate_limit_enabled {
+            let api_governor_conf = Arc::new(
+                GovernorConfigBuilder::default()
+                    .per_second(1)
+                    .burst_size(60)
+                    .finish()
+                    .expect("failed to build API rate limiter config"),
+            );
+            protected_router
+                .merge(cert_router)
+                .merge(ai_router)
+                .layer(GovernorLayer {
+                    config: api_governor_conf,
+                })
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    auth::jwt_auth_middleware,
+                ))
+        } else {
+            protected_router.merge(cert_router).merge(ai_router).layer(
+                middleware::from_fn_with_state(state.clone(), auth::jwt_auth_middleware),
+            )
+        };
 
     public_router
         .merge(login_branch)

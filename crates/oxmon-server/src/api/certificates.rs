@@ -203,7 +203,14 @@ async fn list_certificates(
         Err(resp) => return resp,
     };
 
-    success_paginated_response(StatusCode::OK, &trace_id, certificates, total, limit, offset)
+    success_paginated_response(
+        StatusCode::OK,
+        &trace_id,
+        certificates,
+        total,
+        limit,
+        offset,
+    )
 }
 
 /// 证书链信息

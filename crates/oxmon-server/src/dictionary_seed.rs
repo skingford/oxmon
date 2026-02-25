@@ -138,7 +138,11 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
     order = 0;
     for (key, label, desc) in [
         ("cpu.usage", "CPU 使用率", "CPU 整体使用百分比"),
-        ("cpu.core_usage", "CPU 核心使用率", "单个 CPU 核心使用百分比"),
+        (
+            "cpu.core_usage",
+            "CPU 核心使用率",
+            "单个 CPU 核心使用百分比",
+        ),
         ("memory.total", "总内存", "总内存字节数"),
         ("memory.used", "已用内存", "已使用内存字节数"),
         ("memory.available", "可用内存", "可用内存字节数"),
@@ -149,7 +153,11 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ("disk.total", "磁盘总量", "磁盘总容量字节数"),
         ("disk.used", "已用磁盘", "已使用磁盘字节数"),
         ("disk.available", "可用磁盘", "可用磁盘字节数"),
-        ("disk.used_percent", "磁盘使用率", "磁盘已用空间占总空间百分比"),
+        (
+            "disk.used_percent",
+            "磁盘使用率",
+            "磁盘已用空间占总空间百分比",
+        ),
         (
             "network.bytes_recv",
             "网络接收字节数",
@@ -316,7 +324,11 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
     for (key, label, desc) in [
         ("tencent", "腾讯云", "Tencent Cloud"),
         ("alibaba", "阿里云", "Alibaba Cloud"),
-        ("aws", "亚马逊云", "Amazon Web Services (reserved for future use)"),
+        (
+            "aws",
+            "亚马逊云",
+            "Amazon Web Services (reserved for future use)",
+        ),
     ] {
         order += 1;
         items.push(make_system_item(
@@ -333,6 +345,12 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
     // ---- cloud_instance_status: 云实例状态 ----
     order = 0;
     for (key, label, desc) in [
+        (
+            "PENDING",
+            "创建中",
+            "Tencent Cloud: Instance is pending/provisioning",
+        ),
+        ("Pending", "创建中", "Alibaba Cloud: Instance is pending"),
         ("RUNNING", "运行中", "Tencent Cloud: Instance is running"),
         ("Running", "运行中", "Alibaba Cloud: Instance is running"),
         ("STOPPED", "已停止", "Tencent Cloud: Instance is stopped"),
@@ -341,6 +359,42 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ("Starting", "启动中", "Alibaba Cloud: Instance is starting"),
         ("STOPPING", "停止中", "Tencent Cloud: Instance is stopping"),
         ("Stopping", "停止中", "Alibaba Cloud: Instance is stopping"),
+        (
+            "REBOOTING",
+            "重启中",
+            "Tencent Cloud: Instance is rebooting",
+        ),
+        (
+            "Rebooting",
+            "重启中",
+            "Alibaba Cloud: Instance is rebooting",
+        ),
+        (
+            "RESETTING",
+            "重置中",
+            "Tencent Cloud: Instance is resetting",
+        ),
+        (
+            "REINSTALLING",
+            "重装中",
+            "Tencent Cloud: Instance is reinstalling OS",
+        ),
+        (
+            "MIGRATING",
+            "迁移中",
+            "Tencent Cloud: Instance is migrating",
+        ),
+        (
+            "LAUNCH_FAILED",
+            "启动失败",
+            "Tencent Cloud: Instance launch failed",
+        ),
+        ("FAILED", "失败", "Generic: instance operation failed"),
+        ("Error", "异常", "Generic: instance is in error state"),
+        ("ERROR", "异常", "Generic: instance is in error state"),
+        ("SHUTDOWN", "已关机", "Tencent Cloud: Instance is shutdown"),
+        ("Terminated", "已终止", "Generic: instance terminated"),
+        ("TERMINATED", "已终止", "Generic: instance terminated"),
     ] {
         order += 1;
         items.push(make_system_item(
@@ -418,7 +472,11 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
     // ---- cloud_io_optimized: IO优化状态 ----
     order = 0;
     for (key, label, desc) in [
-        ("optimized", "已优化", "Alibaba Cloud: IO optimized instance"),
+        (
+            "optimized",
+            "已优化",
+            "Alibaba Cloud: IO optimized instance",
+        ),
         ("none", "非优化", "Alibaba Cloud: Non-IO optimized instance"),
     ] {
         order += 1;
@@ -451,11 +509,7 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
             "不续费",
             "Tencent Cloud: Do not notify and do not renew",
         ),
-        (
-            "enabled",
-            "自动续费",
-            "Alibaba Cloud: Auto-renewal enabled",
-        ),
+        ("enabled", "自动续费", "Alibaba Cloud: Auto-renewal enabled"),
         (
             "disabled",
             "手动续费",
@@ -484,6 +538,82 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         order += 1;
         items.push(make_system_item(
             "cloud_operation_state",
+            key,
+            label,
+            Some(value),
+            order,
+            Some(desc),
+            &now,
+        ));
+    }
+
+    // ---- ai_provider: AI 模型提供商 ----
+    order = 0;
+    for (key, label, desc) in [
+        ("zhipu", "智谱AI", "智谱 GLM 系列大模型（默认）"),
+        ("kimi", "Kimi", "月之暗面 Moonshot 系列"),
+        ("minimax", "MiniMax", "MiniMax 大模型"),
+        ("claude", "Claude", "Anthropic Claude 系列"),
+        ("codex", "Codex", "OpenAI Codex/GPT 系列"),
+        ("custom", "自定义", "用户自定义模型"),
+    ] {
+        order += 1;
+        items.push(make_system_item(
+            "ai_provider",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
+    }
+
+    // ---- ai_model: AI 模型名称（预置常用模型）----
+    order = 0;
+    for (key, label, desc) in [
+        ("glm-5", "GLM-5", "智谱 GLM-5 模型（推荐）"),
+        ("glm-4", "GLM-4", "智谱 GLM-4 模型"),
+        ("moonshot-v1-32k", "Moonshot V1 32K", "Kimi 32K 上下文模型"),
+        (
+            "moonshot-v1-128k",
+            "Moonshot V1 128K",
+            "Kimi 128K 上下文模型",
+        ),
+        ("abab6.5-chat", "ABAB 6.5 Chat", "MiniMax ABAB 6.5 对话模型"),
+        (
+            "claude-3-5-sonnet-20241022",
+            "Claude 3.5 Sonnet",
+            "Claude 3.5 Sonnet",
+        ),
+        ("claude-3-opus-20240229", "Claude 3 Opus", "Claude 3 Opus"),
+        ("gpt-4", "GPT-4", "OpenAI GPT-4"),
+        ("gpt-4-turbo", "GPT-4 Turbo", "OpenAI GPT-4 Turbo"),
+        ("custom", "自定义模型", "用户自定义模型名称"),
+    ] {
+        order += 1;
+        items.push(make_system_item(
+            "ai_model",
+            key,
+            label,
+            None,
+            order,
+            Some(desc),
+            &now,
+        ));
+    }
+
+    // ---- ai_risk_level: AI 分析风险等级 ----
+    order = 0;
+    for (key, label, value, desc) in [
+        ("high", "高风险", "3", "需要立即人工介入处理"),
+        ("medium", "中风险", "2", "需要持续关注"),
+        ("low", "低风险", "1", "轻微问题，可延后处理"),
+        ("normal", "正常", "0", "系统运行状态良好"),
+    ] {
+        order += 1;
+        items.push(make_system_item(
+            "ai_risk_level",
             key,
             label,
             Some(value),
@@ -528,6 +658,9 @@ pub fn default_type_seed_items() -> Vec<DictionaryType> {
         ("cloud_io_optimized", "IO优化状态", "云实例 IO 优化状态"),
         ("cloud_auto_renew", "自动续费标识", "云实例自动续费设置"),
         ("cloud_operation_state", "操作状态", "云实例操作执行状态"),
+        ("ai_provider", "AI 模型提供商", "AI 大模型提供商类型"),
+        ("ai_model", "AI 模型名称", "AI 模型的具体名称"),
+        ("ai_risk_level", "AI 风险等级", "AI 分析得出的风险等级"),
     ]
     .into_iter()
     .enumerate()
