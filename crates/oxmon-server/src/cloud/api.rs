@@ -54,7 +54,11 @@ struct UpdateCloudAccountRequest {
 /// 云实例响应
 #[derive(Serialize, ToSchema)]
 struct CloudInstanceResponse {
+    /// 系统雪花ID(主键)
+    #[schema(example = "1234567890123456789")]
     id: String,
+    /// 云提供商的实例ID
+    #[schema(example = "ins-ic9p379n")]
     instance_id: String,
     instance_name: Option<String>,
     provider: String,
@@ -66,6 +70,86 @@ struct CloudInstanceResponse {
     status: Option<String>,
     last_seen_at: String,
     created_at: String,
+    updated_at: String,
+    // Hardware specifications
+    instance_type: Option<String>,
+    cpu_cores: Option<i32>,
+    memory_gb: Option<f64>,
+    disk_gb: Option<f64>,
+}
+
+/// 单条指标最新值
+#[derive(Serialize, ToSchema)]
+struct MetricLatestValue {
+    /// 指标名称
+    metric_name: String,
+    /// 最新值
+    value: f64,
+    /// 采集时间
+    collected_at: String,
+}
+
+/// 云实例详情响应（包含实时指标）
+#[derive(Serialize, ToSchema)]
+struct CloudInstanceDetailResponse {
+    // ---- Instance basic info ----
+    /// 数据库主键
+    id: String,
+    /// 云实例 ID（如 ins-abc123）
+    instance_id: String,
+    /// 实例名称
+    instance_name: Option<String>,
+    /// 云供应商（tencent / alibaba）
+    provider: String,
+    /// 关联的云账户 config_key
+    account_config_key: String,
+    /// 地域
+    region: String,
+    /// 公网 IP
+    public_ip: Option<String>,
+    /// 内网 IP
+    private_ip: Option<String>,
+    /// 操作系统
+    os: Option<String>,
+    /// 实例状态（Running / Stopped 等）
+    status: Option<String>,
+
+    // ---- Hardware specifications ----
+    /// 实例规格（如 S5.LARGE8）
+    instance_type: Option<String>,
+    /// CPU 核心数
+    cpu_cores: Option<i32>,
+    /// 内存（GB）
+    memory_gb: Option<f64>,
+    /// 磁盘总容量（GB）
+    disk_gb: Option<f64>,
+
+    // ---- Latest metrics ----
+    /// CPU 使用率（%）
+    cpu_usage: Option<MetricLatestValue>,
+    /// 内存使用率（%）
+    memory_usage: Option<MetricLatestValue>,
+    /// 磁盘使用率（%）
+    disk_usage: Option<MetricLatestValue>,
+    /// 入站网络流量（bytes/s）
+    network_in_bytes: Option<MetricLatestValue>,
+    /// 出站网络流量（bytes/s）
+    network_out_bytes: Option<MetricLatestValue>,
+    /// 磁盘读 IOPS
+    disk_iops_read: Option<MetricLatestValue>,
+    /// 磁盘写 IOPS
+    disk_iops_write: Option<MetricLatestValue>,
+    /// TCP 连接数
+    connections: Option<MetricLatestValue>,
+
+    // ---- Timestamps ----
+    /// 最近一次被调度器发现的时间
+    last_seen_at: String,
+    /// 最近一次指标采集时间（来自指标数据）
+    last_collected_at: Option<String>,
+    /// 实例首次入库时间
+    created_at: String,
+    /// 实例信息最后更新时间
     updated_at: String,
 }
 
@@ -145,6 +229,11 @@ fn cloud_instance_row_to_response(row: CloudInstanceRow) -> CloudInstanceRespons
         updated_at: chrono::DateTime::from_timestamp(row.updated_at, 0)
             .unwrap_or_default()
             .to_rfc3339(),
+        // Hardware specifications
+        instance_type: row.instance_type,
+        cpu_cores: row.cpu_cores,
+        memory_gb: row.memory_gb,
+        disk_gb: row.disk_gb,
     }
 }
 
@@ -712,6 +801,21 @@ async fn trigger_cloud_account_collection(
     // Build provider and collect metrics
     match build_provider(provider_type, account_name, account_config) {
         Ok(provider) => {
+            // First, list instances to get hardware specs
+            let instances = match provider.list_instances().await {
+                Ok(inst) => inst,
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to list instances");
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        &trace_id,
+                        "provider_error",
+                        "Failed to list instances",
+                    )
+                    .into_response();
+                }
+            };
+
             // Use CloudCollector to gather metrics
             let collector = oxmon_cloud::collector::CloudCollector::new(
                 vec![std::sync::Arc::from(provider)],
@@ -719,7 +823,19 @@ async fn trigger_cloud_account_collection(
             );
 
             match collector.collect_all().await {
-                Ok(metrics) => {
+                Ok(mut metrics) => {
+                    // Enrich metrics with hardware specs from instances
+                    for metric in &mut metrics {
+                        if let Some(instance) = instances
+                            .iter()
+                            .find(|i| i.instance_id == metric.instance_id)
+                        {
+                            metric.instance_type = instance.instance_type.clone();
+                            metric.cpu_cores = instance.cpu_cores;
+                            metric.memory_gb = instance.memory_gb;
+                            metric.disk_gb = instance.disk_gb;
+                        }
+                    }
                     // Convert to MetricDataPoint and write to storage
                     let now = chrono::Utc::now();
                     let mut data_points = Vec::new();
@@ -730,6 +846,20 @@ async fn trigger_cloud_account_collection(
                         labels.insert("provider".to_string(), m.provider.clone());
                         labels.insert("region".to_string(), m.region.clone());
                         labels.insert("instance_name".to_string(), m.instance_name.clone());
+
+                        // Add hardware specifications as labels
+                        if !m.instance_type.is_empty() {
+                            labels.insert("instance_type".to_string(), m.instance_type.clone());
+                        }
+                        if let Some(cpu_cores) = m.cpu_cores {
+                            labels.insert("cpu_cores".to_string(), cpu_cores.to_string());
+                        }
+                        if let Some(memory_gb) = m.memory_gb {
+                            labels.insert("memory_gb".to_string(), format!("{:.1}", memory_gb));
+                        }
+                        if let Some(disk_gb) = m.disk_gb {
+                            labels.insert("disk_gb".to_string(), format!("{:.1}", disk_gb));
+                        }
 
                         if let Some(cpu) = m.cpu_usage {
                             data_points.push(oxmon_common::types::MetricDataPoint {
@@ -901,6 +1031,140 @@ async fn list_cloud_instances(
     }
 }
 
+/// Cloud metric names to query for instance detail
+const CLOUD_METRIC_NAMES: &[&str] = &[
+    "cloud.cpu.usage",
+    "cloud.memory.usage",
+    "cloud.disk.usage",
+    "cloud.network.in_bytes",
+    "cloud.network.out_bytes",
+    "cloud.disk.iops_read",
+    "cloud.disk.iops_write",
+    "cloud.connections",
+];
+
+/// 获取云实例详情（含最新指标数据）
+#[utoipa::path(
+    get,
+    path = "/v1/cloud/instances/{id}",
+    tag = "Cloud",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "云实例系统雪花ID（cloud_instances 表主键，例如 1234567890123456789）")
+    ),
+    responses(
+        (status = 200, description = "云实例详情（含最新指标）", body = CloudInstanceDetailResponse),
+        (status = 401, description = "未认证", body = crate::api::ApiError),
+        (status = 404, description = "实例不存在", body = crate::api::ApiError)
+    )
+)]
+async fn get_cloud_instance_detail(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    // 1. Load instance metadata from cloud_instances table
+    let instance = match state.cert_store.get_cloud_instance_by_id(&id) {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                "Cloud instance not found",
+            )
+            .into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to get cloud instance");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
+    // 2. Construct the virtual agent_id used in metrics storage
+    //    Format: cloud:{provider}:{instance_id}
+    let agent_id = format!("cloud:{}:{}", instance.provider, instance.instance_id);
+
+    // 3. Query latest metric values (lookback 2 days to cover partition boundaries)
+    let metrics = match state.storage.query_latest_metrics_for_agent(
+        &agent_id,
+        CLOUD_METRIC_NAMES,
+        2,
+    ) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(error = %e, agent_id = %agent_id, "Failed to query latest cloud metrics, returning instance info without metrics");
+            vec![]
+        }
+    };
+
+    // 4. Build a lookup map: metric_name -> MetricDataPoint
+    let metrics_map: std::collections::HashMap<String, _> = metrics
+        .into_iter()
+        .map(|dp| (dp.metric_name.clone(), dp))
+        .collect();
+
+    // Helper closure to extract a metric latest value
+    let extract_metric = |name: &str| -> Option<MetricLatestValue> {
+        metrics_map.get(name).map(|dp| MetricLatestValue {
+            metric_name: name.to_string(),
+            value: dp.value,
+            collected_at: dp.timestamp.to_rfc3339(),
+        })
+    };
+
+    // 5. Determine the last_collected_at from the most recent metric timestamp
+    let last_collected_at = metrics_map
+        .values()
+        .map(|dp| dp.timestamp)
+        .max()
+        .map(|t| t.to_rfc3339());
+
+    // 6. Assemble the response
+    let resp = CloudInstanceDetailResponse {
+        id: instance.id,
+        instance_id: instance.instance_id,
+        instance_name: instance.instance_name,
+        provider: instance.provider,
+        account_config_key: instance.account_config_key,
+        region: instance.region,
+        public_ip: instance.public_ip,
+        private_ip: instance.private_ip,
+        os: instance.os,
+        status: instance.status,
+        instance_type: instance.instance_type,
+        cpu_cores: instance.cpu_cores,
+        memory_gb: instance.memory_gb,
+        disk_gb: instance.disk_gb,
+        cpu_usage: extract_metric("cloud.cpu.usage"),
+        memory_usage: extract_metric("cloud.memory.usage"),
+        disk_usage: extract_metric("cloud.disk.usage"),
+        network_in_bytes: extract_metric("cloud.network.in_bytes"),
+        network_out_bytes: extract_metric("cloud.network.out_bytes"),
+        disk_iops_read: extract_metric("cloud.disk.iops_read"),
+        disk_iops_write: extract_metric("cloud.disk.iops_write"),
+        connections: extract_metric("cloud.connections"),
+        last_seen_at: chrono::DateTime::from_timestamp(instance.last_seen_at, 0)
+            .unwrap_or_default()
+            .to_rfc3339(),
+        last_collected_at,
+        created_at: chrono::DateTime::from_timestamp(instance.created_at, 0)
+            .unwrap_or_default()
+            .to_rfc3339(),
+        updated_at: chrono::DateTime::from_timestamp(instance.updated_at, 0)
+            .unwrap_or_default()
+            .to_rfc3339(),
+    };
+
+    success_response(StatusCode::OK, &trace_id, resp)
+}
+
 /// 注册云API路由
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -912,4 +1176,5 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(test_cloud_account_connection))
         .routes(routes!(trigger_cloud_account_collection))
         .routes(routes!(list_cloud_instances))
+        .routes(routes!(get_cloud_instance_detail))
 }

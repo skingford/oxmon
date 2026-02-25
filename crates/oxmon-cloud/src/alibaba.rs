@@ -325,6 +325,27 @@ impl AlibabaCloudProvider {
                         }
                     }
 
+                    // Parse hardware specifications
+                    let instance_type = inst
+                        .get("InstanceType")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    let cpu_cores = inst
+                        .get("Cpu")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32);
+
+                    // Memory is in MB, convert to GB
+                    let memory_gb = inst
+                        .get("Memory")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| (v as f64) / 1024.0);
+
+                    // Disk capacity will be populated later by calling DescribeDisks API
+                    let disk_gb: Option<f64> = None;
+
                     let instance = CloudInstance {
                         instance_id,
                         instance_name,
@@ -335,6 +356,10 @@ impl AlibabaCloudProvider {
                         os,
                         status,
                         tags,
+                        instance_type,
+                        cpu_cores,
+                        memory_gb,
+                        disk_gb,
                     };
 
                     // Apply instance filter
@@ -350,7 +375,95 @@ impl AlibabaCloudProvider {
             page_number += 1;
         }
 
+        // Query disk information for all instances in this region
+        if !all_instances.is_empty() {
+            self.populate_disk_info(region, &mut all_instances).await?;
+        }
+
         Ok(all_instances)
+    }
+
+    /// Populate disk information for instances by calling DescribeDisks API
+    async fn populate_disk_info(&self, region: &str, instances: &mut [CloudInstance]) -> Result<()> {
+        if instances.is_empty() {
+            return Ok(());
+        }
+
+        // Build map of instance_id -> instance for quick lookup
+        let mut instance_map: std::collections::HashMap<String, &mut CloudInstance> =
+            std::collections::HashMap::new();
+
+        for instance in instances.iter_mut() {
+            instance_map.insert(instance.instance_id.clone(), instance);
+        }
+
+        // Query all disks in this region (DescribeDisks supports querying all disks at once)
+        let mut page_number = 1;
+        let page_size = 100;
+
+        loop {
+            let mut params = BTreeMap::new();
+            params.insert("PageNumber".to_string(), page_number.to_string());
+            params.insert("PageSize".to_string(), page_size.to_string());
+
+            let endpoint = ECS_ENDPOINT_TEMPLATE.replace("{region}", region);
+            let response = match self
+                .call_api_with_retry(&endpoint, "DescribeDisks", "2014-05-26", Some(region), params, 3)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("Failed to describe disks in region {}: {}", region, e);
+                    return Ok(()); // Non-fatal error, continue without disk info
+                }
+            };
+
+            let total_count = response
+                .get("TotalCount")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+
+            if let Some(disks) = response
+                .get("Disks")
+                .and_then(|v| v.get("Disk"))
+                .and_then(|v| v.as_array())
+            {
+                for disk in disks {
+                    // Get the instance ID this disk belongs to
+                    let instance_id = match disk.get("InstanceId").and_then(|v| v.as_str()) {
+                        Some(id) => id,
+                        None => continue, // Skip disks not attached to any instance
+                    };
+
+                    // Get disk size (in GB)
+                    let disk_size = match disk.get("Size").and_then(|v| v.as_u64()) {
+                        Some(size) => size as f64,
+                        None => continue,
+                    };
+
+                    // Add to the instance's total disk capacity
+                    if let Some(instance) = instance_map.get_mut(instance_id) {
+                        match &mut instance.disk_gb {
+                            Some(total) => *total += disk_size,
+                            None => instance.disk_gb = Some(disk_size),
+                        }
+                    }
+                }
+            }
+
+            if (page_number * page_size) as i64 >= total_count {
+                break;
+            }
+            page_number += 1;
+        }
+
+        tracing::debug!(
+            "Populated disk info for {} instances in region {}",
+            instances.len(),
+            region
+        );
+
+        Ok(())
     }
 
     /// Get CMS metric for a specific instance
@@ -509,6 +622,12 @@ impl CloudProvider for AlibabaCloudProvider {
             disk_iops_write,
             connections,
             collected_at: now,
+            // Hardware specs are not available in metrics API
+            // They will be filled from CloudInstance data by the scheduler
+            instance_type: String::new(),
+            cpu_cores: None,
+            memory_gb: None,
+            disk_gb: None,
         })
     }
 }
@@ -606,6 +725,10 @@ mod tests {
             private_ip: "172.16.0.1".to_string(),
             os: "CentOS 7.9".to_string(),
             tags,
+            instance_type: "ecs.c6.xlarge".to_string(),
+            cpu_cores: Some(4),
+            memory_gb: Some(8.0),
+            disk_gb: None,
         };
 
         assert_eq!(instance.instance_id, "i-bp1abc123");

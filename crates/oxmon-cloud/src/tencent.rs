@@ -232,6 +232,39 @@ impl TencentCloudProvider {
                         }
                     }
 
+                    // Parse hardware specifications
+                    let instance_type = inst
+                        .get("InstanceType")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    let cpu_cores = inst
+                        .get("CPU")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32);
+
+                    let memory_gb = inst
+                        .get("Memory")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as f64);
+
+                    // Calculate total disk: SystemDisk.DiskSize + sum of DataDisks[].DiskSize
+                    let mut disk_gb: Option<f64> = None;
+                    if let Some(system_disk) = inst.get("SystemDisk") {
+                        if let Some(size) = system_disk.get("DiskSize").and_then(|v| v.as_u64()) {
+                            disk_gb = Some(size as f64);
+                        }
+                    }
+                    if let Some(data_disks) = inst.get("DataDisks").and_then(|v| v.as_array()) {
+                        let data_disk_total: f64 = data_disks
+                            .iter()
+                            .filter_map(|d| d.get("DiskSize").and_then(|v| v.as_u64()))
+                            .map(|v| v as f64)
+                            .sum();
+                        disk_gb = Some(disk_gb.unwrap_or(0.0) + data_disk_total);
+                    }
+
                     let instance = CloudInstance {
                         instance_id,
                         instance_name,
@@ -242,6 +275,10 @@ impl TencentCloudProvider {
                         os,
                         status,
                         tags,
+                        instance_type,
+                        cpu_cores,
+                        memory_gb,
+                        disk_gb,
                     };
 
                     // Apply instance filter
@@ -418,6 +455,12 @@ impl CloudProvider for TencentCloudProvider {
             disk_iops_write,
             connections,
             collected_at: now,
+            // Hardware specs are not available in metrics API
+            // They will be filled from CloudInstance data by the scheduler
+            instance_type: String::new(),
+            cpu_cores: None,
+            memory_gb: None,
+            disk_gb: None,
         })
     }
 }
@@ -497,6 +540,10 @@ mod tests {
             private_ip: "10.0.0.1".to_string(),
             os: "Ubuntu 20.04".to_string(),
             tags,
+            instance_type: "S5.LARGE8".to_string(),
+            cpu_cores: Some(4),
+            memory_gb: Some(8.0),
+            disk_gb: Some(100.0),
         };
 
         assert_eq!(instance.instance_id, "ins-abc123");
@@ -524,6 +571,10 @@ mod tests {
             disk_iops_write: Some(50.0),
             connections: Some(200.0),
             collected_at: Utc::now(),
+            instance_type: "S5.LARGE8".to_string(),
+            cpu_cores: Some(4),
+            memory_gb: Some(8.0),
+            disk_gb: Some(100.0),
         };
 
         assert_eq!(metrics.cpu_usage.unwrap(), 45.5);

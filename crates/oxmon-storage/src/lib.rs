@@ -170,6 +170,16 @@ pub trait StorageEngine: Send + Sync {
         rule_id: Option<&str>,
         metric_name: Option<&str>,
     ) -> Result<u64>;
+
+    /// Returns the latest (most recent) metric data point for each given metric name,
+    /// scoped to a specific agent_id. Searches the last `lookback_days` days.
+    /// Returns at most one data point per metric name (the one with the largest timestamp).
+    fn query_latest_metrics_for_agent(
+        &self,
+        agent_id: &str,
+        metric_names: &[&str],
+        lookback_days: u32,
+    ) -> Result<Vec<MetricDataPoint>>;
 }
 
 /// Aggregated metric statistics.

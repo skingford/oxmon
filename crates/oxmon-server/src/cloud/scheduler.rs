@@ -114,7 +114,7 @@ impl CloudCheckScheduler {
         );
 
         // Build providers for due accounts
-        let mut providers = Vec::new();
+        let mut providers: Vec<Arc<dyn oxmon_cloud::CloudProvider>> = Vec::new();
         for (_config_key, provider_type, account_name, account_config) in &due_accounts {
             match build_provider(provider_type, account_name, account_config.clone()) {
                 Ok(provider) => {
@@ -136,13 +136,101 @@ impl CloudCheckScheduler {
             return Ok(());
         }
 
+        // First, discover and save all instances from all providers
+        let mut all_instances = Vec::new();
+        for provider in &providers {
+            match provider.list_instances().await {
+                Ok(instances) => {
+                    all_instances.extend(instances);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        provider = provider.name(),
+                        error = %e,
+                        "Failed to list instances"
+                    );
+                }
+            }
+        }
+
+        // Write instances to database
+        for instance in &all_instances {
+            // Extract provider type from instance.provider (format: "tencent:account_name")
+            let provider_type = instance.provider.split(':').next().unwrap_or("unknown");
+
+            // Find the matching config_key for this instance
+            let config_key = due_accounts
+                .iter()
+                .find(|(_, pt, _an, _)| pt == provider_type)
+                .map(|(ck, _, _, _)| ck.clone())
+                .unwrap_or_else(|| format!("cloud_{}_{}", provider_type, "unknown"));
+
+            if let Err(e) = self.cert_store.upsert_cloud_instance(&oxmon_storage::cert_store::CloudInstanceRow {
+                id: String::new(), // ID将由 upsert_cloud_instance 内部生成
+                instance_id: instance.instance_id.clone(),
+                instance_name: Some(instance.instance_name.clone()),
+                provider: provider_type.to_string(),
+                account_config_key: config_key,
+                region: instance.region.clone(),
+                public_ip: Some(instance.public_ip.clone()),
+                private_ip: Some(instance.private_ip.clone()),
+                os: Some(instance.os.clone()),
+                status: Some(instance.status.clone()),
+                last_seen_at: now,
+                created_at: now,
+                updated_at: now,
+                instance_type: Some(instance.instance_type.clone()),
+                cpu_cores: instance.cpu_cores.map(|v| v as i32),
+                memory_gb: instance.memory_gb,
+                disk_gb: instance.disk_gb,
+            }) {
+                tracing::error!(
+                    instance_id = instance.instance_id,
+                    error = %e,
+                    "Failed to upsert cloud instance"
+                );
+            }
+        }
+
+        tracing::info!(
+            instances = all_instances.len(),
+            "Saved cloud instances to database"
+        );
+
         // Collect metrics from all providers
         let collector = CloudCollector::new(providers, self.max_concurrent);
-        let metrics = collector.collect_all().await?;
+        let mut metrics = collector.collect_all().await?;
 
         tracing::info!(
             collected = metrics.len(),
             "Collected cloud metrics from all providers"
+        );
+
+        // Enrich metrics with hardware specs from instances
+        let mut enriched_count = 0;
+        let mut not_found_count = 0;
+        for metric in &mut metrics {
+            if let Some(instance) = all_instances
+                .iter()
+                .find(|i| i.instance_id == metric.instance_id)
+            {
+                metric.instance_type = instance.instance_type.clone();
+                metric.cpu_cores = instance.cpu_cores;
+                metric.memory_gb = instance.memory_gb;
+                metric.disk_gb = instance.disk_gb;
+                enriched_count += 1;
+            } else {
+                not_found_count += 1;
+                tracing::warn!(
+                    instance_id = metric.instance_id,
+                    "Instance not found for metrics enrichment"
+                );
+            }
+        }
+        tracing::info!(
+            enriched = enriched_count,
+            not_found = not_found_count,
+            "Hardware specs enrichment completed"
         );
 
         // Convert metrics to MetricDataPoint and write to storage
@@ -177,12 +265,28 @@ impl CloudCheckScheduler {
         let mut data_points = Vec::new();
 
         for m in metrics {
-            let agent_id = format!("cloud:{}:{}", m.provider, m.instance_id);
+            // Extract provider type from m.provider (format: "tencent:account_name" or "alibaba:account_name")
+            let provider_type = m.provider.split(':').next().unwrap_or("unknown");
+            let agent_id = format!("cloud:{}:{}", provider_type, m.instance_id);
 
             let mut labels = HashMap::new();
             labels.insert("provider".to_string(), m.provider.clone());
             labels.insert("region".to_string(), m.region.clone());
             labels.insert("instance_name".to_string(), m.instance_name.clone());
+
+            // Add hardware specifications as labels
+            if !m.instance_type.is_empty() {
+                labels.insert("instance_type".to_string(), m.instance_type.clone());
+            }
+            if let Some(cpu_cores) = m.cpu_cores {
+                labels.insert("cpu_cores".to_string(), cpu_cores.to_string());
+            }
+            if let Some(memory_gb) = m.memory_gb {
+                labels.insert("memory_gb".to_string(), format!("{:.1}", memory_gb));
+            }
+            if let Some(disk_gb) = m.disk_gb {
+                labels.insert("disk_gb".to_string(), format!("{:.1}", disk_gb));
+            }
 
             // CPU usage
             if let Some(cpu) = m.cpu_usage {

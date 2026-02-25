@@ -890,4 +890,100 @@ impl StorageEngine for SqliteStorageEngine {
         }
         Ok(total)
     }
+
+    fn query_latest_metrics_for_agent(
+        &self,
+        agent_id: &str,
+        metric_names: &[&str],
+        lookback_days: u32,
+    ) -> Result<Vec<MetricDataPoint>> {
+        let to = Utc::now();
+        let from = to - chrono::Duration::days(lookback_days as i64);
+        let mut keys = self.partitions.partitions_in_range(from, to)?;
+        keys.reverse(); // Search most recent partitions first
+
+        let mut results: std::collections::HashMap<String, MetricDataPoint> =
+            std::collections::HashMap::new();
+        let wanted: std::collections::HashSet<&str> = metric_names.iter().copied().collect();
+
+        for key in keys {
+            if results.len() == wanted.len() {
+                break; // Found all requested metrics
+            }
+
+            self.partitions.with_partition(&key, |conn| {
+                // Build query with IN clause for remaining metric names
+                let remaining: Vec<&str> = wanted
+                    .iter()
+                    .filter(|n| !results.contains_key(**n))
+                    .copied()
+                    .collect();
+
+                if remaining.is_empty() {
+                    return Ok(());
+                }
+
+                // Use a subquery: for each metric_name, get the row with MAX(timestamp)
+                let placeholders: Vec<String> = remaining
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| format!("?{}", i + 2))
+                    .collect();
+                let in_clause = placeholders.join(", ");
+
+                let sql = format!(
+                    "SELECT m.id, m.timestamp, m.agent_id, m.metric_name, m.value, m.labels, m.created_at, m.updated_at
+                     FROM metrics m
+                     INNER JOIN (
+                         SELECT metric_name, MAX(timestamp) as max_ts
+                         FROM metrics
+                         WHERE agent_id = ?1 AND metric_name IN ({})
+                         GROUP BY metric_name
+                     ) latest ON m.agent_id = ?1 AND m.metric_name = latest.metric_name AND m.timestamp = latest.max_ts",
+                    in_clause
+                );
+
+                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+                params.push(Box::new(agent_id.to_string()));
+                for name in &remaining {
+                    params.push(Box::new(name.to_string()));
+                }
+
+                let mut stmt = conn.prepare(&sql)?;
+                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                    params.iter().map(|p| p.as_ref()).collect();
+                let rows = stmt.query_map(param_refs.as_slice(), |row| {
+                    let timestamp_ms: i64 = row.get(1)?;
+                    let labels_json: String = row.get(5)?;
+                    let created_at_ms: i64 = row.get(6)?;
+                    let updated_at_ms: i64 = row.get(7)?;
+
+                    let labels: std::collections::HashMap<String, String> =
+                        serde_json::from_str(&labels_json).unwrap_or_default();
+
+                    Ok(MetricDataPoint {
+                        id: row.get(0)?,
+                        timestamp: DateTime::from_timestamp_millis(timestamp_ms)
+                            .unwrap_or_else(Utc::now),
+                        agent_id: row.get(2)?,
+                        metric_name: row.get(3)?,
+                        value: row.get(4)?,
+                        labels,
+                        created_at: DateTime::from_timestamp_millis(created_at_ms)
+                            .unwrap_or_else(Utc::now),
+                        updated_at: DateTime::from_timestamp_millis(updated_at_ms)
+                            .unwrap_or_else(Utc::now),
+                    })
+                })?;
+
+                for row in rows {
+                    let dp = row?;
+                    results.entry(dp.metric_name.clone()).or_insert(dp);
+                }
+                Ok(())
+            })?;
+        }
+
+        Ok(results.into_values().collect())
+    }
 }

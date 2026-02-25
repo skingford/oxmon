@@ -394,6 +394,21 @@ impl CertStore {
             "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;",
         );
 
+        // 迁移：为已有的 cloud_instances 表添加硬件规格列
+        for col in &[
+            "instance_type TEXT",
+            "cpu_cores INTEGER",
+            "memory_gb REAL",
+            "disk_gb REAL",
+        ] {
+            let _ = conn.execute_batch(&format!("ALTER TABLE cloud_instances ADD COLUMN {col};"));
+        }
+
+        // 迁移云实例ID到雪花ID格式
+        Self::migrate_cloud_instances_add_id_v2(&conn)?;
+        Self::migrate_cloud_instances_swap_id(&conn)?;
+        Self::migrate_cloud_instances_cleanup(&conn)?;
+
         let token_encryptor = TokenEncryptor::load_or_create(data_dir)?;
         tracing::info!(path = %db_path.display(), "Initialized cert store");
         Ok(Self {
@@ -520,6 +535,152 @@ impl CertStore {
         )?;
 
         tracing::info!("certificate_details migration completed");
+        Ok(())
+    }
+
+    /// 迁移阶段1: 添加 id_v2 临时列并填充雪花ID
+    fn migrate_cloud_instances_add_id_v2(conn: &Connection) -> Result<()> {
+        // 检查表是否存在
+        let table_exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='cloud_instances'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        if !table_exists {
+            return Ok(());
+        }
+
+        // 检查是否已有 id_v2 列
+        let has_id_v2 = Self::table_has_column(conn, "cloud_instances", "id_v2")?;
+        if has_id_v2 {
+            return Ok(());
+        }
+
+        tracing::info!("Phase 1: Adding id_v2 column to cloud_instances and generating Snowflake IDs");
+
+        // 添加临时列
+        conn.execute_batch("ALTER TABLE cloud_instances ADD COLUMN id_v2 TEXT;")?;
+
+        // 为所有现有记录生成雪花ID
+        let mut stmt = conn.prepare("SELECT id FROM cloud_instances WHERE id_v2 IS NULL")?;
+        let old_ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let count = old_ids.len();
+        for old_id in old_ids {
+            let snowflake_id = oxmon_common::id::next_id();
+            conn.execute(
+                "UPDATE cloud_instances SET id_v2 = ?1 WHERE id = ?2",
+                rusqlite::params![snowflake_id, old_id],
+            )?;
+        }
+
+        tracing::info!("Phase 1 completed: {} records updated with Snowflake IDs", count);
+        Ok(())
+    }
+
+    /// 迁移阶段2: 原子性切换主键
+    fn migrate_cloud_instances_swap_id(conn: &Connection) -> Result<()> {
+        // 检查表是否存在
+        let table_exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='cloud_instances'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        if !table_exists {
+            return Ok(());
+        }
+
+        // 检查是否已有 id_v2 列
+        let has_id_v2 = Self::table_has_column(conn, "cloud_instances", "id_v2")?;
+        if !has_id_v2 {
+            return Ok(());
+        }
+
+        // 检查第一条记录的 id 是否已经是雪花ID格式(纯数字)
+        let is_migrated: bool = conn
+            .query_row(
+                "SELECT CASE WHEN id NOT LIKE '%::%' THEN 1 ELSE 0 END
+                 FROM cloud_instances LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(true); // 如果表为空，认为已迁移
+
+        if is_migrated {
+            return Ok(());
+        }
+
+        tracing::info!("Phase 2: Swapping id columns in cloud_instances");
+
+        // 在事务中执行原子切换
+        conn.execute_batch("BEGIN TRANSACTION;")?;
+
+        // 创建新表
+        conn.execute_batch(
+            "
+            CREATE TABLE cloud_instances_new (
+                id TEXT PRIMARY KEY,
+                instance_id TEXT NOT NULL,
+                instance_name TEXT,
+                provider TEXT NOT NULL,
+                account_config_key TEXT NOT NULL,
+                region TEXT NOT NULL,
+                public_ip TEXT,
+                private_ip TEXT,
+                os TEXT,
+                status TEXT,
+                last_seen_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                instance_type TEXT,
+                cpu_cores INTEGER,
+                memory_gb REAL,
+                disk_gb REAL,
+                UNIQUE(provider, instance_id)
+            );
+            ",
+        )?;
+
+        // 复制数据，使用 id_v2 作为新的主键
+        conn.execute_batch(
+            "
+            INSERT INTO cloud_instances_new
+            SELECT id_v2, instance_id, instance_name, provider, account_config_key, region,
+                   public_ip, private_ip, os, status, last_seen_at, created_at, updated_at,
+                   instance_type, cpu_cores, memory_gb, disk_gb
+            FROM cloud_instances;
+            ",
+        )?;
+
+        // 删除旧表
+        conn.execute_batch("DROP TABLE cloud_instances;")?;
+
+        // 重命名新表
+        conn.execute_batch("ALTER TABLE cloud_instances_new RENAME TO cloud_instances;")?;
+
+        // 重建索引
+        conn.execute_batch(
+            "
+            CREATE INDEX IF NOT EXISTS idx_cloud_instances_provider ON cloud_instances(provider);
+            CREATE INDEX IF NOT EXISTS idx_cloud_instances_region ON cloud_instances(region);
+            CREATE INDEX IF NOT EXISTS idx_cloud_instances_account_key ON cloud_instances(account_config_key);
+            ",
+        )?;
+
+        conn.execute_batch("COMMIT;")?;
+
+        tracing::info!("Phase 2 completed: cloud_instances now uses Snowflake IDs");
+        Ok(())
+    }
+
+    /// 迁移阶段3: 清理临时列(此阶段可选，因为切换后旧表已删除)
+    fn migrate_cloud_instances_cleanup(_conn: &Connection) -> Result<()> {
+        // SQLite 的 DROP COLUMN 需要 3.35.0+，且已经通过重建表完成清理
+        tracing::info!("Phase 3: Cleanup completed (table rebuilt without id_v2)");
         Ok(())
     }
 
@@ -3238,9 +3399,44 @@ impl CertStore {
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         let mut idx = 1;
 
+        if let Some(domain) = &filter.domain_contains {
+            sql.push_str(&format!(" AND domain LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(domain)));
+            idx += 1;
+        }
+        if let Some(not_after_gte) = filter.not_after_gte {
+            sql.push_str(&format!(" AND not_after >= ?{idx}"));
+            params.push(Box::new(not_after_gte));
+            idx += 1;
+        }
         if let Some(not_after_lte) = filter.not_after_lte {
             sql.push_str(&format!(" AND not_after <= ?{idx}"));
             params.push(Box::new(not_after_lte));
+            idx += 1;
+        }
+        if let Some(chain_valid) = filter.chain_valid_eq {
+            sql.push_str(&format!(" AND chain_valid = ?{idx}"));
+            params.push(Box::new(chain_valid as i32));
+            idx += 1;
+        }
+        if let Some(is_valid) = filter.is_valid_eq {
+            sql.push_str(&format!(" AND chain_valid = ?{idx}"));
+            params.push(Box::new(is_valid as i32));
+            idx += 1;
+        }
+        if let Some(chain_error) = &filter.chain_error_eq {
+            sql.push_str(&format!(" AND chain_error = ?{idx}"));
+            params.push(Box::new(chain_error.clone()));
+            idx += 1;
+        }
+        if let Some(last_checked_gte) = filter.last_checked_gte {
+            sql.push_str(&format!(" AND last_checked >= ?{idx}"));
+            params.push(Box::new(last_checked_gte));
+            idx += 1;
+        }
+        if let Some(last_checked_lte) = filter.last_checked_lte {
+            sql.push_str(&format!(" AND last_checked <= ?{idx}"));
+            params.push(Box::new(last_checked_lte));
             idx += 1;
         }
         if let Some(ip) = &filter.ip_address_contains {
@@ -3253,6 +3449,11 @@ impl CertStore {
                 " AND (issuer_cn LIKE ?{idx} ESCAPE '\\' OR issuer_o LIKE ?{idx} ESCAPE '\\')"
             ));
             params.push(Box::new(like_pattern(issuer)));
+            idx += 1;
+        }
+        if let Some(tls_version) = &filter.tls_version_eq {
+            sql.push_str(&format!(" AND tls_version = ?{idx}"));
+            params.push(Box::new(tls_version.clone()));
             idx += 1;
         }
 
@@ -3284,9 +3485,44 @@ impl CertStore {
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         let mut idx = 1;
 
+        if let Some(domain) = &filter.domain_contains {
+            sql.push_str(&format!(" AND domain LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(domain)));
+            idx += 1;
+        }
+        if let Some(not_after_gte) = filter.not_after_gte {
+            sql.push_str(&format!(" AND not_after >= ?{idx}"));
+            params.push(Box::new(not_after_gte));
+            idx += 1;
+        }
         if let Some(not_after_lte) = filter.not_after_lte {
             sql.push_str(&format!(" AND not_after <= ?{idx}"));
             params.push(Box::new(not_after_lte));
+            idx += 1;
+        }
+        if let Some(chain_valid) = filter.chain_valid_eq {
+            sql.push_str(&format!(" AND chain_valid = ?{idx}"));
+            params.push(Box::new(chain_valid as i32));
+            idx += 1;
+        }
+        if let Some(is_valid) = filter.is_valid_eq {
+            sql.push_str(&format!(" AND chain_valid = ?{idx}"));
+            params.push(Box::new(is_valid as i32));
+            idx += 1;
+        }
+        if let Some(chain_error) = &filter.chain_error_eq {
+            sql.push_str(&format!(" AND chain_error = ?{idx}"));
+            params.push(Box::new(chain_error.clone()));
+            idx += 1;
+        }
+        if let Some(last_checked_gte) = filter.last_checked_gte {
+            sql.push_str(&format!(" AND last_checked >= ?{idx}"));
+            params.push(Box::new(last_checked_gte));
+            idx += 1;
+        }
+        if let Some(last_checked_lte) = filter.last_checked_lte {
+            sql.push_str(&format!(" AND last_checked <= ?{idx}"));
+            params.push(Box::new(last_checked_lte));
             idx += 1;
         }
         if let Some(ip) = &filter.ip_address_contains {
@@ -3299,6 +3535,11 @@ impl CertStore {
                 " AND (issuer_cn LIKE ?{idx} ESCAPE '\\' OR issuer_o LIKE ?{idx} ESCAPE '\\')"
             ));
             params.push(Box::new(like_pattern(issuer)));
+            idx += 1;
+        }
+        if let Some(tls_version) = &filter.tls_version_eq {
+            sql.push_str(&format!(" AND tls_version = ?{idx}"));
+            params.push(Box::new(tls_version.clone()));
         }
 
         let mut stmt = conn.prepare(&sql)?;
@@ -4083,11 +4324,15 @@ impl CertStore {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
 
+        // 生成雪花ID用于新实例
+        let id = oxmon_common::id::next_id();
+
         conn.execute(
             "INSERT INTO cloud_instances
              (id, instance_id, instance_name, provider, account_config_key, region,
-              public_ip, private_ip, os, status, last_seen_at, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+              public_ip, private_ip, os, status, last_seen_at, created_at, updated_at,
+              instance_type, cpu_cores, memory_gb, disk_gb)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
              ON CONFLICT(provider, instance_id) DO UPDATE SET
              instance_name = ?3,
              account_config_key = ?5,
@@ -4097,9 +4342,13 @@ impl CertStore {
              os = ?9,
              status = ?10,
              last_seen_at = ?11,
-             updated_at = ?13",
+             updated_at = ?13,
+             instance_type = COALESCE(?14, instance_type),
+             cpu_cores = COALESCE(?15, cpu_cores),
+             memory_gb = COALESCE(?16, memory_gb),
+             disk_gb = COALESCE(?17, disk_gb)",
             rusqlite::params![
-                instance.id,
+                id,
                 instance.instance_id,
                 instance.instance_name,
                 instance.provider,
@@ -4112,6 +4361,10 @@ impl CertStore {
                 instance.last_seen_at,
                 now,
                 now,
+                instance.instance_type,
+                instance.cpu_cores,
+                instance.memory_gb,
+                instance.disk_gb,
             ],
         )?;
         Ok(())
@@ -4128,7 +4381,8 @@ impl CertStore {
         let conn = self.lock_conn();
         let mut sql = String::from(
             "SELECT id, instance_id, instance_name, provider, account_config_key, region,
-                    public_ip, private_ip, os, status, last_seen_at, created_at, updated_at
+                    public_ip, private_ip, os, status, last_seen_at, created_at, updated_at,
+                    instance_type, cpu_cores, memory_gb, disk_gb
              FROM cloud_instances
              WHERE 1=1",
         );
@@ -4173,6 +4427,10 @@ impl CertStore {
                 last_seen_at,
                 created_at,
                 updated_at,
+                instance_type: row.get(13)?,
+                cpu_cores: row.get(14)?,
+                memory_gb: row.get(15)?,
+                disk_gb: row.get(16)?,
             });
         }
 
@@ -4211,7 +4469,8 @@ impl CertStore {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, instance_id, instance_name, provider, account_config_key, region,
-                    public_ip, private_ip, os, status, last_seen_at, created_at, updated_at
+                    public_ip, private_ip, os, status, last_seen_at, created_at, updated_at,
+                    instance_type, cpu_cores, memory_gb, disk_gb
              FROM cloud_instances
              WHERE id = ?1",
         )?;
@@ -4235,6 +4494,10 @@ impl CertStore {
                 last_seen_at,
                 created_at,
                 updated_at,
+                instance_type: row.get(13)?,
+                cpu_cores: row.get(14)?,
+                memory_gb: row.get(15)?,
+                disk_gb: row.get(16)?,
             }))
         } else {
             Ok(None)
@@ -4386,6 +4649,11 @@ pub struct CloudInstanceRow {
     pub last_seen_at: i64,
     pub created_at: i64,
     pub updated_at: i64,
+    // Hardware specifications
+    pub instance_type: Option<String>,
+    pub cpu_cores: Option<i32>,
+    pub memory_gb: Option<f64>,
+    pub disk_gb: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -5651,4 +5919,139 @@ mod tests {
         let deleted2 = store.delete_stale_dictionary_types(&active).unwrap();
         assert_eq!(deleted2, 0);
     }
+
+    #[test]
+    fn test_cloud_instances_migration() {
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+
+        // 创建旧格式的表（使用复合字符串ID）
+        conn.execute_batch(
+            "
+            CREATE TABLE cloud_instances (
+                id TEXT PRIMARY KEY,
+                instance_id TEXT NOT NULL,
+                instance_name TEXT,
+                provider TEXT NOT NULL,
+                account_config_key TEXT NOT NULL,
+                region TEXT NOT NULL,
+                public_ip TEXT,
+                private_ip TEXT,
+                os TEXT,
+                status TEXT,
+                last_seen_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                instance_type TEXT,
+                cpu_cores INTEGER,
+                memory_gb REAL,
+                disk_gb REAL,
+                UNIQUE(provider, instance_id)
+            );
+            ",
+        )
+        .unwrap();
+
+        // 插入旧格式的数据
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO cloud_instances (id, instance_id, instance_name, provider, account_config_key, region, public_ip, private_ip, os, status, last_seen_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            rusqlite::params![
+                "tencent::ins-abc123",  // 旧格式ID
+                "ins-abc123",
+                "test-instance-1",
+                "tencent",
+                "cloud_tencent_main",
+                "ap-guangzhou",
+                "1.2.3.4",
+                "10.0.0.1",
+                "CentOS",
+                "Running",
+                now,
+                now,
+                now,
+            ],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO cloud_instances (id, instance_id, instance_name, provider, account_config_key, region, public_ip, private_ip, os, status, last_seen_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            rusqlite::params![
+                "alibaba::i-xyz789",  // 旧格式ID
+                "i-xyz789",
+                "test-instance-2",
+                "alibaba",
+                "cloud_alibaba_main",
+                "cn-hangzhou",
+                "5.6.7.8",
+                "10.0.0.2",
+                "Ubuntu",
+                "Running",
+                now,
+                now,
+                now,
+            ],
+        )
+        .unwrap();
+
+        // 验证迁移前的数据
+        let old_id_1: String = conn
+            .query_row("SELECT id FROM cloud_instances WHERE instance_id = 'ins-abc123'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(old_id_1, "tencent::ins-abc123");
+
+        // 执行迁移
+        CertStore::migrate_cloud_instances_add_id_v2(&conn).unwrap();
+        CertStore::migrate_cloud_instances_swap_id(&conn).unwrap();
+        CertStore::migrate_cloud_instances_cleanup(&conn).unwrap();
+
+        // 验证迁移后的数据
+        let new_id_1: String = conn
+            .query_row("SELECT id FROM cloud_instances WHERE instance_id = 'ins-abc123'", [], |row| row.get(0))
+            .unwrap();
+
+        // 新ID应该是数字字符串（雪花ID）
+        assert!(new_id_1.parse::<i64>().is_ok(), "New ID should be numeric: {}", new_id_1);
+        assert_ne!(new_id_1, "tencent::ins-abc123", "ID should have changed");
+
+        // 验证instance_id保持不变
+        let instance_id: String = conn
+            .query_row("SELECT instance_id FROM cloud_instances WHERE id = ?1", [&new_id_1], |row| row.get(0))
+            .unwrap();
+        assert_eq!(instance_id, "ins-abc123");
+
+        // 验证第二条记录
+        let new_id_2: String = conn
+            .query_row("SELECT id FROM cloud_instances WHERE instance_id = 'i-xyz789'", [], |row| row.get(0))
+            .unwrap();
+        assert!(new_id_2.parse::<i64>().is_ok());
+        assert_ne!(new_id_2, "alibaba::i-xyz789");
+
+        // 验证UNIQUE约束仍然有效
+        let result = conn.execute(
+            "INSERT INTO cloud_instances (id, instance_id, provider, account_config_key, region, last_seen_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                oxmon_common::id::next_id(),
+                "ins-abc123",  // 重复的instance_id
+                "tencent",
+                "cloud_tencent_main",
+                "ap-guangzhou",
+                now,
+                now,
+                now,
+            ],
+        );
+        assert!(result.is_err(), "UNIQUE constraint should prevent duplicate instance_id");
+
+        // 验证表结构正确（不应该有id_v2列）
+        let has_id_v2 = CertStore::table_has_column(&conn, "cloud_instances", "id_v2").unwrap();
+        assert!(!has_id_v2, "id_v2 column should not exist after migration");
+    }
 }
+

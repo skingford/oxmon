@@ -16,10 +16,38 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 struct CertificateListQuery {
+    /// 域名包含匹配（domain__contains，可选）
+    #[param(required = false)]
+    #[serde(rename = "domain__contains")]
+    domain_contains: Option<String>,
     /// 证书过期时间上界（not_after__lte，可选，Unix 秒级时间戳）
     #[param(required = false)]
     #[serde(rename = "not_after__lte")]
     not_after_lte: Option<i64>,
+    /// 证书过期时间下界（not_after__gte，可选，Unix 秒级时间戳）
+    #[param(required = false)]
+    #[serde(rename = "not_after__gte")]
+    not_after_gte: Option<i64>,
+    /// 证书链是否有效（chain_valid__eq，可选）
+    #[param(required = false)]
+    #[serde(rename = "chain_valid__eq")]
+    chain_valid_eq: Option<bool>,
+    /// 证书是否有效（is_valid__eq，可选；证书列表语义，等价 chain_valid）
+    #[param(required = false)]
+    #[serde(rename = "is_valid__eq")]
+    is_valid_eq: Option<bool>,
+    /// 证书链错误精确匹配（chain_error__eq，可选）
+    #[param(required = false)]
+    #[serde(rename = "chain_error__eq")]
+    chain_error_eq: Option<String>,
+    /// 最后检查时间下界（last_checked__gte，可选，Unix 秒级时间戳）
+    #[param(required = false)]
+    #[serde(rename = "last_checked__gte")]
+    last_checked_gte: Option<i64>,
+    /// 最后检查时间上界（last_checked__lte，可选，Unix 秒级时间戳）
+    #[param(required = false)]
+    #[serde(rename = "last_checked__lte")]
+    last_checked_lte: Option<i64>,
     /// IP 包含匹配（ip_address__contains，可选）
     #[param(required = false)]
     #[serde(rename = "ip_address__contains")]
@@ -28,6 +56,10 @@ struct CertificateListQuery {
     #[param(required = false)]
     #[serde(rename = "issuer__contains")]
     issuer_contains: Option<String>,
+    /// TLS 版本精确匹配（tls_version__eq，可选）
+    #[param(required = false)]
+    #[serde(rename = "tls_version__eq")]
+    tls_version_eq: Option<String>,
     /// 每页条数（默认 20）
     #[param(required = false)]
     #[serde(
@@ -114,10 +146,29 @@ async fn list_certificates(
     State(state): State<AppState>,
     Query(query): Query<CertificateListQuery>,
 ) -> impl IntoResponse {
+    if let (Some(chain_valid), Some(is_valid)) = (query.chain_valid_eq, query.is_valid_eq) {
+        if chain_valid != is_valid {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "bad_request",
+                "chain_valid__eq and is_valid__eq conflict",
+            );
+        }
+    }
+
     let filter = CertificateDetailsFilter {
+        domain_contains: query.domain_contains.clone(),
         not_after_lte: query.not_after_lte,
+        not_after_gte: query.not_after_gte,
+        chain_valid_eq: query.chain_valid_eq,
+        is_valid_eq: query.is_valid_eq,
+        chain_error_eq: query.chain_error_eq.clone(),
+        last_checked_gte: query.last_checked_gte,
+        last_checked_lte: query.last_checked_lte,
         ip_address_contains: query.ip_address_contains.clone(),
         issuer_contains: query.issuer_contains.clone(),
+        tls_version_eq: query.tls_version_eq.clone(),
     };
 
     let limit = PaginationParams::resolve_limit(query.limit);

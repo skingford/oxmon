@@ -407,12 +407,28 @@ pub struct CertificateDetails {
 /// 证书详情查询过滤器
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CertificateDetailsFilter {
+    /// 域名包含匹配
+    pub domain_contains: Option<String>,
     /// 证书过期时间上界（Unix 秒级时间戳）
     pub not_after_lte: Option<i64>,
+    /// 证书过期时间下界（Unix 秒级时间戳）
+    pub not_after_gte: Option<i64>,
+    /// 证书链是否有效（精确匹配）
+    pub chain_valid_eq: Option<bool>,
+    /// 证书是否有效（证书列表语义，等价映射到 chain_valid）
+    pub is_valid_eq: Option<bool>,
+    /// 证书链错误精确匹配
+    pub chain_error_eq: Option<String>,
+    /// 最后检查时间下界（Unix 秒级时间戳）
+    pub last_checked_gte: Option<i64>,
+    /// 最后检查时间上界（Unix 秒级时间戳）
+    pub last_checked_lte: Option<i64>,
     /// IP 包含匹配
     pub ip_address_contains: Option<String>,
     /// 颁发者包含匹配
     pub issuer_contains: Option<String>,
+    /// TLS 版本精确匹配
+    pub tls_version_eq: Option<String>,
 }
 
 // User & Auth types

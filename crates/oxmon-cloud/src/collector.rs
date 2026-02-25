@@ -164,6 +164,10 @@ mod tests {
                 disk_iops_write: Some(50.0),
                 connections: Some(200.0),
                 collected_at: chrono::Utc::now(),
+                instance_type: String::new(),
+                cpu_cores: None,
+                memory_gb: None,
+                disk_gb: None,
             })
         }
     }
@@ -182,6 +186,10 @@ mod tests {
                 os: "Linux".to_string(),
                 status: "Running".to_string(),
                 tags: std::collections::HashMap::new(),
+                instance_type: "mock.large".to_string(),
+                cpu_cores: Some(2),
+                memory_gb: Some(4.0),
+                disk_gb: Some(50.0),
             }],
         });
 

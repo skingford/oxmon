@@ -19,6 +19,12 @@ pub struct CloudInstance {
     pub status: String,
     #[serde(default)]
     pub tags: std::collections::HashMap<String, String>,
+    // Hardware specifications
+    #[serde(default)]
+    pub instance_type: String,   // e.g., "S5.LARGE8", "ecs.c6.xlarge"
+    pub cpu_cores: Option<u32>,  // Number of vCPU cores
+    pub memory_gb: Option<f64>,  // Memory in GB
+    pub disk_gb: Option<f64>,    // Total disk capacity in GB (system + data disks)
 }
 
 /// Cloud metrics for a single instance
@@ -41,6 +47,12 @@ pub struct CloudMetrics {
     // Connection metrics
     pub connections: Option<f64>,
     pub collected_at: DateTime<Utc>,
+    // Hardware specifications
+    #[serde(default)]
+    pub instance_type: String,   // e.g., "S5.LARGE8", "ecs.c6.xlarge"
+    pub cpu_cores: Option<u32>,  // Number of vCPU cores
+    pub memory_gb: Option<f64>,  // Memory in GB
+    pub disk_gb: Option<f64>,    // Total disk capacity in GB
 }
 
 /// Instance filter configuration
@@ -161,6 +173,10 @@ mod tests {
             os: "Linux".to_string(),
             status: "Running".to_string(),
             tags,
+            instance_type: "test.large".to_string(),
+            cpu_cores: Some(2),
+            memory_gb: Some(4.0),
+            disk_gb: Some(50.0),
         };
 
         // Empty whitelist should match all
@@ -201,6 +217,10 @@ mod tests {
             os: "Linux".to_string(),
             status: "Running".to_string(),
             tags,
+            instance_type: "test.large".to_string(),
+            cpu_cores: Some(2),
+            memory_gb: Some(4.0),
+            disk_gb: Some(50.0),
         };
 
         // Matching required tags
@@ -247,6 +267,10 @@ mod tests {
             os: "Linux".to_string(),
             status: "Running".to_string(),
             tags,
+            instance_type: "test.large".to_string(),
+            cpu_cores: Some(2),
+            memory_gb: Some(4.0),
+            disk_gb: Some(50.0),
         };
 
         // Excluded tag present

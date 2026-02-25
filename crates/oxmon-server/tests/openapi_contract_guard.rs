@@ -121,6 +121,7 @@ async fn openapi_paths_should_be_covered_by_test_matrix() {
         "POST /v1/cloud/accounts/{id}/test",
         "POST /v1/cloud/accounts/{id}/collect",
         "GET /v1/cloud/instances",
+        "GET /v1/cloud/instances/{id}",
     ]
     .into_iter()
     .map(|s| s.to_string())

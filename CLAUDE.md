@@ -76,7 +76,7 @@ Agent (per monitored host)          Server (central)
 
 ## REST API Routes
 
-Core metrics API is in `oxmon-server/src/api.rs`. Certificate management API is in `oxmon-server/src/cert/api.rs`. Certificate details API is in `oxmon-server/src/api/certificates.rs`. Agent whitelist API is in `oxmon-server/src/api/whitelist.rs`. Alert rules & lifecycle API is in `oxmon-server/src/api/alerts.rs`. Notification channels & silence windows API is in `oxmon-server/src/api/notifications.rs`. Dashboard API is in `oxmon-server/src/api/dashboard.rs`. System management API is in `oxmon-server/src/api/system.rs`. Dictionary management API is in `oxmon-server/src/api/dictionaries.rs`. Cloud accounts & instances API is in `oxmon-server/src/cloud/api.rs`. OpenAPI spec is served from `oxmon-server/src/openapi.rs`. All routes are prefixed with `/v1/`.
+Core metrics API is in `oxmon-server/src/api.rs`. Certificate management API is in `oxmon-server/src/cert/api.rs`. Certificate details API is in `oxmon-server/src/api/certificates.rs`. Agent whitelist API is in `oxmon-server/src/api/whitelist.rs`. Alert rules & lifecycle API is in `oxmon-server/src/api/alerts.rs`. Notification channels & silence windows API is in `oxmon-server/src/api/notifications.rs`. Dashboard API is in `oxmon-server/src/api/dashboard.rs`. System management API is in `oxmon-server/src/api/system.rs`. Dictionary management API is in `oxmon-server/src/api/dictionaries.rs`. Cloud accounts & instances API is in `oxmon-server/src/cloud/api.rs` (includes cloud instance detail endpoint `GET /v1/cloud/instances/{id}` with real-time metrics). OpenAPI spec is served from `oxmon-server/src/openapi.rs`. All routes are prefixed with `/v1/`.
 
 ## CLI Subcommands
 
