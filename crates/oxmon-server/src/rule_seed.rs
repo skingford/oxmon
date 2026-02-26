@@ -98,6 +98,63 @@ const DEFAULT_RULES: &[RuleDef] = &[
         config_json: r#"{"warning_days":30,"critical_days":7}"#,
         silence_secs: 86400,
     },
+    // ---- Cloud CPU ----
+    RuleDef {
+        name: "云主机 CPU 使用率严重告警",
+        rule_type: "threshold",
+        metric: "cloud.cpu.usage",
+        agent_pattern: "cloud:*",
+        severity: "critical",
+        config_json: r#"{"operator":"greater_than","value":90.0,"duration_secs":300}"#,
+        silence_secs: 300,
+    },
+    RuleDef {
+        name: "云主机 CPU 使用率警告",
+        rule_type: "threshold",
+        metric: "cloud.cpu.usage",
+        agent_pattern: "cloud:*",
+        severity: "warning",
+        config_json: r#"{"operator":"greater_than","value":80.0,"duration_secs":300}"#,
+        silence_secs: 300,
+    },
+    // ---- Cloud Memory ----
+    RuleDef {
+        name: "云主机内存使用率严重告警",
+        rule_type: "threshold",
+        metric: "cloud.memory.usage",
+        agent_pattern: "cloud:*",
+        severity: "critical",
+        config_json: r#"{"operator":"greater_than","value":95.0,"duration_secs":300}"#,
+        silence_secs: 300,
+    },
+    RuleDef {
+        name: "云主机内存使用率警告",
+        rule_type: "threshold",
+        metric: "cloud.memory.usage",
+        agent_pattern: "cloud:*",
+        severity: "warning",
+        config_json: r#"{"operator":"greater_than","value":85.0,"duration_secs":300}"#,
+        silence_secs: 300,
+    },
+    // ---- Cloud Disk ----
+    RuleDef {
+        name: "云主机磁盘使用率严重告警",
+        rule_type: "threshold",
+        metric: "cloud.disk.usage",
+        agent_pattern: "cloud:*",
+        severity: "critical",
+        config_json: r#"{"operator":"greater_than","value":95.0,"duration_secs":0}"#,
+        silence_secs: 600,
+    },
+    RuleDef {
+        name: "云主机磁盘使用率警告",
+        rule_type: "threshold",
+        metric: "cloud.disk.usage",
+        agent_pattern: "cloud:*",
+        severity: "warning",
+        config_json: r#"{"operator":"greater_than","value":85.0,"duration_secs":0}"#,
+        silence_secs: 600,
+    },
 ];
 
 /// Initialize default alert rules if the database has no rules yet.

@@ -48,6 +48,7 @@ async fn openapi_paths_should_be_covered_by_test_matrix() {
         "POST /v1/certs/domains",
         "POST /v1/certs/domains/batch",
         "GET /v1/certs/domains",
+        "GET /v1/certs/domains/summary",
         "GET /v1/certs/domains/{id}",
         "PUT /v1/certs/domains/{id}",
         "DELETE /v1/certs/domains/{id}",
@@ -96,6 +97,7 @@ async fn openapi_paths_should_be_covered_by_test_matrix() {
         "GET /v1/system/config",
         "GET /v1/system/storage",
         "POST /v1/system/storage/cleanup",
+        "POST /v1/system/certs/backfill-domains",
         // New endpoints: dictionaries
         "GET /v1/dictionaries/types",
         "POST /v1/dictionaries/types",
@@ -288,6 +290,68 @@ async fn openapi_dashboard_overview_schema_should_include_cloud_summary_fields()
         assert!(
             cloud_props.contains_key(field),
             "CloudSummary should contain field {field}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn openapi_system_certs_backfill_domains_should_expose_optional_dry_run_query_param() {
+    let ctx = build_test_context().expect("test context should build");
+    let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.json", None).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+
+    let operation = &body["paths"]["/v1/system/certs/backfill-domains"]["post"];
+    let parameters = operation["parameters"]
+        .as_array()
+        .expect("POST /v1/system/certs/backfill-domains should expose parameters");
+
+    let dry_run = parameters
+        .iter()
+        .find(|param| {
+            param["in"].as_str() == Some("query") && param["name"].as_str() == Some("dry_run")
+        })
+        .expect("dry_run query param should exist");
+
+    let required = dry_run
+        .get("required")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    assert!(!required, "dry_run query param should be optional");
+
+    let preview_limit = parameters
+        .iter()
+        .find(|param| {
+            param["in"].as_str() == Some("query") && param["name"].as_str() == Some("preview_limit")
+        })
+        .expect("preview_limit query param should exist");
+    let required = preview_limit
+        .get("required")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    assert!(!required, "preview_limit query param should be optional");
+}
+
+#[tokio::test]
+async fn openapi_system_certs_backfill_response_schema_should_include_domains_preview() {
+    let ctx = build_test_context().expect("test context should build");
+    let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.json", None).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+
+    let schemas = body["components"]["schemas"]
+        .as_object()
+        .expect("openapi components.schemas should be object");
+
+    let schema = schemas
+        .get("CertDomainsBackfillResponse")
+        .expect("CertDomainsBackfillResponse schema should exist");
+    let props = schema["properties"]
+        .as_object()
+        .expect("CertDomainsBackfillResponse.properties should be object");
+
+    for field in ["inserted_domains", "dry_run", "domains_preview"] {
+        assert!(
+            props.contains_key(field),
+            "CertDomainsBackfillResponse should contain field {field}"
         );
     }
 }

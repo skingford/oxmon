@@ -1,18 +1,22 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
+use oxmon_alert::engine::AlertEngine;
 use oxmon_cloud::collector::CloudCollector;
 use oxmon_cloud::{build_provider, CloudAccountConfig, CloudMetrics};
 use oxmon_common::id::next_id;
 use oxmon_common::types::{MetricBatch, MetricDataPoint};
+use oxmon_notify::manager::NotificationManager;
 use oxmon_storage::cert_store::CertStore;
 use oxmon_storage::StorageEngine;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::time::{interval, Duration};
 
 pub struct CloudCheckScheduler {
     cert_store: Arc<CertStore>,
     storage: Arc<dyn StorageEngine>,
+    alert_engine: Arc<Mutex<AlertEngine>>,
+    notifier: Arc<NotificationManager>,
     default_account_collection_interval_secs: u64,
     tick_secs: u64,
     max_concurrent: usize,
@@ -22,6 +26,8 @@ impl CloudCheckScheduler {
     pub fn new(
         cert_store: Arc<CertStore>,
         storage: Arc<dyn StorageEngine>,
+        alert_engine: Arc<Mutex<AlertEngine>>,
+        notifier: Arc<NotificationManager>,
         default_account_collection_interval_secs: u64,
         tick_secs: u64,
         max_concurrent: usize,
@@ -29,6 +35,8 @@ impl CloudCheckScheduler {
         Self {
             cert_store,
             storage,
+            alert_engine,
+            notifier,
             default_account_collection_interval_secs,
             tick_secs,
             max_concurrent,
@@ -302,6 +310,9 @@ impl CloudCheckScheduler {
             self.storage
                 .write_batch(&batch)
                 .context("Failed to write cloud metrics batch")?;
+
+            // Feed cloud metrics to alert engine
+            self.evaluate_alerts(&batch.data_points).await;
         }
 
         // Update collection state for each account
@@ -468,6 +479,42 @@ impl CloudCheckScheduler {
             agent_id: "cloud-scheduler".to_string(),
             timestamp: now,
             data_points,
+        }
+    }
+
+    /// Evaluate alert rules for cloud metrics and send notifications
+    async fn evaluate_alerts(&self, data_points: &[MetricDataPoint]) {
+        let locale = self
+            .cert_store
+            .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
+
+        let mut engine = self
+            .alert_engine
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        for dp in data_points {
+            let outputs = engine.ingest_with_locale(dp, &locale);
+            for output in outputs {
+                let event = output.event().clone();
+                // Store alert event
+                if let Err(e) = self.storage.write_alert_event(&event) {
+                    tracing::error!(error = %e, "Failed to write cloud alert event");
+                }
+                // Log recovery
+                if event.status == 3 {
+                    tracing::info!(
+                        rule_id = %event.rule_id,
+                        agent_id = %event.agent_id,
+                        "Cloud alert auto-recovered"
+                    );
+                }
+                // Send notification
+                let notifier = self.notifier.clone();
+                tokio::spawn(async move {
+                    notifier.notify(&event).await;
+                });
+            }
         }
     }
 }

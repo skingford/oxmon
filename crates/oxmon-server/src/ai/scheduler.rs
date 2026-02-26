@@ -69,7 +69,7 @@ impl AIReportScheduler {
         // 2. 加载所有启用的 AI 账号
         let accounts = self
             .cert_store
-            .list_system_configs(Some("ai_account"), None, Some(true), 1000, 0)
+            .list_ai_accounts(None, Some(true), 1000, 0)
             .context("Failed to load AI accounts")?;
 
         if accounts.is_empty() {
@@ -83,13 +83,15 @@ impl AIReportScheduler {
 
         // 4. 检查每个账号是否到期需要生成报告
         for account in accounts {
-            let config: serde_json::Value = serde_json::from_str(&account.config_json)
-                .context("Failed to parse AI account config")?;
-
-            let interval_secs = config
-                .get("collection_interval_secs")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(86400); // 默认每天
+            // 从 extra_config 中解析 collection_interval_secs
+            let interval_secs = if let Some(extra) = &account.extra_config {
+                serde_json::from_str::<serde_json::Value>(extra)
+                    .ok()
+                    .and_then(|config| config.get("collection_interval_secs").and_then(|v| v.as_i64()))
+                    .unwrap_or(86400)
+            } else {
+                86400 // 默认每天
+            };
 
             // 检查是否应该生成报告（支持定时和间隔两种模式）
             let should_collect =
@@ -188,11 +190,11 @@ impl AIReportScheduler {
 
     async fn generate_report(
         &self,
-        account: &oxmon_storage::cert_store::SystemConfigRow,
+        account: &oxmon_storage::cert_store::AIAccountRow,
     ) -> Result<()> {
         tracing::info!(
             account_id = %account.id,
-            provider = %account.provider.as_deref().unwrap_or("unknown"),
+            provider = %account.provider,
             "Generating AI report"
         );
 
@@ -318,11 +320,9 @@ impl AIReportScheduler {
 
     fn build_analyzer(
         &self,
-        account: &oxmon_storage::cert_store::SystemConfigRow,
+        account: &oxmon_storage::cert_store::AIAccountRow,
     ) -> Result<Box<dyn AIAnalyzer>> {
-        let config: serde_json::Value = serde_json::from_str(&account.config_json)
-            .context("Failed to parse AI account config JSON")?;
-        let provider = account.provider.as_deref().unwrap_or("zhipu");
+        let provider = &account.provider;
 
         tracing::debug!(
             account_id = %account.id,
@@ -330,17 +330,23 @@ impl AIReportScheduler {
             "Building AI analyzer"
         );
 
-        match provider {
+        match provider.as_str() {
             "zhipu" => {
-                let api_key = config["api_key"]
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("Missing api_key in config"))?
-                    .to_string();
-                let model = config["model"].as_str().map(|s| s.to_string());
-                let base_url = config["base_url"].as_str().map(|s| s.to_string());
-                let timeout = config["timeout_secs"].as_u64();
-                let max_tokens = config["max_tokens"].as_u64().map(|v| v as usize);
-                let temperature = config["temperature"].as_f64().map(|v| v as f32);
+                let api_key = account.api_key.clone();
+                let model = account.model.clone();
+
+                // 从 extra_config 中解析其他配置
+                let (base_url, timeout, max_tokens, temperature) = if let Some(extra) = &account.extra_config {
+                    let config: serde_json::Value = serde_json::from_str(extra)
+                        .context("Failed to parse extra_config JSON")?;
+                    let base_url = config["base_url"].as_str().map(|s| s.to_string());
+                    let timeout = config["timeout_secs"].as_u64();
+                    let max_tokens = config["max_tokens"].as_u64().map(|v| v as usize);
+                    let temperature = config["temperature"].as_f64().map(|v| v as f32);
+                    (base_url, timeout, max_tokens, temperature)
+                } else {
+                    (None, None, None, None)
+                };
 
                 tracing::debug!(
                     model = ?model,

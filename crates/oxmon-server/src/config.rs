@@ -139,26 +139,6 @@ pub struct SeedCloudAccount {
     pub enabled: bool,
 }
 
-// ---- AI accounts seed file types (used by `init-ai-accounts` CLI subcommand) ----
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AIAccountsSeedFile {
-    #[serde(default)]
-    pub ai_accounts: Vec<SeedAIAccount>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SeedAIAccount {
-    pub config_key: String,
-    pub provider: String,
-    pub display_name: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    pub config: serde_json::Value,
-    #[serde(default = "default_seed_enabled")]
-    pub enabled: bool,
-}
-
 // ---- Dictionaries seed file types (used by `init-dictionaries` CLI subcommand) ----
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,6 +182,8 @@ pub struct SeedDictionary {
 pub struct CertCheckConfig {
     #[serde(default = "default_cert_check_enabled")]
     pub enabled: bool,
+    #[serde(default = "default_cert_check_auto_backfill_domains_on_startup")]
+    pub auto_backfill_domains_on_startup: bool,
     #[serde(default = "default_cert_check_default_interval_secs")]
     pub default_interval_secs: u64,
     #[serde(default = "default_cert_check_tick_secs")]
@@ -216,6 +198,7 @@ impl Default for CertCheckConfig {
     fn default() -> Self {
         Self {
             enabled: default_cert_check_enabled(),
+            auto_backfill_domains_on_startup: default_cert_check_auto_backfill_domains_on_startup(),
             default_interval_secs: default_cert_check_default_interval_secs(),
             tick_secs: default_cert_check_tick_secs(),
             connect_timeout_secs: default_cert_check_connect_timeout_secs(),
@@ -225,6 +208,10 @@ impl Default for CertCheckConfig {
 }
 
 fn default_cert_check_enabled() -> bool {
+    true
+}
+
+fn default_cert_check_auto_backfill_domains_on_startup() -> bool {
     true
 }
 

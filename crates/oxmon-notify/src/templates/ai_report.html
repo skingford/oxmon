@@ -363,6 +363,173 @@
             margin: 18px 0;
         }
 
+        /* Executive summary and KPI blocks (optional classes in ai_analysis_html) */
+        .content .executive-summary {
+            margin: 0 0 16px;
+            padding: 16px;
+            border-radius: 12px;
+            border: 1px solid #f1dd68;
+            background:
+                linear-gradient(180deg, #fffdf0 0%, #fffef7 100%);
+        }
+
+        .content .executive-summary-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0 0 10px;
+            color: #111827;
+            font-size: 14px;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .content .executive-summary-title::before {
+            content: 'SUMMARY';
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 20px;
+            padding: 0 8px;
+            border-radius: 999px;
+            background: #f4d000;
+            border: 1px solid #e5b800;
+            color: #111827;
+            font-size: 10px;
+            font-weight: 800;
+            line-height: 1;
+            letter-spacing: 0.06em;
+        }
+
+        .content .executive-summary p:last-child {
+            margin-bottom: 0;
+        }
+
+        .content .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 12px 0 16px;
+        }
+
+        .content .kpi-card {
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            background: #ffffff;
+            padding: 12px;
+        }
+
+        .content .kpi-label {
+            color: var(--text-muted);
+            font-size: 11px;
+            line-height: 1.4;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 6px;
+        }
+
+        .content .kpi-value {
+            color: #111827;
+            font-size: 20px;
+            font-weight: 800;
+            line-height: 1.1;
+            font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .content .kpi-desc {
+            color: var(--text-secondary);
+            font-size: 12px;
+            line-height: 1.5;
+            margin-top: 6px;
+        }
+
+        .content .kpi-trend {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 18px;
+            margin-top: 8px;
+            padding: 0 6px;
+            border-radius: 999px;
+            border: 1px solid #d1d5db;
+            background: #f9fafb;
+            color: #111827;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 1;
+            letter-spacing: 0.04em;
+        }
+
+        .content .kpi-trend.up {
+            background: #fef2f2;
+            border-color: #fecaca;
+            color: #b91c1c;
+        }
+
+        .content .kpi-trend.down {
+            background: #f3f4f6;
+            border-color: #d1d5db;
+            color: #111827;
+        }
+
+        .content .kpi-trend.warn {
+            background: #fff8cc;
+            border-color: #f4d000;
+            color: #8a6a00;
+        }
+
+        .content .key-points {
+            margin: 12px 0 16px;
+            padding: 12px 14px;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            background: #fafafa;
+        }
+
+        .content .key-points-title {
+            margin: 0 0 8px;
+            color: #111827;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .content .key-points ul,
+        .content .key-points ol {
+            margin: 0 0 0 18px;
+        }
+
+        .content .key-points li:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Print/layout utility classes for generated content */
+        .content .page-break {
+            height: 0;
+            margin: 0;
+            padding: 0;
+            border: 0;
+        }
+
+        .content .avoid-break,
+        .content .keep-together {
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
+
+        .content .page-break-before {
+            break-before: page;
+            page-break-before: always;
+        }
+
+        .content .page-break-after {
+            break-after: page;
+            page-break-after: always;
+        }
+
         table {
             width: 100%;
             border-collapse: collapse;
@@ -426,6 +593,18 @@
         table td.center {
             text-align: center;
         }
+
+        /* Column width helpers for generated tables */
+        table .w-80 { width: 80px; }
+        table .w-100 { width: 100px; }
+        table .w-120 { width: 120px; }
+        table .w-140 { width: 140px; }
+        table .w-160 { width: 160px; }
+        table .w-180 { width: 180px; }
+        table .w-200 { width: 200px; }
+        table .w-240 { width: 240px; }
+        table .w-280 { width: 280px; }
+        table .w-320 { width: 320px; }
 
         .status-badge,
         .badge {
@@ -678,6 +857,20 @@
                 font-size: 11px;
             }
 
+            .content .kpi-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .content .kpi-value {
+                font-size: 18px;
+            }
+
+            table .w-240,
+            table .w-280,
+            table .w-320 {
+                width: auto;
+            }
+
             .meta-value,
             td,
             th,
@@ -762,7 +955,16 @@
             .content h3 + ol,
             .content h3 + table,
             .content h3 + pre,
-            .content h3 + blockquote {
+            .content h3 + blockquote,
+            .content h3 + .summary,
+            .content h3 + .conclusion,
+            .content h3 + .recommendation,
+            .content h3 + .warning,
+            .content h3 + .danger,
+            .content h3 + .note,
+            .content h3 + .tip,
+            .content h3 + .executive-summary,
+            .content h3 + .key-points {
                 break-before: avoid;
                 page-break-before: avoid;
             }
@@ -770,6 +972,10 @@
             table,
             pre,
             blockquote,
+            .content .executive-summary,
+            .content .kpi-grid,
+            .content .kpi-card,
+            .content .key-points,
             .content .summary,
             .content .conclusion,
             .content .recommendation,
@@ -793,6 +999,21 @@
             img {
                 break-inside: avoid;
                 page-break-inside: avoid;
+            }
+
+            .content .page-break {
+                break-after: page;
+                page-break-after: always;
+            }
+
+            .content .page-break-before {
+                break-before: page;
+                page-break-before: always;
+            }
+
+            .content .page-break-after {
+                break-after: page;
+                page-break-after: always;
             }
 
             table {

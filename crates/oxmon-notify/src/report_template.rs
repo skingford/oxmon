@@ -121,21 +121,21 @@ mod tests {
 
     #[test]
     fn test_render_report() {
-        let html = ReportRenderer::render_report(
-            "2024-01-15",
-            50,
-            "high",
-            "zhipu",
-            "glm-5",
-            "## 测试报告\n\n这是测试内容。",
-            "2024-01-15T08:40:00Z",
-            "zh-CN",
-        )
-        .unwrap();
+        let params = ReportParams {
+            report_date: "2024-01-15",
+            total_agents: 50,
+            risk_level: "high",
+            ai_provider: "zhipu",
+            ai_model: "glm-5",
+            ai_analysis: "## 测试报告\n\n这是测试内容。",
+            created_at: "2024-01-15T08:40:00Z",
+            locale: "zh-CN",
+        };
+        let html = ReportRenderer::render_report(&params).unwrap();
 
         assert!(html.contains("服务器监控 AI 分析报告"));
         assert!(html.contains("2024-01-15"));
-        assert!(html.contains("50 台服务器"));
+        assert!(html.contains(">50<"));
         assert!(html.contains("高风险"));
         assert!(html.contains("glm-5"));
     }

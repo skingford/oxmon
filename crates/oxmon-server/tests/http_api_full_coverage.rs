@@ -350,6 +350,11 @@ async fn certificate_endpoints_should_cover_query_and_crud_paths() {
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
 
+    let (status, body, _) =
+        request_no_body(&ctx.app, "GET", "/v1/certs/domains/summary", Some(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+
     let (status, body, _) = request_no_body(
         &ctx.app,
         "GET",
@@ -1396,6 +1401,163 @@ async fn dashboard_overview_should_count_unknown_cloud_instance_statuses() {
     assert_eq!(body["data"]["cloud_summary"]["total_accounts"], 1);
     assert_eq!(body["data"]["cloud_summary"]["total_instances"], 3);
     assert_eq!(body["data"]["cloud_summary"]["unknown_instances"], 3);
+}
+
+#[tokio::test]
+async fn system_certs_backfill_domains_should_backfill_from_certificate_details() {
+    let ctx = build_test_context().expect("test context should build");
+    let token = login_and_get_token(&ctx.app).await;
+
+    let now = chrono::Utc::now();
+    let domain = "manual-backfill.example.com";
+    ctx.state
+        .cert_store
+        .upsert_certificate_details(&oxmon_common::types::CertificateDetails {
+            id: oxmon_common::id::next_id(),
+            domain: domain.to_string(),
+            not_before: now - chrono::Duration::days(1),
+            not_after: now + chrono::Duration::days(30),
+            ip_addresses: vec!["1.1.1.1".to_string()],
+            issuer_cn: Some("Test CA".to_string()),
+            issuer_o: None,
+            issuer_ou: None,
+            issuer_c: None,
+            subject_alt_names: vec![domain.to_string()],
+            chain_valid: true,
+            chain_error: None,
+            last_checked: now,
+            created_at: now,
+            updated_at: now,
+            serial_number: None,
+            fingerprint_sha256: None,
+            version: None,
+            signature_algorithm: None,
+            public_key_algorithm: None,
+            public_key_bits: None,
+            subject_cn: None,
+            subject_o: None,
+            key_usage: None,
+            extended_key_usage: None,
+            is_ca: None,
+            is_wildcard: None,
+            ocsp_urls: None,
+            crl_urls: None,
+            ca_issuer_urls: None,
+            sct_count: None,
+            tls_version: None,
+            cipher_suite: None,
+            chain_depth: None,
+        })
+        .expect("upsert certificate details should succeed");
+
+    // Remove auto-backfilled domain to simulate legacy orphan data, then use manual endpoint.
+    let existing = ctx
+        .state
+        .cert_store
+        .get_domain_by_name(domain)
+        .expect("query domain should succeed")
+        .expect("domain should exist after upsert");
+    let deleted = ctx
+        .state
+        .cert_store
+        .delete_domain(&existing.id)
+        .expect("delete domain should succeed");
+    assert!(deleted);
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "POST",
+        "/v1/system/certs/backfill-domains",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["inserted_domains"], 1);
+    assert_eq!(body["data"]["dry_run"], false);
+    assert!(body["data"]["domains_preview"].is_array());
+    assert_eq!(body["data"]["domains_preview"][0], domain);
+}
+
+#[tokio::test]
+async fn system_certs_backfill_domains_dry_run_should_preview_without_writing() {
+    let ctx = build_test_context().expect("test context should build");
+    let token = login_and_get_token(&ctx.app).await;
+
+    let now = chrono::Utc::now();
+    let domain = "manual-backfill-dry-run.example.com";
+    ctx.state
+        .cert_store
+        .upsert_certificate_details(&oxmon_common::types::CertificateDetails {
+            id: oxmon_common::id::next_id(),
+            domain: domain.to_string(),
+            not_before: now - chrono::Duration::days(1),
+            not_after: now + chrono::Duration::days(30),
+            ip_addresses: vec!["1.1.1.1".to_string()],
+            issuer_cn: Some("Test CA".to_string()),
+            issuer_o: None,
+            issuer_ou: None,
+            issuer_c: None,
+            subject_alt_names: vec![domain.to_string()],
+            chain_valid: true,
+            chain_error: None,
+            last_checked: now,
+            created_at: now,
+            updated_at: now,
+            serial_number: None,
+            fingerprint_sha256: None,
+            version: None,
+            signature_algorithm: None,
+            public_key_algorithm: None,
+            public_key_bits: None,
+            subject_cn: None,
+            subject_o: None,
+            key_usage: None,
+            extended_key_usage: None,
+            is_ca: None,
+            is_wildcard: None,
+            ocsp_urls: None,
+            crl_urls: None,
+            ca_issuer_urls: None,
+            sct_count: None,
+            tls_version: None,
+            cipher_suite: None,
+            chain_depth: None,
+        })
+        .expect("upsert certificate details should succeed");
+
+    let existing = ctx
+        .state
+        .cert_store
+        .get_domain_by_name(domain)
+        .expect("query domain should succeed")
+        .expect("domain should exist after upsert");
+    ctx.state
+        .cert_store
+        .delete_domain(&existing.id)
+        .expect("delete domain should succeed");
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "POST",
+        "/v1/system/certs/backfill-domains?dry_run=true",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["inserted_domains"], 1);
+    assert_eq!(body["data"]["dry_run"], true);
+    assert!(body["data"]["domains_preview"].is_array());
+    assert_eq!(body["data"]["domains_preview"][0], domain);
+
+    // dry run should not write
+    assert!(ctx
+        .state
+        .cert_store
+        .get_domain_by_name(domain)
+        .expect("query domain should succeed")
+        .is_none());
 }
 
 #[tokio::test]

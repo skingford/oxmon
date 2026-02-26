@@ -76,7 +76,7 @@ echo ""
 echo "🤖 步骤 3: 创建 AI 账号"
 
 # 先检查是否已存在
-EXISTING_ACCOUNT=$(sqlite3 data/cert.db "SELECT id FROM system_configs WHERE config_type='ai_account' AND config_key='ai_test_glm5' LIMIT 1;" 2>/dev/null || echo "")
+EXISTING_ACCOUNT=$(sqlite3 data/cert.db "SELECT id FROM ai_accounts WHERE config_key='ai_test_glm5' LIMIT 1;" 2>/dev/null || echo "")
 
 if [ ! -z "$EXISTING_ACCOUNT" ]; then
   echo "   ⚠️  AI 账号已存在，使用现有账号: $EXISTING_ACCOUNT"
@@ -85,11 +85,9 @@ else
   # 生成 ID
   AI_ACCOUNT_ID=$(date +%s)000
 
-  # 构建配置 JSON (转义特殊字符)
-  CONFIG_JSON=$(cat <<EOF
+  # 构建额外配置 JSON (不包含 api_key, model)
+  EXTRA_CONFIG=$(cat <<EOF
 {
-  "api_key": "$ZHI_PU_API_KEY",
-  "model": "$ZHI_PU_MODEL",
   "base_url": "https://open.bigmodel.cn/api/paas/v4",
   "timeout_secs": 60,
   "max_tokens": 4000,
@@ -99,22 +97,23 @@ else
 EOF
 )
 
-  # 直接插入数据库
+  # 直接插入数据库到 ai_accounts 表
   sqlite3 data/cert.db <<EOF
-INSERT INTO system_configs (
-  id, config_key, config_type, provider, display_name, description,
-  config_json, enabled, created_at, updated_at
+INSERT INTO ai_accounts (
+  id, config_key, provider, display_name, description,
+  api_key, model, extra_config, enabled, created_at, updated_at
 ) VALUES (
   '$AI_ACCOUNT_ID',
   'ai_test_glm5',
-  'ai_account',
   'zhipu',
   '测试 GLM-5 账号',
   '从 .env 加载的测试账号',
-  '$CONFIG_JSON',
+  '$ZHI_PU_API_KEY',
+  '$ZHI_PU_MODEL',
+  '$EXTRA_CONFIG',
   1,
-  datetime('now'),
-  datetime('now')
+  strftime('%s', 'now'),
+  strftime('%s', 'now')
 );
 EOF
 
@@ -289,7 +288,7 @@ else
   echo "   2. 检查 API Key 是否有效"
   echo "   3. 确认网络连接正常"
   echo "   4. 验证账号配置:"
-  sqlite3 data/cert.db "SELECT * FROM system_configs WHERE id='$AI_ACCOUNT_ID';"
+  sqlite3 data/cert.db "SELECT * FROM ai_accounts WHERE id='$AI_ACCOUNT_ID';"
 fi
 
 echo ""
@@ -298,6 +297,6 @@ echo ""
 echo "📚 相关命令:"
 echo "   - 查看日志: tail -f server.log"
 echo "   - 查看报告: sqlite3 data/cert.db 'SELECT * FROM ai_reports;'"
-echo "   - 查看账号: sqlite3 data/cert.db 'SELECT * FROM system_configs WHERE config_type=\"ai_account\";'"
+echo "   - 查看账号: curl http://localhost:8080/v1/ai/accounts -H \"Authorization: Bearer \$TOKEN\""
 echo "   - API 文档: open http://localhost:8080/docs"
 echo ""

@@ -267,6 +267,25 @@ CREATE INDEX IF NOT EXISTS idx_ai_reports_provider ON ai_reports(ai_provider);
 CREATE INDEX IF NOT EXISTS idx_ai_reports_account ON ai_reports(ai_account_id);
 ";
 
+const AI_ACCOUNTS_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS ai_accounts (
+    id TEXT PRIMARY KEY,
+    config_key TEXT NOT NULL UNIQUE,
+    provider TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    description TEXT,
+    api_key TEXT NOT NULL,
+    api_secret TEXT,
+    model TEXT,
+    extra_config TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_accounts_provider ON ai_accounts(provider);
+CREATE INDEX IF NOT EXISTS idx_ai_accounts_enabled ON ai_accounts(enabled);
+";
+
 const USERS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -405,6 +424,7 @@ impl CertStore {
         conn.execute_batch(SYSTEM_DICTIONARIES_SCHEMA)?;
         conn.execute_batch(DICTIONARY_TYPES_SCHEMA)?;
         conn.execute_batch(AI_REPORTS_SCHEMA)?;
+        conn.execute_batch(AI_ACCOUNTS_SCHEMA)?;
         conn.execute_batch(NOTIFICATION_LOGS_SCHEMA)?;
         conn.execute_batch(CLOUD_COLLECTION_STATE_SCHEMA)?;
         conn.execute_batch(CLOUD_INSTANCES_SCHEMA)?;
@@ -976,6 +996,146 @@ impl CertStore {
             }
         }
         Ok(domains)
+    }
+
+    /// 将 certificate_details 中存在但 cert_domains 中缺失的域名自动补齐到监控域名表。
+    /// 返回本次实际新增的域名数量。
+    pub fn sync_missing_monitored_domains_from_certificate_details(&self) -> Result<u64> {
+        let conn = self.lock_conn();
+        let missing_domains: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT c.domain
+                 FROM certificate_details c
+                 LEFT JOIN cert_domains d ON d.domain = c.domain
+                 WHERE d.domain IS NULL",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            items
+        };
+
+        if missing_domains.is_empty() {
+            return Ok(0);
+        }
+
+        let now = Utc::now().timestamp();
+        let tx = conn.unchecked_transaction()?;
+        let mut inserted = 0u64;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO cert_domains
+                 (id, domain, port, enabled, check_interval_secs, note, created_at, updated_at)
+                 VALUES (?1, ?2, 443, 1, NULL, NULL, ?3, ?4)",
+            )?;
+            for domain in &missing_domains {
+                let changed = stmt.execute(rusqlite::params![
+                    oxmon_common::id::next_id(),
+                    domain,
+                    now,
+                    now
+                ])?;
+                inserted += changed as u64;
+            }
+        }
+        tx.commit()?;
+        Ok(inserted)
+    }
+
+    /// 执行回填并返回（本次新增数量, 样本域名列表）。
+    /// `preview_limit` 仅影响返回样本数量，不影响实际写入数量。
+    pub fn sync_missing_monitored_domains_from_certificate_details_with_preview(
+        &self,
+        preview_limit: usize,
+    ) -> Result<(u64, Vec<String>)> {
+        let conn = self.lock_conn();
+        let missing_domains: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT c.domain
+                 FROM certificate_details c
+                 LEFT JOIN cert_domains d ON d.domain = c.domain
+                 WHERE d.domain IS NULL
+                 ORDER BY c.domain ASC",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            items
+        };
+
+        if missing_domains.is_empty() {
+            return Ok((0, Vec::new()));
+        }
+
+        let preview = missing_domains
+            .iter()
+            .take(preview_limit)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let now = Utc::now().timestamp();
+        let tx = conn.unchecked_transaction()?;
+        let mut inserted = 0u64;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO cert_domains
+                 (id, domain, port, enabled, check_interval_secs, note, created_at, updated_at)
+                 VALUES (?1, ?2, 443, 1, NULL, NULL, ?3, ?4)",
+            )?;
+            for domain in &missing_domains {
+                let changed = stmt.execute(rusqlite::params![
+                    oxmon_common::id::next_id(),
+                    domain,
+                    now,
+                    now
+                ])?;
+                inserted += changed as u64;
+            }
+        }
+        tx.commit()?;
+        Ok((inserted, preview))
+    }
+
+    /// 仅统计 certificate_details 中存在但 cert_domains 中缺失的域名数量（不写入）。
+    pub fn count_missing_monitored_domains_from_certificate_details(&self) -> Result<u64> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM (
+                 SELECT DISTINCT c.domain
+                 FROM certificate_details c
+                 LEFT JOIN cert_domains d ON d.domain = c.domain
+                 WHERE d.domain IS NULL
+             ) t",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
+    /// 预览 certificate_details 中缺失于 cert_domains 的域名（去重，按域名排序）。
+    pub fn preview_missing_monitored_domains_from_certificate_details(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT c.domain
+             FROM certificate_details c
+             LEFT JOIN cert_domains d ON d.domain = c.domain
+             WHERE d.domain IS NULL
+             ORDER BY c.domain ASC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit as i64], |row| row.get::<_, String>(0))?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
     }
 
     pub fn query_domains(
@@ -1777,6 +1937,82 @@ impl CertStore {
         })
     }
 
+    /// Returns a monitored domain summary.
+    pub fn cert_domain_summary(&self) -> Result<CertDomainSummary> {
+        let conn = self.lock_conn();
+        let (total, enabled, disabled): (i64, i64, i64) = conn.query_row(
+            "SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) AS enabled_count,
+                SUM(CASE WHEN enabled = 0 THEN 1 ELSE 0 END) AS disabled_count
+             FROM cert_domains",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+
+        Ok(CertDomainSummary {
+            total: total as u64,
+            enabled: enabled as u64,
+            disabled: disabled as u64,
+        })
+    }
+
+    /// Returns a latest certificate status summary.
+    pub fn cert_status_summary(
+        &self,
+        domain_contains: Option<&str>,
+        is_valid: Option<bool>,
+        days_until_expiry_lte: Option<i64>,
+    ) -> Result<CertStatusSummary> {
+        let mut sql = String::from(
+            "SELECT
+                COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN r.is_valid = 1 AND r.chain_valid = 1 THEN 1 ELSE 0 END), 0) AS healthy_count,
+                COALESCE(SUM(CASE WHEN NOT (r.is_valid = 1 AND r.chain_valid = 1) THEN 1 ELSE 0 END), 0) AS failed_count,
+                COALESCE(SUM(CASE WHEN r.days_until_expiry >= 0 AND r.days_until_expiry <= 30 THEN 1 ELSE 0 END), 0) AS expiring_soon_count
+             FROM cert_check_results r
+             INNER JOIN (
+                 SELECT domain_id, MAX(checked_at) AS max_checked
+                 FROM cert_check_results
+                 GROUP BY domain_id
+             ) latest ON r.domain_id = latest.domain_id AND r.checked_at = latest.max_checked
+             INNER JOIN cert_domains d ON d.id = r.domain_id AND d.enabled = 1
+             WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(v) = domain_contains {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND r.domain LIKE ?{idx} ESCAPE '\\'"));
+            params.push(Box::new(like_pattern(v)));
+        }
+        if let Some(v) = is_valid {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND r.is_valid = ?{idx}"));
+            params.push(Box::new(v as i32));
+        }
+        if let Some(v) = days_until_expiry_lte {
+            let idx = params.len() + 1;
+            sql.push_str(&format!(" AND r.days_until_expiry <= ?{idx}"));
+            params.push(Box::new(v));
+        }
+
+        let conn = self.lock_conn();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let (total, healthy, failed, expiring_soon): (i64, i64, i64, i64) =
+            conn.query_row(&sql, param_refs.as_slice(), |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?;
+
+        Ok(CertStatusSummary {
+            total: total as u64,
+            healthy: healthy as u64,
+            failed: failed as u64,
+            expiring_soon: expiring_soon as u64,
+        })
+    }
+
     // ---- Alert rules CRUD ----
 
     pub fn insert_alert_rule(&self, rule: &AlertRuleRow) -> Result<AlertRuleRow> {
@@ -2482,6 +2718,193 @@ impl CertStore {
         })
     }
 
+    // ---- AI Accounts ----
+
+    pub fn insert_ai_account(&self, row: &AIAccountRow) -> Result<AIAccountRow> {
+        let conn = self.lock_conn();
+        conn.execute(
+            "INSERT INTO ai_accounts (id, config_key, provider, display_name, description, api_key, api_secret, model, extra_config, enabled, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            rusqlite::params![
+                &row.id,
+                &row.config_key,
+                &row.provider,
+                &row.display_name,
+                &row.description,
+                &row.api_key,
+                &row.api_secret,
+                &row.model,
+                &row.extra_config,
+                if row.enabled { 1 } else { 0 },
+                row.created_at.timestamp(),
+                row.updated_at.timestamp(),
+            ],
+        )?;
+        self.get_ai_account_by_id(&row.id)?.ok_or_else(|| anyhow::anyhow!("Failed to retrieve inserted AI account"))
+    }
+
+    pub fn get_ai_account_by_id(&self, id: &str) -> Result<Option<AIAccountRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, config_key, provider, display_name, description, api_key, api_secret, model, extra_config, enabled, created_at, updated_at
+             FROM ai_accounts WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_ai_account(row)))?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(Some(r)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_ai_account_by_config_key(&self, config_key: &str) -> Result<Option<AIAccountRow>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, config_key, provider, display_name, description, api_key, api_secret, model, extra_config, enabled, created_at, updated_at
+             FROM ai_accounts WHERE config_key = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![config_key], |row| Ok(Self::row_to_ai_account(row)))?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(Some(r)),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_ai_accounts(
+        &self,
+        provider: Option<&str>,
+        enabled: Option<bool>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<AIAccountRow>> {
+        let conn = self.lock_conn();
+        let mut sql = "SELECT id, config_key, provider, display_name, description, api_key, api_secret, model, extra_config, enabled, created_at, updated_at FROM ai_accounts WHERE 1=1".to_string();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(p) = provider {
+            sql.push_str(" AND provider = ?");
+            params.push(Box::new(p.to_string()));
+        }
+        if let Some(e) = enabled {
+            sql.push_str(" AND enabled = ?");
+            params.push(Box::new(if e { 1 } else { 0 }));
+        }
+
+        sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| Ok(Self::row_to_ai_account(row)))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row??);
+        }
+        Ok(results)
+    }
+
+    pub fn count_ai_accounts(
+        &self,
+        provider: Option<&str>,
+        enabled: Option<bool>,
+    ) -> Result<u64> {
+        let conn = self.lock_conn();
+        let mut sql = "SELECT COUNT(*) FROM ai_accounts WHERE 1=1".to_string();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(p) = provider {
+            sql.push_str(" AND provider = ?");
+            params.push(Box::new(p.to_string()));
+        }
+        if let Some(e) = enabled {
+            sql.push_str(" AND enabled = ?");
+            params.push(Box::new(if e { 1 } else { 0 }));
+        }
+
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = stmt.query_row(param_refs.as_slice(), |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
+    pub fn update_ai_account(&self, id: &str, display_name: Option<String>, description: Option<String>, api_key: Option<String>, api_secret: Option<String>, model: Option<String>, extra_config: Option<String>, enabled: Option<bool>) -> Result<bool> {
+        let conn = self.lock_conn();
+        let now = Utc::now().timestamp();
+
+        // 构建动态 UPDATE
+        let mut updates = vec!["updated_at = ?1"];
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
+
+        if let Some(v) = display_name {
+            updates.push("display_name = ?");
+            params.push(Box::new(v));
+        }
+        if let Some(v) = description {
+            updates.push("description = ?");
+            params.push(Box::new(v));
+        }
+        if let Some(v) = api_key {
+            updates.push("api_key = ?");
+            params.push(Box::new(v));
+        }
+        if let Some(v) = api_secret {
+            updates.push("api_secret = ?");
+            params.push(Box::new(v));
+        }
+        if let Some(v) = model {
+            updates.push("model = ?");
+            params.push(Box::new(v));
+        }
+        if let Some(v) = extra_config {
+            updates.push("extra_config = ?");
+            params.push(Box::new(v));
+        }
+        if let Some(v) = enabled {
+            updates.push("enabled = ?");
+            params.push(Box::new(if v { 1 } else { 0 }));
+        }
+
+        let sql = format!("UPDATE ai_accounts SET {} WHERE id = ?", updates.join(", "));
+        params.push(Box::new(id.to_string()));
+
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let updated = conn.execute(&sql, param_refs.as_slice())?;
+        Ok(updated > 0)
+    }
+
+    pub fn delete_ai_account(&self, id: &str) -> Result<bool> {
+        let conn = self.lock_conn();
+        let deleted = conn.execute(
+            "DELETE FROM ai_accounts WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        Ok(deleted > 0)
+    }
+
+    fn row_to_ai_account(row: &rusqlite::Row) -> Result<AIAccountRow> {
+        let enabled_int: i32 = row.get(9)?;
+        let created_at = Self::read_sqlite_datetime_utc(row, 10, "created_at")?;
+        let updated_at = Self::read_sqlite_datetime_utc(row, 11, "updated_at")?;
+        Ok(AIAccountRow {
+            id: row.get(0)?,
+            config_key: row.get(1)?,
+            provider: row.get(2)?,
+            display_name: row.get(3)?,
+            description: row.get(4)?,
+            api_key: row.get(5)?,
+            api_secret: row.get(6)?,
+            model: row.get(7)?,
+            extra_config: row.get(8)?,
+            enabled: enabled_int != 0,
+            created_at,
+            updated_at,
+        })
+    }
+
     fn read_sqlite_datetime_utc(
         row: &rusqlite::Row,
         index: usize,
@@ -2607,17 +3030,33 @@ impl CertStore {
 
     pub fn list_ai_reports(
         &self,
+        report_date: Option<&str>,
+        risk_level: Option<&str>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<oxmon_common::types::AIReportRow>> {
         let conn = self.lock_conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, report_date, ai_account_id, ai_provider, ai_model, total_agents, risk_level, ai_analysis, html_content, raw_metrics_json, notified, created_at, updated_at
-             FROM ai_reports ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
-            Ok(Self::row_to_ai_report(row))
-        })?;
+
+        // 构建动态SQL
+        let mut sql = "SELECT id, report_date, ai_account_id, ai_provider, ai_model, total_agents, risk_level, ai_analysis, html_content, raw_metrics_json, notified, created_at, updated_at FROM ai_reports WHERE 1=1".to_string();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(date) = report_date {
+            sql.push_str(" AND report_date = ?");
+            params.push(Box::new(date.to_string()));
+        }
+        if let Some(level) = risk_level {
+            sql.push_str(" AND risk_level = ?");
+            params.push(Box::new(level.to_string()));
+        }
+
+        sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| Ok(Self::row_to_ai_report(row)))?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row??);
@@ -2625,9 +3064,29 @@ impl CertStore {
         Ok(results)
     }
 
-    pub fn count_ai_reports(&self) -> Result<u64> {
+    pub fn count_ai_reports(
+        &self,
+        report_date: Option<&str>,
+        risk_level: Option<&str>,
+    ) -> Result<u64> {
         let conn = self.lock_conn();
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM ai_reports", [], |row| row.get(0))?;
+
+        // 构建动态SQL
+        let mut sql = "SELECT COUNT(*) FROM ai_reports WHERE 1=1".to_string();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(date) = report_date {
+            sql.push_str(" AND report_date = ?");
+            params.push(Box::new(date.to_string()));
+        }
+        if let Some(level) = risk_level {
+            sql.push_str(" AND risk_level = ?");
+            params.push(Box::new(level.to_string()));
+        }
+
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = stmt.query_row(param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -3823,6 +4282,15 @@ impl CertStore {
                 ],
             )?;
         }
+
+        // 自愈：证书详情存在但监控域名缺失时，自动补齐到 cert_domains，避免列表不一致。
+        conn.execute(
+            "INSERT OR IGNORE INTO cert_domains
+             (id, domain, port, enabled, check_interval_secs, note, created_at, updated_at)
+             VALUES (?1, ?2, 443, 1, NULL, NULL, ?3, ?4)",
+            rusqlite::params![oxmon_common::id::next_id(), details.domain, now, now],
+        )?;
+
         Ok(())
     }
 
@@ -3891,7 +4359,10 @@ impl CertStore {
                     public_key_bits, subject_cn, subject_o, key_usage, extended_key_usage,
                     is_ca, is_wildcard, ocsp_urls, crl_urls, ca_issuer_urls,
                     sct_count, tls_version, cipher_suite, chain_depth
-             FROM certificate_details WHERE 1=1",
+             FROM certificate_details
+             WHERE EXISTS (
+                 SELECT 1 FROM cert_domains d WHERE d.domain = certificate_details.domain
+             )",
         );
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         let mut idx = 1;
@@ -3978,7 +4449,12 @@ impl CertStore {
         filter: &oxmon_common::types::CertificateDetailsFilter,
     ) -> Result<u64> {
         let conn = self.lock_conn();
-        let mut sql = String::from("SELECT COUNT(*) FROM certificate_details WHERE 1=1");
+        let mut sql = String::from(
+            "SELECT COUNT(*) FROM certificate_details
+             WHERE EXISTS (
+                 SELECT 1 FROM cert_domains d WHERE d.domain = certificate_details.domain
+             )",
+        );
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         let mut idx = 1;
 
@@ -5268,6 +5744,23 @@ pub struct NotificationChannelUpdate {
     pub recipients: Option<Vec<String>>,
 }
 
+/// AI 账号行
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AIAccountRow {
+    pub id: String,
+    pub config_key: String,
+    pub provider: String,
+    pub display_name: String,
+    pub description: Option<String>,
+    pub api_key: String,
+    pub api_secret: Option<String>,
+    pub model: Option<String>,
+    pub extra_config: Option<String>,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// 系统配置行（发送方配置：SMTP、短信供应商等）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SystemConfigRow {
@@ -5548,6 +6041,21 @@ pub struct CertHealthSummary {
     pub expiring_soon: u64,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CertDomainSummary {
+    pub total: u64,
+    pub enabled: u64,
+    pub disabled: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CertStatusSummary {
+    pub total: u64,
+    pub healthy: u64,
+    pub failed: u64,
+    pub expiring_soon: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5590,6 +6098,40 @@ mod tests {
         };
         store.insert_domain(&req).unwrap();
         assert!(store.insert_domain(&req).is_err());
+    }
+
+    #[test]
+    fn test_cert_domain_summary_counts_enabled_and_disabled() {
+        let (_dir, store) = setup();
+        let d1 = store
+            .insert_domain(&CreateDomainRequest {
+                domain: "a.example.com".to_string(),
+                port: None,
+                check_interval_secs: None,
+                note: None,
+            })
+            .unwrap();
+        let d2 = store
+            .insert_domain(&CreateDomainRequest {
+                domain: "b.example.com".to_string(),
+                port: None,
+                check_interval_secs: None,
+                note: None,
+            })
+            .unwrap();
+
+        store
+            .update_domain(&d2.id, None, Some(false), None, None)
+            .unwrap();
+
+        let summary = store.cert_domain_summary().unwrap();
+        assert_eq!(summary.total, 2);
+        assert_eq!(summary.enabled, 1);
+        assert_eq!(summary.disabled, 1);
+
+        // Ensure toggling by ID really updated one inserted domain.
+        let fetched = store.get_domain_by_id(&d1.id).unwrap().unwrap();
+        assert!(fetched.enabled);
     }
 
     #[test]
@@ -6276,6 +6818,143 @@ mod tests {
     }
 
     #[test]
+    fn test_cert_status_summary_uses_latest_enabled_results_and_filters() {
+        let (_dir, store) = setup();
+        let d1 = store
+            .insert_domain(&CreateDomainRequest {
+                domain: "a.example.com".to_string(),
+                port: None,
+                check_interval_secs: None,
+                note: None,
+            })
+            .unwrap();
+        let d2 = store
+            .insert_domain(&CreateDomainRequest {
+                domain: "b.example.com".to_string(),
+                port: None,
+                check_interval_secs: None,
+                note: None,
+            })
+            .unwrap();
+        let d3 = store
+            .insert_domain(&CreateDomainRequest {
+                domain: "c.example.com".to_string(),
+                port: None,
+                check_interval_secs: None,
+                note: None,
+            })
+            .unwrap();
+        let d4 = store
+            .insert_domain(&CreateDomainRequest {
+                domain: "disabled.example.com".to_string(),
+                port: None,
+                check_interval_secs: None,
+                note: None,
+            })
+            .unwrap();
+        store
+            .update_domain(&d4.id, None, Some(false), None, None)
+            .unwrap();
+
+        let base = Utc::now();
+        let mk = |domain_id: &str,
+                  domain: &str,
+                  is_valid: bool,
+                  chain_valid: bool,
+                  days_until_expiry: Option<i64>,
+                  checked_at: DateTime<Utc>| {
+            CertCheckResult {
+                id: oxmon_common::id::next_id(),
+                domain_id: domain_id.to_string(),
+                domain: domain.to_string(),
+                is_valid,
+                chain_valid,
+                not_before: Some(checked_at - chrono::Duration::days(30)),
+                not_after: Some(checked_at + chrono::Duration::days(30)),
+                days_until_expiry,
+                issuer: Some("Test Issuer".to_string()),
+                subject: Some(domain.to_string()),
+                san_list: Some(vec![domain.to_string()]),
+                resolved_ips: Some(vec!["127.0.0.1".to_string()]),
+                error: None,
+                checked_at,
+                created_at: checked_at,
+                updated_at: checked_at,
+            }
+        };
+
+        store
+            .insert_check_result(&mk(
+                &d1.id,
+                &d1.domain,
+                false,
+                false,
+                Some(50),
+                base - chrono::Duration::minutes(2),
+            ))
+            .unwrap();
+        store
+            .insert_check_result(&mk(
+                &d1.id,
+                &d1.domain,
+                true,
+                true,
+                Some(20),
+                base - chrono::Duration::minutes(1),
+            ))
+            .unwrap();
+        store
+            .insert_check_result(&mk(&d2.id, &d2.domain, false, false, Some(10), base))
+            .unwrap();
+        store
+            .insert_check_result(&mk(
+                &d3.id,
+                &d3.domain,
+                true,
+                false,
+                Some(40),
+                base + chrono::Duration::minutes(1),
+            ))
+            .unwrap();
+        store
+            .insert_check_result(&mk(
+                &d4.id,
+                &d4.domain,
+                true,
+                true,
+                Some(5),
+                base + chrono::Duration::minutes(2),
+            ))
+            .unwrap();
+
+        let summary = store.cert_status_summary(None, None, None).unwrap();
+        assert_eq!(summary.total, 3);
+        assert_eq!(summary.healthy, 1);
+        assert_eq!(summary.failed, 2);
+        assert_eq!(summary.expiring_soon, 2);
+
+        let valid_only = store.cert_status_summary(None, Some(true), None).unwrap();
+        assert_eq!(valid_only.total, 2);
+        assert_eq!(valid_only.healthy, 1);
+        assert_eq!(valid_only.failed, 1);
+        assert_eq!(valid_only.expiring_soon, 1);
+
+        let expiring_30d = store.cert_status_summary(None, None, Some(30)).unwrap();
+        assert_eq!(expiring_30d.total, 2);
+        assert_eq!(expiring_30d.healthy, 1);
+        assert_eq!(expiring_30d.failed, 1);
+        assert_eq!(expiring_30d.expiring_soon, 2);
+
+        let domain_filtered = store
+            .cert_status_summary(Some("a.example"), None, None)
+            .unwrap();
+        assert_eq!(domain_filtered.total, 1);
+        assert_eq!(domain_filtered.healthy, 1);
+        assert_eq!(domain_filtered.failed, 0);
+        assert_eq!(domain_filtered.expiring_soon, 1);
+    }
+
+    #[test]
     fn test_upsert_system_dictionary_types() {
         let (_dir, store) = setup();
         let now = Utc::now();
@@ -6959,5 +7638,261 @@ mod tests {
         let summary = store.cloud_account_summary().unwrap();
         assert_eq!(summary.total_accounts, 3);
         assert_eq!(summary.enabled_accounts, 2);
+    }
+
+    #[test]
+    fn test_certificate_details_list_and_count_should_match_monitored_domains() {
+        let (_dir, store) = setup();
+        let now = Utc::now();
+
+        store
+            .insert_domain(&CreateDomainRequest {
+                domain: "monitored.example.com".to_string(),
+                port: None,
+                check_interval_secs: None,
+                note: None,
+            })
+            .unwrap();
+
+        let mk_details = |domain: &str| oxmon_common::types::CertificateDetails {
+            id: oxmon_common::id::next_id(),
+            domain: domain.to_string(),
+            not_before: now - chrono::Duration::days(1),
+            not_after: now + chrono::Duration::days(30),
+            ip_addresses: vec!["1.1.1.1".to_string()],
+            issuer_cn: Some("Test CA".to_string()),
+            issuer_o: None,
+            issuer_ou: None,
+            issuer_c: None,
+            subject_alt_names: vec![domain.to_string()],
+            chain_valid: true,
+            chain_error: None,
+            last_checked: now,
+            created_at: now,
+            updated_at: now,
+            serial_number: None,
+            fingerprint_sha256: None,
+            version: None,
+            signature_algorithm: None,
+            public_key_algorithm: None,
+            public_key_bits: None,
+            subject_cn: None,
+            subject_o: None,
+            key_usage: None,
+            extended_key_usage: None,
+            is_ca: None,
+            is_wildcard: None,
+            ocsp_urls: None,
+            crl_urls: None,
+            ca_issuer_urls: None,
+            sct_count: None,
+            tls_version: None,
+            cipher_suite: None,
+            chain_depth: None,
+        };
+
+        store
+            .upsert_certificate_details(&mk_details("monitored.example.com"))
+            .unwrap();
+        store
+            .upsert_certificate_details(&mk_details("orphan.example.com"))
+            .unwrap();
+
+        let filter = oxmon_common::types::CertificateDetailsFilter {
+            domain_contains: None,
+            not_after_lte: None,
+            not_after_gte: None,
+            chain_valid_eq: None,
+            is_valid_eq: None,
+            chain_error_eq: None,
+            last_checked_gte: None,
+            last_checked_lte: None,
+            ip_address_contains: None,
+            issuer_contains: None,
+            tls_version_eq: None,
+        };
+
+        let total = store.count_certificate_details(&filter).unwrap();
+        let items = store.list_certificate_details(&filter, 20, 0).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].domain, "monitored.example.com");
+    }
+
+    #[test]
+    fn test_sync_missing_monitored_domains_from_certificate_details_should_backfill_domains() {
+        let (_dir, store) = setup();
+        let now = Utc::now();
+
+        let mk_details = |domain: &str| oxmon_common::types::CertificateDetails {
+            id: oxmon_common::id::next_id(),
+            domain: domain.to_string(),
+            not_before: now - chrono::Duration::days(1),
+            not_after: now + chrono::Duration::days(30),
+            ip_addresses: vec!["1.1.1.1".to_string()],
+            issuer_cn: Some("Test CA".to_string()),
+            issuer_o: None,
+            issuer_ou: None,
+            issuer_c: None,
+            subject_alt_names: vec![domain.to_string()],
+            chain_valid: true,
+            chain_error: None,
+            last_checked: now,
+            created_at: now,
+            updated_at: now,
+            serial_number: None,
+            fingerprint_sha256: None,
+            version: None,
+            signature_algorithm: None,
+            public_key_algorithm: None,
+            public_key_bits: None,
+            subject_cn: None,
+            subject_o: None,
+            key_usage: None,
+            extended_key_usage: None,
+            is_ca: None,
+            is_wildcard: None,
+            ocsp_urls: None,
+            crl_urls: None,
+            ca_issuer_urls: None,
+            sct_count: None,
+            tls_version: None,
+            cipher_suite: None,
+            chain_depth: None,
+        };
+
+        store
+            .upsert_certificate_details(&mk_details("sync-a.example.com"))
+            .unwrap();
+        store
+            .upsert_certificate_details(&mk_details("sync-b.example.com"))
+            .unwrap();
+
+        let inserted = store
+            .sync_missing_monitored_domains_from_certificate_details()
+            .unwrap();
+        assert_eq!(inserted, 2);
+
+        let domains = store.query_domains(None, None, 100, 0).unwrap();
+        let names: std::collections::HashSet<String> =
+            domains.into_iter().map(|d| d.domain).collect();
+        assert!(names.contains("sync-a.example.com"));
+        assert!(names.contains("sync-b.example.com"));
+
+        // Re-run should be idempotent
+        let inserted_again = store
+            .sync_missing_monitored_domains_from_certificate_details()
+            .unwrap();
+        assert_eq!(inserted_again, 0);
+    }
+
+    #[test]
+    fn test_upsert_certificate_details_should_auto_backfill_monitored_domain() {
+        let (_dir, store) = setup();
+        let now = Utc::now();
+        let domain = "auto-sync-on-write.example.com";
+
+        let details = oxmon_common::types::CertificateDetails {
+            id: oxmon_common::id::next_id(),
+            domain: domain.to_string(),
+            not_before: now - chrono::Duration::days(1),
+            not_after: now + chrono::Duration::days(30),
+            ip_addresses: vec!["1.1.1.1".to_string()],
+            issuer_cn: Some("Test CA".to_string()),
+            issuer_o: None,
+            issuer_ou: None,
+            issuer_c: None,
+            subject_alt_names: vec![domain.to_string()],
+            chain_valid: true,
+            chain_error: None,
+            last_checked: now,
+            created_at: now,
+            updated_at: now,
+            serial_number: None,
+            fingerprint_sha256: None,
+            version: None,
+            signature_algorithm: None,
+            public_key_algorithm: None,
+            public_key_bits: None,
+            subject_cn: None,
+            subject_o: None,
+            key_usage: None,
+            extended_key_usage: None,
+            is_ca: None,
+            is_wildcard: None,
+            ocsp_urls: None,
+            crl_urls: None,
+            ca_issuer_urls: None,
+            sct_count: None,
+            tls_version: None,
+            cipher_suite: None,
+            chain_depth: None,
+        };
+
+        assert!(store.get_domain_by_name(domain).unwrap().is_none());
+        store.upsert_certificate_details(&details).unwrap();
+
+        let backfilled = store
+            .get_domain_by_name(domain)
+            .unwrap()
+            .expect("domain should be auto backfilled");
+        assert_eq!(backfilled.domain, domain);
+        assert_eq!(backfilled.port, 443);
+        assert!(backfilled.enabled);
+    }
+
+    #[test]
+    fn test_sync_missing_monitored_domains_with_preview_should_return_inserted_and_preview() {
+        let (_dir, store) = setup();
+        let now = Utc::now();
+        for domain in ["b.example.com", "a.example.com", "c.example.com"] {
+            store
+                .upsert_certificate_details(&oxmon_common::types::CertificateDetails {
+                    id: oxmon_common::id::next_id(),
+                    domain: domain.to_string(),
+                    not_before: now - chrono::Duration::days(1),
+                    not_after: now + chrono::Duration::days(30),
+                    ip_addresses: vec!["1.1.1.1".to_string()],
+                    issuer_cn: Some("Test CA".to_string()),
+                    issuer_o: None,
+                    issuer_ou: None,
+                    issuer_c: None,
+                    subject_alt_names: vec![domain.to_string()],
+                    chain_valid: true,
+                    chain_error: None,
+                    last_checked: now,
+                    created_at: now,
+                    updated_at: now,
+                    serial_number: None,
+                    fingerprint_sha256: None,
+                    version: None,
+                    signature_algorithm: None,
+                    public_key_algorithm: None,
+                    public_key_bits: None,
+                    subject_cn: None,
+                    subject_o: None,
+                    key_usage: None,
+                    extended_key_usage: None,
+                    is_ca: None,
+                    is_wildcard: None,
+                    ocsp_urls: None,
+                    crl_urls: None,
+                    ca_issuer_urls: None,
+                    sct_count: None,
+                    tls_version: None,
+                    cipher_suite: None,
+                    chain_depth: None,
+                })
+                .unwrap();
+
+            let existing = store.get_domain_by_name(domain).unwrap().unwrap();
+            store.delete_domain(&existing.id).unwrap();
+        }
+
+        let (inserted, preview) = store
+            .sync_missing_monitored_domains_from_certificate_details_with_preview(2)
+            .unwrap();
+        assert_eq!(inserted, 3);
+        assert_eq!(preview, vec!["a.example.com", "b.example.com"]);
     }
 }

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use oxmon_alert::rules::cert_expiration::CertExpirationRule;
+use oxmon_alert::rules::cloud_scale::CloudScaleRecommendationRule;
 use oxmon_alert::rules::rate_of_change::RateOfChangeRule;
 use oxmon_alert::rules::threshold::{CompareOp, ThresholdRule};
 use oxmon_alert::rules::trend_prediction::TrendPredictionRule;
@@ -63,6 +64,18 @@ fn default_warning_days() -> i64 {
 
 fn default_critical_days() -> i64 {
     7
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudScaleConfig {
+    pub high_threshold: f64,
+    pub low_threshold: f64,
+    #[serde(default = "default_cloud_scale_duration_secs")]
+    pub duration_secs: u64,
+}
+
+fn default_cloud_scale_duration_secs() -> u64 {
+    300
 }
 
 // ---- DB row -> AlertRule trait object ----
@@ -132,6 +145,21 @@ pub fn build_rule_from_row(row: &AlertRuleRow) -> Result<Box<dyn AlertRule>> {
                 cfg.critical_days,
                 row.silence_secs,
             )))
+        }
+        "cloud_scale" => {
+            let cfg: CloudScaleConfig = serde_json::from_str(&row.config_json)
+                .map_err(|e| anyhow::anyhow!("invalid cloud_scale config: {e}"))?;
+            Ok(Box::new(CloudScaleRecommendationRule {
+                id: row.id.clone(),
+                name: row.name.clone(),
+                metric: row.metric.clone(),
+                agent_pattern: row.agent_pattern.clone(),
+                severity,
+                high_threshold: cfg.high_threshold,
+                low_threshold: cfg.low_threshold,
+                duration_secs: cfg.duration_secs,
+                silence_secs: row.silence_secs,
+            }))
         }
         other => Err(anyhow::anyhow!("unknown rule type: {other}")),
     }

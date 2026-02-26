@@ -61,6 +61,11 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ),
         ("trend", "趋势预测规则", "根据趋势预测指标将在未来超过阈值"),
         ("cert_expiration", "证书过期规则", "证书即将过期时触发"),
+        (
+            "cloud_scale",
+            "云实例伸缩规则",
+            "云实例 CPU/内存长期过高或过低时推荐扩缩容",
+        ),
     ] {
         order += 1;
         items.push(make_system_item(

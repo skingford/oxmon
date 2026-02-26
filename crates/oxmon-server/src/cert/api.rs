@@ -275,6 +275,36 @@ async fn list_domains(
     }
 }
 
+/// 域名监控统计（总数/已启用/已停用）。
+#[utoipa::path(
+    get,
+    path = "/v1/certs/domains/summary",
+    tag = "Certificates",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "域名监控统计"),
+        (status = 401, description = "未授权", body = crate::api::ApiError)
+    )
+)]
+async fn cert_domains_summary(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.cert_store.cert_domain_summary() {
+        Ok(summary) => success_response(StatusCode::OK, &trace_id, summary),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to query cert domain summary");
+            common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 struct CertStatusListParams {
@@ -304,6 +334,23 @@ struct CertStatusListParams {
         deserialize_with = "crate::api::pagination::deserialize_optional_u64"
     )]
     offset: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct CertStatusSummaryParams {
+    /// 域名模糊匹配
+    #[param(required = false, rename = "domain__contains")]
+    #[serde(rename = "domain__contains")]
+    domain_contains: Option<String>,
+    /// 证书是否有效精确匹配
+    #[param(required = false, rename = "is_valid__eq")]
+    #[serde(rename = "is_valid__eq")]
+    is_valid_eq: Option<bool>,
+    /// 剩余有效天数上界（小于等于该值）
+    #[param(required = false, rename = "days_until_expiry__lte")]
+    #[serde(rename = "days_until_expiry__lte")]
+    days_until_expiry_lte: Option<i64>,
 }
 
 /// 获取监控域名详情（按 ID）。
@@ -506,6 +553,45 @@ async fn cert_status_all(
         }
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
+            common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
+    }
+}
+
+/// 统计所有域名最新证书检查结果（不受分页影响）。
+#[utoipa::path(
+    get,
+    path = "/v1/certs/status/summary",
+    tag = "Certificates",
+    security(("bearer_auth" = [])),
+    params(CertStatusSummaryParams),
+    responses(
+        (status = 200, description = "域名证书状态统计"),
+        (status = 401, description = "未授权", body = crate::api::ApiError)
+    )
+)]
+async fn cert_status_summary(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Query(params): Query<CertStatusSummaryParams>,
+) -> impl IntoResponse {
+    let domain_contains = params.domain_contains.as_deref();
+    let is_valid = params.is_valid_eq;
+    let days_lte = params.days_until_expiry_lte;
+
+    match state
+        .cert_store
+        .cert_status_summary(domain_contains, is_valid, days_lte)
+    {
+        Ok(summary) => success_response(StatusCode::OK, &trace_id, summary),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to query cert status summary");
             common_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
@@ -844,11 +930,28 @@ async fn cert_check_history(
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
 
+    // 获取总数
+    let total = match state.cert_store.count_check_results_by_domain_id(&id) {
+        Ok(count) => count,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count cert check history");
+            return common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response();
+        }
+    };
+
     match state
         .cert_store
         .query_check_results_by_domain_id(&id, limit, offset)
     {
-        Ok(results) => success_response(StatusCode::OK, &trace_id, results),
+        Ok(results) => {
+            success_paginated_response(StatusCode::OK, &trace_id, results, total, limit, offset)
+        }
         Err(e) => {
             tracing::error!(error = %e, "Failed to query cert check history");
             common_error_response(
@@ -864,12 +967,15 @@ async fn cert_check_history(
 
 pub fn cert_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(create_domain, list_domains))
+        .routes(routes!(create_domain))
+        .routes(routes!(list_domains))
+        .routes(routes!(cert_domains_summary))
         .routes(routes!(create_domains_batch))
         .routes(routes!(get_domain, update_domain, delete_domain))
         .routes(routes!(check_single_domain))
         .routes(routes!(check_all_domains))
         .routes(routes!(cert_status_all))
+        .routes(routes!(cert_status_summary))
         .routes(routes!(cert_status_by_domain))
         .routes(routes!(cert_check_history))
 }

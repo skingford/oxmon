@@ -1,12 +1,12 @@
 use crate::api::{error_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
-use axum::extract::{Extension, State};
+use axum::extract::{Extension, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use oxmon_storage::StorageEngine;
-use serde::Serialize;
-use utoipa::ToSchema;
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 /// 脱敏的运行时配置
@@ -95,6 +95,27 @@ struct PartitionDetail {
     size_bytes: u64,
 }
 
+#[derive(Serialize, ToSchema)]
+struct CertDomainsBackfillResponse {
+    /// 本次新增回填到监控域名表的域名数量
+    inserted_domains: u64,
+    /// 是否为预览模式（true 表示未实际写入）
+    dry_run: bool,
+    /// 样本域名列表（dry_run=true 时为“待回填样本”；执行模式时为“本次回填样本”）
+    domains_preview: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct CertDomainsBackfillParams {
+    /// 预览模式：仅返回将补齐的数量，不执行写入
+    #[param(required = false)]
+    dry_run: Option<bool>,
+    /// 预览样本数量上限（仅 dry_run=true 生效，默认 10，最大 100）
+    #[param(required = false)]
+    preview_limit: Option<u64>,
+}
+
 /// 获取存储分区信息。
 /// 鉴权：需要 Bearer Token。
 #[utoipa::path(
@@ -181,9 +202,89 @@ async fn trigger_cleanup(
     }
 }
 
+/// 手动回填监控域名（从证书详情表补齐缺失域名）。
+/// 鉴权：需要 Bearer Token。
+#[utoipa::path(
+    post,
+    path = "/v1/system/certs/backfill-domains",
+    tag = "System",
+    security(("bearer_auth" = [])),
+    params(CertDomainsBackfillParams),
+    responses(
+        (status = 200, description = "回填结果", body = CertDomainsBackfillResponse),
+        (status = 401, description = "未认证", body = crate::api::ApiError)
+    )
+)]
+async fn trigger_cert_domains_backfill(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Query(params): Query<CertDomainsBackfillParams>,
+) -> impl IntoResponse {
+    let dry_run = params.dry_run.unwrap_or(false);
+    let preview_limit = params.preview_limit.unwrap_or(10).clamp(1, 100) as usize;
+    let result: anyhow::Result<(u64, Vec<String>)> = if dry_run {
+        match state
+            .cert_store
+            .count_missing_monitored_domains_from_certificate_details()
+        {
+            Ok(inserted) => {
+                let preview = state
+                    .cert_store
+                    .preview_missing_monitored_domains_from_certificate_details(preview_limit)
+                    .unwrap_or_else(|e| {
+                        tracing::error!(
+                            error = %e,
+                            "Failed to preview missing monitored domains from certificate details"
+                        );
+                        Vec::new()
+                    });
+                Ok((inserted, preview))
+            }
+            Err(e) => Err(e),
+        }
+    } else {
+        state
+            .cert_store
+            .sync_missing_monitored_domains_from_certificate_details_with_preview(preview_limit)
+    };
+
+    match result {
+        Ok((inserted, domains_preview)) => {
+            tracing::info!(
+                inserted,
+                dry_run,
+                "Manual backfill of monitored domains from certificate details completed"
+            );
+            success_response(
+                StatusCode::OK,
+                &trace_id,
+                CertDomainsBackfillResponse {
+                    inserted_domains: inserted,
+                    dry_run,
+                    domains_preview,
+                },
+            )
+        }
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "Manual backfill of monitored domains from certificate details failed"
+            );
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Backfill failed",
+            )
+            .into_response()
+        }
+    }
+}
+
 pub fn system_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(get_system_config))
         .routes(routes!(get_storage_info))
         .routes(routes!(trigger_cleanup))
+        .routes(routes!(trigger_cert_domains_backfill))
 }

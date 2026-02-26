@@ -9,8 +9,11 @@ use axum::{
 };
 use oxmon_common::types::{CertificateDetails, CertificateDetailsFilter};
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
+
+static CERTIFICATE_DOMAINS_BACKFILL_ONCE: OnceLock<()> = OnceLock::new();
 
 /// 证书列表查询参数
 #[derive(Debug, Deserialize, IntoParams)]
@@ -127,6 +130,7 @@ async fn get_certificate(
 
 /// 分页查询证书详情列表（支持过滤）。
 /// 默认排序：`not_after` 升序；默认分页：`limit=20&offset=0`。
+/// 仅返回当前仍在“监控域名（cert_domains）”中的证书详情，避免展示历史孤儿证书记录。
 #[utoipa::path(
     get,
     path = "/v1/certificates",
@@ -154,6 +158,32 @@ async fn list_certificates(
                 "bad_request",
                 "chain_valid__eq and is_valid__eq conflict",
             );
+        }
+    }
+
+    // Fallback self-heal (once per process): if startup backfill was skipped or unavailable,
+    // perform one lazy backfill on the first certificates list request only.
+    if CERTIFICATE_DOMAINS_BACKFILL_ONCE.get().is_none() {
+        match state
+            .cert_store
+            .sync_missing_monitored_domains_from_certificate_details()
+        {
+            Ok(inserted) => {
+                if inserted > 0 {
+                    tracing::info!(
+                        inserted,
+                        "Lazy one-time backfill of monitored domains from certificate details completed"
+                    );
+                }
+                let _ = CERTIFICATE_DOMAINS_BACKFILL_ONCE.set(());
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "Failed lazy one-time backfill of monitored domains from certificate details"
+                );
+                // Continue serving the request; list/count still operate on current consistent data.
+            }
         }
     }
 

@@ -40,6 +40,8 @@ default_password = "changeme"   # Default admin password (change this!)
 # Certificate Check Configuration
 [cert_check]
 enabled = true
+auto_backfill_domains_on_startup = true  # Backfill cert_domains from certificate_details once at startup
+# Set to false if startup time is more important than one-time historical self-healing
 default_interval_secs = 86400   # Default check interval (24 hours)
 tick_secs = 60                  # Scheduler tick interval
 connect_timeout_secs = 10       # TLS connection timeout per domain
@@ -60,8 +62,8 @@ history_days = 7                # Query historical data for the last N days
 batch_size = 20                 # Batch size for processing agents (split when > 20)
 
 # AI Accounts
-# Managed via REST API or CLI: oxmon-server init-ai-accounts <config> <seed.json>
-# See config/ai-accounts.seed.example.json for examples
+# Managed via REST API: POST/PUT/DELETE /v1/ai/accounts
+# Or via CLI: oxmon-server init-configs <config> <seed.json> (with config_type="ai_account")
 # Supported providers: zhipu (GLM-4/GLM-5), kimi, minimax, claude, codex, custom
 # Each AI account has configurable collection_interval_secs for report generation frequency
 
