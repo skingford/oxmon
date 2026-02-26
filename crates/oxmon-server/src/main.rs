@@ -676,6 +676,7 @@ async fn run_server(config_path: &str) -> Result<()> {
     // AI report scheduler
     let ai_check_handle = if config.ai_check.enabled {
         let scheduler = Arc::new(AIReportScheduler::new(
+            storage.clone(),
             cert_store.clone(),
             Duration::from_secs(config.ai_check.tick_secs),
             config.ai_check.history_days,

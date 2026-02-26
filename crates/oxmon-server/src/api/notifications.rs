@@ -42,48 +42,6 @@ fn validate_time_format(time: &str) -> bool {
     }
 }
 
-/// 对配置 JSON 中的敏感字段进行脱敏处理。
-/// 将包含 password、secret、key、token 等关键词的字段值替换为 "****"。
-fn mask_sensitive_config(config_json: &str) -> String {
-    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(config_json) else {
-        return config_json.to_string();
-    };
-    mask_sensitive_fields(&mut value);
-    serde_json::to_string(&value).unwrap_or_else(|_| config_json.to_string())
-}
-
-fn mask_sensitive_fields(value: &mut serde_json::Value) {
-    const SENSITIVE_KEYWORDS: &[&str] = &[
-        "password",
-        "secret",
-        "key",
-        "token",
-        "credential",
-        "api_key",
-        "apikey",
-    ];
-    match value {
-        serde_json::Value::Object(map) => {
-            for (k, v) in map.iter_mut() {
-                let lower = k.to_lowercase();
-                if SENSITIVE_KEYWORDS.iter().any(|kw| lower.contains(kw)) {
-                    if v.is_string() && !v.as_str().unwrap_or("").is_empty() {
-                        *v = serde_json::Value::String("****".to_string());
-                    }
-                } else {
-                    mask_sensitive_fields(v);
-                }
-            }
-        }
-        serde_json::Value::Array(arr) => {
-            for item in arr.iter_mut() {
-                mask_sensitive_fields(item);
-            }
-        }
-        _ => {}
-    }
-}
-
 fn build_channel_overview(state: &AppState, ch: NotificationChannelRow) -> ChannelOverview {
     let recipients = state
         .cert_store
@@ -104,7 +62,7 @@ fn build_channel_overview(state: &AppState, ch: NotificationChannelRow) -> Chann
         description: ch.description.clone(),
         min_severity: ch.min_severity.clone(),
         enabled: ch.enabled,
-        config_json: mask_sensitive_config(&ch.config_json),
+        config_json: ch.config_json.clone(),
         recipient_type,
         recipients,
         created_at: ch.created_at.to_rfc3339(),

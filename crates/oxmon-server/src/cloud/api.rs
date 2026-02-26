@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-/// 云账户响应（凭证已脱敏）
+/// 云账户响应
 #[derive(Serialize, ToSchema)]
 struct CloudAccountResponse {
     id: String,
@@ -285,28 +285,16 @@ struct TriggerCollectionResponse {
     collected_count: Option<usize>,
 }
 
-/// 脱敏云账户配置（隐藏 secret_id 和 secret_key）
-fn redact_cloud_config(config: &serde_json::Value) -> serde_json::Value {
-    let mut redacted = config.clone();
-    if let Some(obj) = redacted.as_object_mut() {
-        for key in &[
-            "secret_id",
-            "secret_key",
-            "access_key_id",
-            "access_key_secret",
-        ] {
-            if obj.contains_key(*key) {
-                obj.insert(key.to_string(), serde_json::json!("***"));
-            }
-        }
-    }
-    redacted
+fn normalize_cloud_account_config_value(config: &serde_json::Value) -> serde_json::Value {
+    serde_json::from_value::<CloudAccountConfig>(config.clone())
+        .and_then(|cfg| serde_json::to_value(cfg))
+        .unwrap_or_else(|_| config.clone())
 }
 
 fn row_to_cloud_account_response(row: SystemConfigRow) -> CloudAccountResponse {
     let config_val: serde_json::Value =
         serde_json::from_str(&row.config_json).unwrap_or_else(|_| serde_json::json!({}));
-    let redacted = redact_cloud_config(&config_val);
+    let config_val = normalize_cloud_account_config_value(&config_val);
 
     // Extract provider from config_key (e.g., "cloud_tencent_prod" -> "tencent")
     let provider = row
@@ -322,7 +310,7 @@ fn row_to_cloud_account_response(row: SystemConfigRow) -> CloudAccountResponse {
         provider,
         display_name: row.display_name,
         description: row.description,
-        config: redacted,
+        config: config_val,
         enabled: row.enabled,
         created_at: row.created_at.to_rfc3339(),
         updated_at: row.updated_at.to_rfc3339(),
@@ -443,7 +431,7 @@ struct ListCloudAccountParams {
     enabled: Option<bool>,
 }
 
-/// 列出所有云账户（凭证已脱敏）
+/// 列出所有云账户
 #[utoipa::path(
     get,
     path = "/v1/cloud/accounts",
@@ -550,10 +538,24 @@ async fn create_cloud_account(
     }
 
     // Validate config JSON structure
-    let config_str = match serde_json::to_string(&req.config) {
+    // Try to parse as CloudAccountConfig to validate structure and normalize aliases
+    let normalized_config = match serde_json::from_value::<CloudAccountConfig>(req.config.clone()) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            tracing::error!(error = %e, "Invalid cloud account config structure");
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "invalid_config_structure",
+                &format!("Invalid config structure: {}", e),
+            )
+            .into_response();
+        }
+    };
+    let config_str = match serde_json::to_string(&normalized_config) {
         Ok(s) => s,
         Err(e) => {
-            tracing::error!(error = %e, "Failed to serialize config JSON");
+            tracing::error!(error = %e, "Failed to serialize normalized cloud account config");
             return error_response(
                 StatusCode::BAD_REQUEST,
                 &trace_id,
@@ -563,18 +565,6 @@ async fn create_cloud_account(
             .into_response();
         }
     };
-
-    // Try to parse as CloudAccountConfig to validate structure
-    if let Err(e) = serde_json::from_str::<CloudAccountConfig>(&config_str) {
-        tracing::error!(error = %e, "Invalid cloud account config structure");
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            &trace_id,
-            "invalid_config_structure",
-            &format!("Invalid config structure: {}", e),
-        )
-        .into_response();
-    }
 
     let now = chrono::Utc::now();
     let row = SystemConfigRow {
@@ -695,10 +685,24 @@ async fn update_cloud_account(
 ) -> impl IntoResponse {
     // Validate config if provided
     let config_str = if let Some(ref config) = req.config {
-        let s = match serde_json::to_string(config) {
+        let normalized = match serde_json::from_value::<CloudAccountConfig>(config.clone()) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                tracing::error!(error = %e, "Invalid cloud account config structure");
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    &trace_id,
+                    "invalid_config_structure",
+                    &format!("Invalid config structure: {}", e),
+                )
+                .into_response();
+            }
+        };
+
+        let s = match serde_json::to_string(&normalized) {
             Ok(s) => s,
             Err(e) => {
-                tracing::error!(error = %e, "Failed to serialize config JSON");
+                tracing::error!(error = %e, "Failed to serialize normalized cloud account config");
                 return error_response(
                     StatusCode::BAD_REQUEST,
                     &trace_id,
@@ -708,18 +712,6 @@ async fn update_cloud_account(
                 .into_response();
             }
         };
-
-        // Validate structure
-        if let Err(e) = serde_json::from_str::<CloudAccountConfig>(&s) {
-            tracing::error!(error = %e, "Invalid cloud account config structure");
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                &trace_id,
-                "invalid_config_structure",
-                &format!("Invalid config structure: {}", e),
-            )
-            .into_response();
-        }
 
         Some(s)
     } else {

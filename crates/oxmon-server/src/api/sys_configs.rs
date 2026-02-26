@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-/// 系统配置响应（密钥已脱敏）
+/// 系统配置响应
 #[derive(Serialize, ToSchema)]
 struct SystemConfigResponse {
     id: String,
@@ -52,32 +52,9 @@ struct UpdateSystemConfigRequest {
     enabled: Option<bool>,
 }
 
-fn redact_config(config_type: &str, config: &serde_json::Value) -> serde_json::Value {
-    let mut redacted = config.clone();
-    if let Some(obj) = redacted.as_object_mut() {
-        match config_type {
-            "email" => {
-                if obj.contains_key("smtp_password") {
-                    obj.insert("smtp_password".to_string(), serde_json::json!("***"));
-                }
-            }
-            "sms" => {
-                for key in &["api_key", "access_key_secret", "secret_key"] {
-                    if obj.contains_key(*key) {
-                        obj.insert(key.to_string(), serde_json::json!("***"));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    redacted
-}
-
 fn row_to_response(row: SystemConfigRow) -> SystemConfigResponse {
     let config_val: serde_json::Value =
         serde_json::from_str(&row.config_json).unwrap_or_else(|_| serde_json::json!({}));
-    let redacted = redact_config(&row.config_type, &config_val);
     SystemConfigResponse {
         id: row.id,
         config_key: row.config_key,
@@ -85,7 +62,7 @@ fn row_to_response(row: SystemConfigRow) -> SystemConfigResponse {
         provider: row.provider,
         display_name: row.display_name,
         description: row.description,
-        config_json: redacted,
+        config_json: config_val,
         enabled: row.enabled,
         created_at: row.created_at.to_rfc3339(),
         updated_at: row.updated_at.to_rfc3339(),
@@ -121,7 +98,7 @@ struct ListSystemConfigParams {
     enabled: Option<bool>,
 }
 
-/// 列出所有系统配置（密钥已脱敏），支持按 config_type、config_key、enabled 过滤。
+/// 列出所有系统配置，支持按 config_type、config_key、enabled 过滤。
 #[utoipa::path(
     get,
     path = "/v1/system/configs",
@@ -183,7 +160,7 @@ async fn list_system_configs(
     }
 }
 
-/// 获取单个系统配置（密钥已脱敏）。
+/// 获取单个系统配置。
 #[utoipa::path(
     get,
     path = "/v1/system/configs/{id}",

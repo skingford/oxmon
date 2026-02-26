@@ -171,7 +171,9 @@ impl ZhipuProvider {
                 .context("Failed to build analysis prompt")?;
 
             tracing::info!(prompt_length = prompt.len(), "Calling Zhipu API");
-            let result = self.call_api(&prompt).await
+            let result = self
+                .call_api(&prompt)
+                .await
                 .context(format!("Failed to call API for batch {}", idx))?;
 
             tracing::info!(result_length = result.len(), "Batch analysis completed");

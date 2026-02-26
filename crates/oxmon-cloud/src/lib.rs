@@ -4,7 +4,7 @@ pub mod tencent;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Cloud instance metadata discovered from provider API
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +107,11 @@ pub struct InstanceFilter {
 pub struct CloudAccountConfig {
     pub secret_id: String,
     pub secret_key: String,
+    #[serde(
+        alias = "region",
+        alias = "default_region",
+        deserialize_with = "deserialize_regions"
+    )]
     pub regions: Vec<String>,
     #[serde(default = "default_collection_interval")]
     pub collection_interval_secs: u64,
@@ -122,6 +127,23 @@ fn default_collection_interval() -> u64 {
 
 fn default_concurrency() -> usize {
     5
+}
+
+fn deserialize_regions<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum RegionsInput {
+        One(String),
+        Many(Vec<String>),
+    }
+
+    match RegionsInput::deserialize(deserializer)? {
+        RegionsInput::One(region) => Ok(vec![region]),
+        RegionsInput::Many(regions) => Ok(regions),
+    }
 }
 
 /// Cloud provider trait for abstracting different cloud vendors
@@ -387,5 +409,29 @@ mod tests {
             ..Default::default()
         };
         assert!(filter.matches(&instance));
+    }
+
+    #[test]
+    fn test_cloud_account_config_regions_accepts_array() {
+        let cfg: CloudAccountConfig = serde_json::from_value(serde_json::json!({
+            "secret_id": "sid",
+            "secret_key": "skey",
+            "regions": ["ap-guangzhou", "ap-shanghai"]
+        }))
+        .expect("config should parse");
+
+        assert_eq!(cfg.regions, vec!["ap-guangzhou", "ap-shanghai"]);
+    }
+
+    #[test]
+    fn test_cloud_account_config_regions_accepts_default_region_string_alias() {
+        let cfg: CloudAccountConfig = serde_json::from_value(serde_json::json!({
+            "secret_id": "sid",
+            "secret_key": "skey",
+            "default_region": "ap-guangzhou"
+        }))
+        .expect("config should parse");
+
+        assert_eq!(cfg.regions, vec!["ap-guangzhou"]);
     }
 }

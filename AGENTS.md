@@ -31,3 +31,8 @@
 ## Security & Configuration Tips
 - Keep secrets out of `config/*.toml`; use environment-specific overrides where possible.
 - Validate new notification plugins for safe URL handling and TLS settings (server uses Rustls).
+
+## requirements
+
+- 默认返回中文
+- python 默认使用 uv 管理环境

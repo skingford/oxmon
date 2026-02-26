@@ -116,3 +116,8 @@ require_app_id = false  # Default: false for backward compatibility
 allowed_app_ids = ["web-console", "mobile-app"]  # Whitelist of allowed app IDs
 ```
 When `require_app_id = true`, requests to public endpoints (health, login) without valid `ox-app-id` header are rejected with 403. If `allowed_app_ids` is empty, any non-empty value is accepted. If `allowed_app_ids` has entries, the header value must match one of them.
+
+## requirements
+
+- 默认返回中文
+- python 默认使用 uv 管理环境
