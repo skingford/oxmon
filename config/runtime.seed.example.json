@@ -1,0 +1,64 @@
+{
+  "configs": [
+    {
+      "config_key": "notification_aggregation_window",
+      "config_type": "runtime",
+      "display_name": "通知聚合窗口时长",
+      "description": "聚合窗口时长（秒），相同告警在窗口期内会被合并发送",
+      "config": {
+        "value": 60
+      },
+      "enabled": true
+    },
+    {
+      "config_key": "notification_log_retention",
+      "config_type": "runtime",
+      "display_name": "通知日志保留天数",
+      "description": "通知发送日志的保留天数，超过该天数的日志将被自动清理",
+      "config": {
+        "value": 30
+      },
+      "enabled": true
+    },
+    {
+      "config_key": "language",
+      "config_type": "runtime",
+      "display_name": "系统语言",
+      "description": "系统界面和通知使用的语言（支持 zh-CN、en）",
+      "config": {
+        "value": "zh-CN"
+      },
+      "enabled": true
+    },
+    {
+      "config_key": "ai_report_schedule_enabled",
+      "config_type": "runtime",
+      "display_name": "AI 报告定时发送",
+      "description": "是否启用 AI 检测报告的定时发送功能",
+      "config": {
+        "value": true
+      },
+      "enabled": true
+    },
+    {
+      "config_key": "ai_report_schedule_time",
+      "config_type": "runtime",
+      "display_name": "AI 报告发送时间",
+      "description": "每天发送 AI 报告的时间，格式为 HH:MM（24小时制），例如 08:00",
+      "config": {
+        "value": "08:00"
+      },
+      "enabled": true
+    },
+    {
+      "config_key": "ai_report_send_notification",
+      "config_type": "runtime",
+      "display_name": "AI 报告通知发送",
+      "description": "生成 AI 报告后是否自动发送通知",
+      "config": {
+        "value": true
+      },
+      "enabled": true
+    }
+  ]
+}

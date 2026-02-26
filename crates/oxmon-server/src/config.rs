@@ -248,6 +248,8 @@ fn default_cert_check_max_concurrent() -> usize {
 pub struct CloudCheckConfig {
     #[serde(default = "default_cloud_check_enabled")]
     pub enabled: bool,
+    #[serde(default = "default_cloud_check_default_account_collection_interval_secs")]
+    pub default_account_collection_interval_secs: u64,
     #[serde(default = "default_cloud_check_tick_secs")]
     pub tick_secs: u64,
     #[serde(default = "default_cloud_check_max_concurrent")]
@@ -258,6 +260,8 @@ impl Default for CloudCheckConfig {
     fn default() -> Self {
         Self {
             enabled: default_cloud_check_enabled(),
+            default_account_collection_interval_secs:
+                default_cloud_check_default_account_collection_interval_secs(),
             tick_secs: default_cloud_check_tick_secs(),
             max_concurrent: default_cloud_check_max_concurrent(),
         }
@@ -266,6 +270,10 @@ impl Default for CloudCheckConfig {
 
 fn default_cloud_check_enabled() -> bool {
     true
+}
+
+fn default_cloud_check_default_account_collection_interval_secs() -> u64 {
+    3600 // Default per-account collection interval: 1 hour
 }
 
 fn default_cloud_check_tick_secs() -> u64 {
@@ -426,5 +434,38 @@ impl ServerConfig {
         let content = std::fs::read_to_string(path)?;
         let config: Self = toml::from_str(&content)?;
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cloud_check_default_account_collection_interval_has_expected_default() {
+        let cfg: ServerConfig = toml::from_str("").expect("config should parse");
+        assert_eq!(
+            cfg.cloud_check.default_account_collection_interval_secs,
+            3600
+        );
+    }
+
+    #[test]
+    fn cloud_check_default_account_collection_interval_can_be_loaded_from_toml() {
+        let cfg: ServerConfig = toml::from_str(
+            r#"
+grpc_port = 9090
+http_port = 8080
+
+[cloud_check]
+default_account_collection_interval_secs = 7200
+"#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(
+            cfg.cloud_check.default_account_collection_interval_secs,
+            7200
+        );
     }
 }

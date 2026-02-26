@@ -23,6 +23,8 @@ struct DashboardOverview {
     alerts_by_severity: std::collections::HashMap<String, u64>,
     /// 证书健康摘要
     cert_summary: CertSummary,
+    /// 云资源摘要
+    cloud_summary: CloudSummary,
     /// 存储分区数量
     partition_count: usize,
     /// 存储总大小（字节）
@@ -37,6 +39,26 @@ struct CertSummary {
     valid: u64,
     invalid: u64,
     expiring_soon: u64,
+}
+
+#[derive(Serialize, ToSchema)]
+struct CloudSummary {
+    #[schema(example = 3)]
+    total_accounts: u64,
+    #[schema(example = 2)]
+    enabled_accounts: u64,
+    #[schema(example = 128)]
+    total_instances: u64,
+    #[schema(example = 97)]
+    running_instances: u64,
+    #[schema(example = 21)]
+    stopped_instances: u64,
+    #[schema(example = 6)]
+    pending_instances: u64,
+    #[schema(example = 1)]
+    error_instances: u64,
+    #[schema(example = 3)]
+    unknown_instances: u64,
 }
 
 /// 获取仪表盘概览数据。
@@ -94,6 +116,40 @@ async fn dashboard_overview(
         }
     };
 
+    // Cloud summary
+    let cloud_summary = {
+        let account_summary = state
+            .cert_store
+            .cloud_account_summary()
+            .map_err(|e| {
+                tracing::error!(error = %e, "Failed to aggregate cloud account summary for dashboard");
+                e
+            })
+            .unwrap_or_default();
+        let total_instances = state
+            .cert_store
+            .cloud_instance_status_summary()
+            .map_err(|e| {
+                tracing::error!(
+                    error = %e,
+                    "Failed to aggregate cloud instance status summary for dashboard"
+                );
+                e
+            })
+            .unwrap_or_default();
+
+        CloudSummary {
+            total_accounts: account_summary.total_accounts,
+            enabled_accounts: account_summary.enabled_accounts,
+            total_instances: total_instances.total_instances,
+            running_instances: total_instances.running_instances,
+            stopped_instances: total_instances.stopped_instances,
+            pending_instances: total_instances.pending_instances,
+            error_instances: total_instances.error_instances,
+            unknown_instances: total_instances.unknown_instances,
+        }
+    };
+
     // Storage info
     let (partition_count, storage_total_bytes) = match state.storage.list_partitions() {
         Ok(partitions) => {
@@ -115,6 +171,7 @@ async fn dashboard_overview(
             alerts_24h,
             alerts_by_severity,
             cert_summary,
+            cloud_summary,
             partition_count,
             storage_total_bytes,
             uptime_secs: uptime,

@@ -1138,6 +1138,267 @@ async fn notification_channel_config_get_by_id_should_work() {
 }
 
 #[tokio::test]
+async fn cloud_account_create_and_get_should_normalize_regions_and_default_interval() {
+    let ctx = build_test_context().expect("test context should build");
+    let token = login_and_get_token(&ctx.app).await;
+
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/cloud/accounts",
+        Some(&token),
+        Some(json!({
+            "config_key": "cloud_tencent_prod",
+            "provider": "tencent",
+            "display_name": "Tencent Prod",
+            "config": {
+                "secret_id": "sid",
+                "secret_key": "skey",
+                "default_region": "ap-guangzhou"
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_ok_envelope(&body);
+    let id = body["data"]["id"]
+        .as_str()
+        .expect("id should exist")
+        .to_string();
+    assert_eq!(body["data"]["config"]["regions"], json!(["ap-guangzhou"]));
+    assert_eq!(
+        body["data"]["config"]["default_region"],
+        serde_json::Value::Null
+    );
+    assert_eq!(body["data"]["config"]["collection_interval_secs"], 3600);
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        &format!("/v1/cloud/accounts/{id}"),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["config"]["regions"], json!(["ap-guangzhou"]));
+    assert_eq!(
+        body["data"]["config"]["default_region"],
+        serde_json::Value::Null
+    );
+    assert_eq!(body["data"]["config"]["collection_interval_secs"], 3600);
+}
+
+#[tokio::test]
+async fn dashboard_overview_should_include_cloud_resource_summary() {
+    let ctx = build_test_context().expect("test context should build");
+    let token = login_and_get_token(&ctx.app).await;
+
+    let now = chrono::Utc::now();
+    ctx.state
+        .cert_store
+        .insert_system_config(&oxmon_storage::cert_store::SystemConfigRow {
+            id: oxmon_common::id::next_id(),
+            config_key: "cloud_tencent_dashboard".to_string(),
+            config_type: "cloud_account".to_string(),
+            provider: Some("tencent".to_string()),
+            display_name: "Cloud Dashboard".to_string(),
+            description: None,
+            config_json: r#"{"secret_id":"sid","secret_key":"skey","regions":["ap-guangzhou"]}"#
+                .to_string(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("insert cloud account should succeed");
+
+    let now_ts = now.timestamp();
+    ctx.state
+        .cert_store
+        .upsert_cloud_instance(&oxmon_storage::cert_store::CloudInstanceRow {
+            id: String::new(),
+            instance_id: "ins-dashboard-1".to_string(),
+            instance_name: Some("Dashboard-1".to_string()),
+            provider: "tencent".to_string(),
+            account_config_key: "cloud_tencent_dashboard".to_string(),
+            region: "ap-guangzhou".to_string(),
+            public_ip: None,
+            private_ip: None,
+            os: None,
+            status: Some("RUNNING".to_string()),
+            last_seen_at: now_ts,
+            created_at: now_ts,
+            updated_at: now_ts,
+            instance_type: None,
+            cpu_cores: None,
+            memory_gb: None,
+            disk_gb: None,
+            created_time: None,
+            expired_time: None,
+            charge_type: None,
+            vpc_id: None,
+            subnet_id: None,
+            security_group_ids: None,
+            zone: None,
+            internet_max_bandwidth: None,
+            ipv6_addresses: None,
+            eip_allocation_id: None,
+            internet_charge_type: None,
+            image_id: None,
+            hostname: None,
+            description: None,
+            gpu: None,
+            io_optimized: None,
+            latest_operation: None,
+            latest_operation_state: None,
+            tags: None,
+            project_id: None,
+            resource_group_id: None,
+            auto_renew_flag: None,
+        })
+        .expect("upsert cloud instance should succeed");
+    ctx.state
+        .cert_store
+        .upsert_cloud_instance(&oxmon_storage::cert_store::CloudInstanceRow {
+            id: String::new(),
+            instance_id: "ins-dashboard-2".to_string(),
+            instance_name: Some("Dashboard-2".to_string()),
+            provider: "tencent".to_string(),
+            account_config_key: "cloud_tencent_dashboard".to_string(),
+            region: "ap-shanghai".to_string(),
+            public_ip: None,
+            private_ip: None,
+            os: None,
+            status: Some("STOPPED".to_string()),
+            last_seen_at: now_ts,
+            created_at: now_ts,
+            updated_at: now_ts,
+            instance_type: None,
+            cpu_cores: None,
+            memory_gb: None,
+            disk_gb: None,
+            created_time: None,
+            expired_time: None,
+            charge_type: None,
+            vpc_id: None,
+            subnet_id: None,
+            security_group_ids: None,
+            zone: None,
+            internet_max_bandwidth: None,
+            ipv6_addresses: None,
+            eip_allocation_id: None,
+            internet_charge_type: None,
+            image_id: None,
+            hostname: None,
+            description: None,
+            gpu: None,
+            io_optimized: None,
+            latest_operation: None,
+            latest_operation_state: None,
+            tags: None,
+            project_id: None,
+            resource_group_id: None,
+            auto_renew_flag: None,
+        })
+        .expect("upsert cloud instance should succeed");
+
+    let (status, body, _) =
+        request_no_body(&ctx.app, "GET", "/v1/dashboard/overview", Some(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["cloud_summary"]["total_accounts"], 1);
+    assert_eq!(body["data"]["cloud_summary"]["enabled_accounts"], 1);
+    assert_eq!(body["data"]["cloud_summary"]["total_instances"], 2);
+    assert_eq!(body["data"]["cloud_summary"]["running_instances"], 1);
+    assert_eq!(body["data"]["cloud_summary"]["stopped_instances"], 1);
+    assert_eq!(body["data"]["cloud_summary"]["unknown_instances"], 0);
+}
+
+#[tokio::test]
+async fn dashboard_overview_should_count_unknown_cloud_instance_statuses() {
+    let ctx = build_test_context().expect("test context should build");
+    let token = login_and_get_token(&ctx.app).await;
+
+    let now = chrono::Utc::now();
+    ctx.state
+        .cert_store
+        .insert_system_config(&oxmon_storage::cert_store::SystemConfigRow {
+            id: oxmon_common::id::next_id(),
+            config_key: "cloud_tencent_unknown_status".to_string(),
+            config_type: "cloud_account".to_string(),
+            provider: Some("tencent".to_string()),
+            display_name: "Cloud Unknown Status".to_string(),
+            description: None,
+            config_json: r#"{"secret_id":"sid","secret_key":"skey","regions":["ap-guangzhou"]}"#
+                .to_string(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("insert cloud account should succeed");
+
+    let now_ts = now.timestamp();
+    for (instance_id, status) in [
+        ("ins-unknown-null", None),
+        ("ins-unknown-literal", Some("unknown")),
+        ("ins-unknown-garbage", Some("mystery_status")),
+    ] {
+        ctx.state
+            .cert_store
+            .upsert_cloud_instance(&oxmon_storage::cert_store::CloudInstanceRow {
+                id: String::new(),
+                instance_id: instance_id.to_string(),
+                instance_name: Some(instance_id.to_string()),
+                provider: "tencent".to_string(),
+                account_config_key: "cloud_tencent_unknown_status".to_string(),
+                region: "ap-guangzhou".to_string(),
+                public_ip: None,
+                private_ip: None,
+                os: None,
+                status: status.map(str::to_string),
+                last_seen_at: now_ts,
+                created_at: now_ts,
+                updated_at: now_ts,
+                instance_type: None,
+                cpu_cores: None,
+                memory_gb: None,
+                disk_gb: None,
+                created_time: None,
+                expired_time: None,
+                charge_type: None,
+                vpc_id: None,
+                subnet_id: None,
+                security_group_ids: None,
+                zone: None,
+                internet_max_bandwidth: None,
+                ipv6_addresses: None,
+                eip_allocation_id: None,
+                internet_charge_type: None,
+                image_id: None,
+                hostname: None,
+                description: None,
+                gpu: None,
+                io_optimized: None,
+                latest_operation: None,
+                latest_operation_state: None,
+                tags: None,
+                project_id: None,
+                resource_group_id: None,
+                auto_renew_flag: None,
+            })
+            .expect("upsert cloud instance should succeed");
+    }
+
+    let (status, body, _) =
+        request_no_body(&ctx.app, "GET", "/v1/dashboard/overview", Some(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["cloud_summary"]["total_accounts"], 1);
+    assert_eq!(body["data"]["cloud_summary"]["total_instances"], 3);
+    assert_eq!(body["data"]["cloud_summary"]["unknown_instances"], 3);
+}
+
+#[tokio::test]
 async fn openapi_endpoints_should_be_accessible() {
     let ctx = build_test_context().expect("test context should build");
 

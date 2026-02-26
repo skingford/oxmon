@@ -122,7 +122,7 @@ pub struct CloudAccountConfig {
 }
 
 fn default_collection_interval() -> u64 {
-    300 // 5 minutes
+    3600 // 1 hour
 }
 
 fn default_concurrency() -> usize {

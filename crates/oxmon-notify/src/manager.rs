@@ -446,4 +446,56 @@ impl NotificationManager {
     pub fn cert_store(&self) -> &Arc<CertStore> {
         &self.cert_store
     }
+
+    /// 直接发送事件到所有通知渠道，绕过静默窗口和聚合。
+    /// 主要用于定时报告等场景。
+    /// 返回成功发送的渠道数量。
+    pub async fn send_event_direct(&self, event: &AlertEvent) -> usize {
+        let locale = self
+            .cert_store
+            .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
+        let instances = self.instances.read().await;
+        let mut success_count = 0;
+
+        for (channel_id, instance) in instances.iter() {
+            if event.severity < instance.min_severity {
+                continue;
+            }
+
+            let start = Instant::now();
+            let result = instance
+                .channel
+                .send(event, &instance.recipients, &locale)
+                .await;
+            let duration_ms = start.elapsed().as_millis() as i64;
+
+            let (send_result, response) = match result {
+                Ok(resp) => {
+                    success_count += 1;
+                    (Ok(()), Some(resp))
+                }
+                Err(e) => {
+                    tracing::error!(
+                        channel_id = %channel_id,
+                        channel_type = %instance.channel_type,
+                        error = %e,
+                        "Failed to send notification"
+                    );
+                    (Err(anyhow::anyhow!("{e}")), None)
+                }
+            };
+
+            let ctx = SendLogContext {
+                channel_id,
+                channel_name: &instance.name,
+                channel_type: &instance.channel_type,
+                duration_ms,
+                recipient_count: instance.recipients.len() as i32,
+                response,
+            };
+            Self::record_send_log(&self.cert_store, event, &ctx, &send_result);
+        }
+
+        success_count
+    }
 }

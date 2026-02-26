@@ -1,5 +1,17 @@
 use anyhow::Result;
 
+/// 报告渲染参数
+pub struct ReportParams<'a> {
+    pub report_date: &'a str,
+    pub total_agents: i32,
+    pub risk_level: &'a str,
+    pub ai_provider: &'a str,
+    pub ai_model: &'a str,
+    pub ai_analysis: &'a str,
+    pub created_at: &'a str,
+    pub locale: &'a str,
+}
+
 /// HTML 报告渲染器
 pub struct ReportRenderer;
 
@@ -21,16 +33,15 @@ impl ReportRenderer {
     }
 
     /// 渲染完整的 HTML 报告
-    pub fn render_report(
-        report_date: &str,
-        total_agents: i32,
-        risk_level: &str,
-        ai_provider: &str,
-        ai_model: &str,
-        ai_analysis: &str,
-        created_at: &str,
-        locale: &str,
-    ) -> Result<String> {
+    pub fn render_report(params: &ReportParams<'_>) -> Result<String> {
+        let report_date = params.report_date;
+        let total_agents = params.total_agents;
+        let risk_level = params.risk_level;
+        let ai_provider = params.ai_provider;
+        let ai_model = params.ai_model;
+        let ai_analysis = params.ai_analysis;
+        let created_at = params.created_at;
+        let locale = params.locale;
         let template = include_str!("templates/ai_report.html");
 
         let risk_level_label = match risk_level {

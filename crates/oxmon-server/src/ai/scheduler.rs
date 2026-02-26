@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use oxmon_ai::{AIAnalyzer, AnalysisInput, HistoryMetric, MetricSnapshot, ZhipuProvider};
-use oxmon_notify::report_template::ReportRenderer;
+use oxmon_notify::manager::NotificationManager;
+use oxmon_notify::report_template::{ReportParams, ReportRenderer};
 use oxmon_storage::cert_store::CertStore;
 use oxmon_storage::engine::SqliteStorageEngine;
 use oxmon_storage::StorageEngine;
@@ -8,9 +9,18 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 
+/// Convention constants for AI report notification log entries.
+/// These are used in the AlertEvent fields to identify AI report notifications
+/// when querying notification_logs.
+const AI_REPORT_RULE_ID: &str = "ai-report";
+const AI_REPORT_RULE_NAME: &str = "AI Daily Report";
+const AI_REPORT_AGENT_ID: &str = "system";
+const AI_REPORT_METRIC_NAME: &str = "ai.report";
+
 pub struct AIReportScheduler {
     storage: Arc<SqliteStorageEngine>,
     cert_store: Arc<CertStore>,
+    notifier: Arc<NotificationManager>,
     tick_interval: Duration,
     #[allow(dead_code)] // 用于未来的历史数据查询
     history_days: i32,
@@ -20,12 +30,14 @@ impl AIReportScheduler {
     pub fn new(
         storage: Arc<SqliteStorageEngine>,
         cert_store: Arc<CertStore>,
+        notifier: Arc<NotificationManager>,
         tick_interval: Duration,
         history_days: i32,
     ) -> Self {
         Self {
             storage,
             cert_store,
+            notifier,
             tick_interval,
             history_days,
         }
@@ -44,7 +56,17 @@ impl AIReportScheduler {
     }
 
     async fn collect_due_accounts(&self) -> Result<()> {
-        // 1. 加载所有启用的 AI 账号
+        // 1. 检查是否启用定时发送
+        let schedule_enabled = self
+            .cert_store
+            .get_runtime_setting_bool("ai_report_schedule_enabled", true);
+
+        if !schedule_enabled {
+            tracing::debug!("AI report schedule is disabled");
+            return Ok(());
+        }
+
+        // 2. 加载所有启用的 AI 账号
         let accounts = self
             .cert_store
             .list_system_configs(Some("ai_account"), None, Some(true), 1000, 0)
@@ -54,7 +76,12 @@ impl AIReportScheduler {
             return Ok(());
         }
 
-        // 2. 检查每个账号是否到期需要生成报告
+        // 3. 获取配置的发送时间
+        let schedule_time = self
+            .cert_store
+            .get_runtime_setting_string("ai_report_schedule_time", "08:00");
+
+        // 4. 检查每个账号是否到期需要生成报告
         for account in accounts {
             let config: serde_json::Value = serde_json::from_str(&account.config_json)
                 .context("Failed to parse AI account config")?;
@@ -64,8 +91,9 @@ impl AIReportScheduler {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(86400); // 默认每天
 
-            // 检查上次生成报告的时间
-            let should_collect = self.should_collect(&account.config_key, interval_secs)?;
+            // 检查是否应该生成报告（支持定时和间隔两种模式）
+            let should_collect =
+                self.should_collect(&account.config_key, interval_secs, &schedule_time)?;
 
             if should_collect {
                 tracing::info!(
@@ -87,19 +115,75 @@ impl AIReportScheduler {
         Ok(())
     }
 
-    fn should_collect(&self, config_key: &str, interval_secs: i64) -> Result<bool> {
+    fn should_collect(
+        &self,
+        config_key: &str,
+        interval_secs: i64,
+        schedule_time: &str,
+    ) -> Result<bool> {
         // 查询该账号最近一次生成报告的时间
         let last_report = self
             .cert_store
             .get_latest_ai_report_by_account(config_key)?;
 
-        match last_report {
-            Some(report) => {
-                let elapsed = chrono::Utc::now().timestamp() - report.created_at.timestamp();
-                Ok(elapsed >= interval_secs)
-            }
-            None => Ok(true), // 从未生成过，立即生成
+        let now = chrono::Utc::now();
+
+        // 如果从未生成过，立即生成
+        if last_report.is_none() {
+            return Ok(true);
         }
+
+        let last_report = last_report.unwrap();
+        let last_report_date = last_report.created_at.date_naive();
+        let today = now.date_naive();
+
+        // 如果今天已经生成过报告，不再生成
+        if last_report_date == today {
+            return Ok(false);
+        }
+
+        // 解析配置的时间（HH:MM 格式）
+        let (target_hour, target_minute) = match self.parse_time(schedule_time) {
+            Ok((h, m)) => (h, m),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    schedule_time = %schedule_time,
+                    "Failed to parse schedule time, using interval mode"
+                );
+                // 解析失败，回退到间隔模式
+                let elapsed = now.timestamp() - last_report.created_at.timestamp();
+                return Ok(elapsed >= interval_secs);
+            }
+        };
+
+        // 检查当前时间是否已经到达或超过配置的时间
+        let current_time = now.time();
+        let target_time = chrono::NaiveTime::from_hms_opt(target_hour, target_minute, 0)
+            .ok_or_else(|| anyhow::anyhow!("Invalid time components"))?;
+
+        // 如果当前时间 >= 目标时间，且今天还没生成报告，则应该生成
+        Ok(current_time >= target_time)
+    }
+
+    /// 解析时间字符串（HH:MM 格式）
+    fn parse_time(&self, time_str: &str) -> Result<(u32, u32)> {
+        let parts: Vec<&str> = time_str.split(':').collect();
+        if parts.len() != 2 {
+            anyhow::bail!("Invalid time format, expected HH:MM");
+        }
+
+        let hour: u32 = parts[0].trim().parse().context("Failed to parse hour")?;
+        let minute: u32 = parts[1].trim().parse().context("Failed to parse minute")?;
+
+        if hour >= 24 {
+            anyhow::bail!("Hour must be between 0-23");
+        }
+        if minute >= 60 {
+            anyhow::bail!("Minute must be between 0-59");
+        }
+
+        Ok((hour, minute))
     }
 
     async fn generate_report(
@@ -187,16 +271,16 @@ impl AIReportScheduler {
         );
 
         // 7. 渲染 HTML 报告
-        let html_content = ReportRenderer::render_report(
-            &report_date,
-            current_metrics.len() as i32,
-            analysis_result.risk_level.as_str(),
-            analyzer.provider(),
-            analyzer.model_name(),
-            &analysis_result.content,
-            &chrono::Utc::now().to_rfc3339(),
-            &locale,
-        )?;
+        let html_content = ReportRenderer::render_report(&ReportParams {
+            report_date: &report_date,
+            total_agents: current_metrics.len() as i32,
+            risk_level: analysis_result.risk_level.as_str(),
+            ai_provider: analyzer.provider(),
+            ai_model: analyzer.model_name(),
+            ai_analysis: &analysis_result.content,
+            created_at: &chrono::Utc::now().to_rfc3339(),
+            locale: &locale,
+        })?;
 
         // 8. 存储报告到数据库
         let report_request = oxmon_common::types::CreateAIReportRequest {
@@ -207,7 +291,7 @@ impl AIReportScheduler {
             total_agents: current_metrics.len() as i32,
             risk_level: analysis_result.risk_level.as_str().to_string(),
             ai_analysis: analysis_result.content.clone(),
-            html_content: html_content.clone(),
+            html_content,
             raw_metrics_json: serde_json::to_string(&current_metrics)?,
         };
 
@@ -222,8 +306,9 @@ impl AIReportScheduler {
 
         // 9. 异步发送通知（不阻塞主流程）
         let cert_store = self.cert_store.clone();
+        let notifier = self.notifier.clone();
         tokio::spawn(async move {
-            if let Err(e) = Self::send_notifications(&cert_store, &report_id).await {
+            if let Err(e) = Self::send_notifications(&cert_store, &notifier, &report_id).await {
                 tracing::error!(report_id = %report_id, error = %e, "Failed to send notifications");
             }
         });
@@ -264,15 +349,9 @@ impl AIReportScheduler {
                     "Creating ZhipuProvider"
                 );
 
-                let provider = ZhipuProvider::new(
-                    api_key,
-                    model,
-                    base_url,
-                    timeout,
-                    max_tokens,
-                    temperature,
-                )
-                .context("Failed to create ZhipuProvider")?;
+                let provider =
+                    ZhipuProvider::new(api_key, model, base_url, timeout, max_tokens, temperature)
+                        .context("Failed to create ZhipuProvider")?;
 
                 Ok(Box::new(provider))
             }
@@ -463,33 +542,94 @@ impl AIReportScheduler {
         Ok(results)
     }
 
-    async fn send_notifications(cert_store: &CertStore, report_id: &str) -> Result<()> {
-        // 加载报告
+    async fn send_notifications(
+        cert_store: &CertStore,
+        notifier: &Arc<NotificationManager>,
+        report_id: &str,
+    ) -> Result<()> {
+        // 1. 检查是否启用通知发送
+        let send_notification =
+            cert_store.get_runtime_setting_bool("ai_report_send_notification", true);
+
+        if !send_notification {
+            tracing::info!(
+                report_id = %report_id,
+                "AI report notification is disabled by configuration"
+            );
+            return Ok(());
+        }
+
+        // 2. 加载报告
         let report = cert_store
             .get_ai_report_by_id(report_id)?
             .ok_or_else(|| anyhow::anyhow!("Report not found"))?;
 
-        // 获取系统语言
-        let _locale = cert_store.get_runtime_setting_string("language", "zh-CN");
+        // 3. 获取系统语言
+        let locale = cert_store.get_runtime_setting_string("language", "zh-CN");
 
-        // TODO: 从 AppState 获取 NotificationManager 和通知配置
-        // TODO: 使用 locale 进行多语言通知
-        // 目前简化实现，仅记录日志
         tracing::info!(
             report_id = %report_id,
             report_date = %report.report_date,
             risk_level = %report.risk_level,
-            "Would send AI report notifications here"
+            total_agents = report.total_agents,
+            locale = %locale,
+            "Preparing to send AI report notification"
         );
 
-        // 构建报告查看 URL（需要配置域名）
-        // let report_url = format!("https://your-domain.com/v1/ai/reports/{}/view", report_id);
+        // 4. 映射风险等级到严重程度
+        let severity = match report.risk_level.as_str() {
+            "high" => oxmon_common::types::Severity::Critical,
+            "medium" => oxmon_common::types::Severity::Warning,
+            _ => oxmon_common::types::Severity::Info,
+        };
 
-        // 发送邮件通知（HTML 格式）
-        // 发送钉钉通知（Markdown + 链接）
+        // 5. 构建 AlertEvent（使用约定的标识符）
+        let now = chrono::Utc::now();
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("report_id".to_string(), report_id.to_string());
+        labels.insert("report_date".to_string(), report.report_date.clone());
+        labels.insert("risk_level".to_string(), report.risk_level.clone());
+        labels.insert("ai_provider".to_string(), report.ai_provider.clone());
+        labels.insert("ai_model".to_string(), report.ai_model.clone());
 
-        // 标记报告已通知
+        let event = oxmon_common::types::AlertEvent {
+            id: format!("ai-report-{}", report_id),
+            rule_id: AI_REPORT_RULE_ID.to_string(),
+            rule_name: AI_REPORT_RULE_NAME.to_string(),
+            agent_id: AI_REPORT_AGENT_ID.to_string(),
+            metric_name: AI_REPORT_METRIC_NAME.to_string(),
+            severity,
+            message: format!(
+                "AI 检测报告 - {} | 风险等级: {} | 监控主机: {} 台",
+                report.report_date, report.risk_level, report.total_agents
+            ),
+            value: report.total_agents as f64,
+            threshold: 0.0,
+            timestamp: now,
+            predicted_breach: None,
+            status: 1,
+            labels,
+            first_triggered_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        // 6. 直接发送通知到所有渠道（绕过静默窗口和聚合）
+        let success_count = notifier.send_event_direct(&event).await;
+
+        tracing::info!(
+            report_id = %report_id,
+            success_count = success_count,
+            "AI report notification sent"
+        );
+
+        // 7. 标记报告已通知
         cert_store.mark_ai_report_notified(report_id)?;
+
+        tracing::info!(
+            report_id = %report_id,
+            "AI report notification completed"
+        );
 
         Ok(())
     }

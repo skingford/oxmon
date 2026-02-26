@@ -48,6 +48,7 @@ max_concurrent = 10              # Max concurrent TLS connections
 # Cloud Monitoring Configuration
 [cloud_check]
 enabled = true
+default_account_collection_interval_secs = 3600  # Default per-account collection interval (1 hour, reduce provider rate limit risk)
 tick_secs = 60                  # Scheduler tick interval (check for due accounts)
 max_concurrent = 5              # Max concurrent cloud API calls
 

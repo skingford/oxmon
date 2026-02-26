@@ -33,7 +33,7 @@ fn print_usage() {
     eprintln!("  oxmon-server init-channels <config.toml> <seed.json>          Initialize channels from seed file");
     eprintln!("  oxmon-server init-rules <config.toml> <seed.json>             Initialize alert rules from seed file");
     eprintln!("  oxmon-server init-dictionaries <config.toml> <seed.json>      Initialize dictionaries from seed file");
-    eprintln!("  oxmon-server init-configs <config.toml> <seed.json>           Initialize system configs from seed file");
+    eprintln!("  oxmon-server init-configs <config.toml> <seed.json>           Initialize/update system configs (runtime settings, etc.)");
     eprintln!("  oxmon-server init-cloud-accounts <config.toml> <seed.json>    Initialize cloud accounts from seed file");
     eprintln!("  oxmon-server init-ai-accounts <config.toml> <seed.json>       Initialize AI accounts from seed file");
 }
@@ -307,6 +307,7 @@ fn run_init_dictionaries(config_path: &str, seed_path: &str) -> Result<()> {
 }
 
 /// Initialize system configs from a JSON seed file.
+/// If a config already exists, it will be updated with the seed data.
 fn run_init_configs(config_path: &str, seed_path: &str) -> Result<()> {
     use oxmon_storage::cert_store::SystemConfigRow;
 
@@ -318,46 +319,79 @@ fn run_init_configs(config_path: &str, seed_path: &str) -> Result<()> {
     let seed: config::SystemConfigsSeedFile = serde_json::from_str(&seed_content)
         .map_err(|e| anyhow::anyhow!("Failed to parse seed file '{}': {}", seed_path, e))?;
 
-    // List existing config keys for dedup
+    // List existing configs by key
     let existing = cert_store.list_system_configs(None, None, None, 10000, 0)?;
-    let existing_keys: std::collections::HashSet<String> =
-        existing.iter().map(|c| c.config_key.clone()).collect();
+    let mut existing_map: std::collections::HashMap<String, SystemConfigRow> = existing
+        .into_iter()
+        .map(|c| (c.config_key.clone(), c))
+        .collect();
 
     let mut created = 0u32;
-    let mut skipped = 0u32;
+    let mut updated = 0u32;
 
     for sc in &seed.configs {
-        if existing_keys.contains(&sc.config_key) {
-            tracing::warn!(config_key = %sc.config_key, "System config already exists, skipping");
-            skipped += 1;
-            continue;
-        }
+        if let Some(existing_row) = existing_map.remove(&sc.config_key) {
+            // Update existing config
+            let update = oxmon_storage::cert_store::SystemConfigUpdate {
+                display_name: Some(sc.display_name.clone()),
+                description: Some(sc.description.clone()),
+                config_json: Some(sc.config.to_string()),
+                enabled: Some(sc.enabled),
+            };
 
-        let row = SystemConfigRow {
-            id: oxmon_common::id::next_id(),
-            config_key: sc.config_key.clone(),
-            config_type: sc.config_type.clone(),
-            provider: sc.provider.clone(),
-            display_name: sc.display_name.clone(),
-            description: sc.description.clone(),
-            config_json: sc.config.to_string(),
-            enabled: sc.enabled,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-
-        match cert_store.insert_system_config(&row) {
-            Ok(inserted) => {
-                tracing::info!(config_key = %sc.config_key, id = %inserted.id, "System config created");
-                created += 1;
+            match cert_store.update_system_config(&existing_row.id, &update) {
+                Ok(_) => {
+                    tracing::info!(
+                        config_key = %sc.config_key,
+                        id = %existing_row.id,
+                        "System config updated"
+                    );
+                    updated += 1;
+                }
+                Err(e) => {
+                    tracing::error!(
+                        config_key = %sc.config_key,
+                        error = %e,
+                        "Failed to update system config"
+                    );
+                }
             }
-            Err(e) => {
-                tracing::error!(config_key = %sc.config_key, error = %e, "Failed to create system config");
+        } else {
+            // Create new config
+            let row = SystemConfigRow {
+                id: oxmon_common::id::next_id(),
+                config_key: sc.config_key.clone(),
+                config_type: sc.config_type.clone(),
+                provider: sc.provider.clone(),
+                display_name: sc.display_name.clone(),
+                description: sc.description.clone(),
+                config_json: sc.config.to_string(),
+                enabled: sc.enabled,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            };
+
+            match cert_store.insert_system_config(&row) {
+                Ok(inserted) => {
+                    tracing::info!(
+                        config_key = %sc.config_key,
+                        id = %inserted.id,
+                        "System config created"
+                    );
+                    created += 1;
+                }
+                Err(e) => {
+                    tracing::error!(
+                        config_key = %sc.config_key,
+                        error = %e,
+                        "Failed to create system config"
+                    );
+                }
             }
         }
     }
 
-    tracing::info!(created, skipped, "init-configs completed");
+    tracing::info!(created, updated, "init-configs completed");
     Ok(())
 }
 
@@ -581,7 +615,7 @@ async fn run_server(config_path: &str) -> Result<()> {
     let state = AppState {
         storage: storage.clone(),
         alert_engine,
-        notifier,
+        notifier: notifier.clone(),
         agent_registry,
         cert_store: cert_store.clone(),
         connect_timeout_secs: config.cert_check.connect_timeout_secs,
@@ -662,6 +696,7 @@ async fn run_server(config_path: &str) -> Result<()> {
         let scheduler = CloudCheckScheduler::new(
             cert_store.clone(),
             storage.clone(),
+            config.cloud_check.default_account_collection_interval_secs,
             config.cloud_check.tick_secs,
             config.cloud_check.max_concurrent,
         );
@@ -678,6 +713,7 @@ async fn run_server(config_path: &str) -> Result<()> {
         let scheduler = Arc::new(AIReportScheduler::new(
             storage.clone(),
             cert_store.clone(),
+            notifier.clone(),
             Duration::from_secs(config.ai_check.tick_secs),
             config.ai_check.history_days,
         ));

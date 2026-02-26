@@ -85,7 +85,9 @@ oxmon-server [config.toml]                                    # Start server (de
 oxmon-server init-channels <config.toml> <seed.json>          # Initialize channels from seed file
 oxmon-server init-rules <config.toml> <seed.json>             # Initialize alert rules from seed file
 oxmon-server init-dictionaries <config.toml> <seed.json>      # Initialize dictionaries from seed file
+oxmon-server init-configs <config.toml> <seed.json>           # Initialize/update system configs (runtime settings, etc.)
 oxmon-server init-cloud-accounts <config.toml> <seed.json>    # Initialize cloud accounts from seed file
+oxmon-server init-ai-accounts <config.toml> <seed.json>       # Initialize AI accounts from seed file
 ```
 
 The `init-channels` subcommand reads a JSON seed file (see `config/channels.seed.example.json`) and inserts notification channels and silence windows into the database. Duplicate channel names are skipped.
@@ -94,7 +96,11 @@ The `init-rules` subcommand reads a JSON seed file (see `config/rules.seed.examp
 
 The `init-dictionaries` subcommand reads a JSON seed file (see `config/dictionaries.seed.example.json`) and inserts dictionary items into the database. Duplicate `dict_type` + `dict_key` pairs are skipped.
 
+The `init-configs` subcommand reads a JSON seed file (see `config/runtime.seed.example.json`) and inserts or updates system configs in the database. If a config with the same `config_key` already exists, it will be updated with the seed data. This is useful for managing runtime settings (notification aggregation window, AI report schedule, language, etc.) via configuration files. Changes take effect on next scheduler tick or service restart.
+
 The `init-cloud-accounts` subcommand reads a JSON seed file (see `config/cloud-accounts.seed.example.json`) and inserts cloud accounts into the database as `system_configs` with `config_type="cloud_account"`. Duplicate `config_key` values are skipped.
+
+The `init-ai-accounts` subcommand reads a JSON seed file and inserts AI accounts into the database as `system_configs` with `config_type="ai_account"`. Duplicate `config_key` values are skipped.
 
 ## Configuration
 
@@ -116,6 +122,13 @@ require_app_id = false  # Default: false for backward compatibility
 allowed_app_ids = ["web-console", "mobile-app"]  # Whitelist of allowed app IDs
 ```
 When `require_app_id = true`, requests to public endpoints (health, login) without valid `ox-app-id` header are rejected with 403. If `allowed_app_ids` is empty, any non-empty value is accepted. If `allowed_app_ids` has entries, the header value must match one of them.
+
+**AI report scheduling** is configured via runtime settings in the `system_configs` table (auto-initialized on first startup):
+- `ai_report_schedule_enabled` (bool, default: true): Enable/disable daily AI report generation
+- `ai_report_schedule_time` (string, default: "08:00"): Daily send time in HH:MM format (24-hour)
+- `ai_report_send_notification` (bool, default: true): Whether to send notifications after generating reports
+
+The scheduler checks every tick (default 60s) if the current time has reached the configured time and today's report hasn't been generated yet. Reports are generated once per day per AI account. To receive notifications, configure a notification channel with `channel_type="ai_report"`. See `AI_REPORT_SCHEDULE_GUIDE.md` for detailed configuration instructions.
 
 ## requirements
 

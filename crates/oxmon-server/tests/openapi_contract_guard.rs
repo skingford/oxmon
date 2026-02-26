@@ -246,3 +246,48 @@ async fn openapi_list_query_params_should_be_optional() {
         }
     }
 }
+
+#[tokio::test]
+async fn openapi_dashboard_overview_schema_should_include_cloud_summary_fields() {
+    let ctx = build_test_context().expect("test context should build");
+    let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.json", None).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+
+    let schemas = body["components"]["schemas"]
+        .as_object()
+        .expect("openapi components.schemas should be object");
+
+    let dashboard = schemas
+        .get("DashboardOverview")
+        .expect("DashboardOverview schema should exist");
+    let dashboard_props = dashboard["properties"]
+        .as_object()
+        .expect("DashboardOverview.properties should be object");
+    assert!(
+        dashboard_props.contains_key("cloud_summary"),
+        "DashboardOverview should contain cloud_summary"
+    );
+
+    let cloud_summary = schemas
+        .get("CloudSummary")
+        .expect("CloudSummary schema should exist");
+    let cloud_props = cloud_summary["properties"]
+        .as_object()
+        .expect("CloudSummary.properties should be object");
+
+    for field in [
+        "total_accounts",
+        "enabled_accounts",
+        "total_instances",
+        "running_instances",
+        "stopped_instances",
+        "pending_instances",
+        "error_instances",
+        "unknown_instances",
+    ] {
+        assert!(
+            cloud_props.contains_key(field),
+            "CloudSummary should contain field {field}"
+        );
+    }
+}

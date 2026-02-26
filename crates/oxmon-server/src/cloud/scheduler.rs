@@ -13,6 +13,7 @@ use tokio::time::{interval, Duration};
 pub struct CloudCheckScheduler {
     cert_store: Arc<CertStore>,
     storage: Arc<dyn StorageEngine>,
+    default_account_collection_interval_secs: u64,
     tick_secs: u64,
     max_concurrent: usize,
 }
@@ -21,12 +22,14 @@ impl CloudCheckScheduler {
     pub fn new(
         cert_store: Arc<CertStore>,
         storage: Arc<dyn StorageEngine>,
+        default_account_collection_interval_secs: u64,
         tick_secs: u64,
         max_concurrent: usize,
     ) -> Self {
         Self {
             cert_store,
             storage,
+            default_account_collection_interval_secs,
             tick_secs,
             max_concurrent,
         }
@@ -34,6 +37,8 @@ impl CloudCheckScheduler {
 
     pub async fn run(&self) {
         tracing::info!(
+            default_account_collection_interval_secs =
+                self.default_account_collection_interval_secs,
             tick_secs = self.tick_secs,
             max_concurrent = self.max_concurrent,
             "Cloud metrics scheduler started"
@@ -64,7 +69,21 @@ impl CloudCheckScheduler {
 
         for config in configs {
             // Check if this account is due for collection
-            let account_config: CloudAccountConfig = serde_json::from_str(&config.config_json)
+            let mut config_value: serde_json::Value = serde_json::from_str(&config.config_json)
+                .context("Failed to parse cloud account config json")?;
+            if config_value
+                .get("collection_interval_secs")
+                .and_then(|v| v.as_u64())
+                .is_none()
+            {
+                if let Some(obj) = config_value.as_object_mut() {
+                    obj.insert(
+                        "collection_interval_secs".to_string(),
+                        serde_json::json!(self.default_account_collection_interval_secs),
+                    );
+                }
+            }
+            let account_config: CloudAccountConfig = serde_json::from_value(config_value)
                 .context("Failed to parse cloud account config")?;
 
             // Check last collection time from cloud_collection_state table

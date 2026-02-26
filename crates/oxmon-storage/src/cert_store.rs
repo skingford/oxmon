@@ -229,6 +229,23 @@ CREATE TABLE IF NOT EXISTS dictionary_types (
 );
 ";
 
+const NORMALIZED_CLOUD_INSTANCE_STATUS_SQL: &str = "
+CASE
+    WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('', 'unknown', 'unk', 'none', 'null', 'nil', '-') THEN 'unknown'
+    WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('running', 'active', 'online', 'started', 'up', '1') THEN 'running'
+    WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('stopped', 'stop', 'offline', 'terminated', 'shutdown', 'shutoff', 'down', '0') THEN 'stopped'
+    WHEN LOWER(TRIM(COALESCE(status, ''))) IN (
+        'pending', 'starting', 'stopping', 'provisioning', 'initializing', 'booting',
+        'creating', 'rebooting', 'restarting', 'resetting', 'reinstalling', 'migrating', '2'
+    ) THEN 'pending'
+    WHEN LOWER(TRIM(COALESCE(status, ''))) IN (
+        'failed', 'error', 'err', 'unhealthy',
+        'launch_failed', 'create_failed', 'start_failed', 'stop_failed', 'reboot_failed', '3'
+    ) THEN 'error'
+    ELSE 'unknown'
+END
+";
+
 const AI_REPORTS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS ai_reports (
     id TEXT PRIMARY KEY,
@@ -2371,6 +2388,24 @@ impl CertStore {
         Ok(count as u64)
     }
 
+    pub fn cloud_account_summary(&self) -> Result<CloudAccountSummary> {
+        let conn = self.lock_conn();
+        Ok(conn.query_row(
+            "SELECT
+                COUNT(*) AS total_accounts,
+                COALESCE(SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END), 0) AS enabled_accounts
+             FROM system_configs
+             WHERE config_type = 'cloud_account'",
+            [],
+            |row| {
+                Ok(CloudAccountSummary {
+                    total_accounts: row.get::<_, i64>(0)? as u64,
+                    enabled_accounts: row.get::<_, i64>(1)? as u64,
+                })
+            },
+        )?)
+    }
+
     pub fn update_system_config(
         &self,
         id: &str,
@@ -2681,6 +2716,22 @@ impl CertStore {
                 default.to_string()
             }
             _ => default.to_string(),
+        }
+    }
+
+    /// Get a runtime setting value as a bool from system_configs table.
+    /// Returns the parsed bool value from config_json, or the default if not found or parsing fails.
+    pub fn get_runtime_setting_bool(&self, config_key: &str, default: bool) -> bool {
+        match self.get_system_config_by_key(config_key) {
+            Ok(Some(row)) if row.enabled && row.config_type == "runtime" => {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&row.config_json) {
+                    if let Some(value) = json.get("value").and_then(|v| v.as_bool()) {
+                        return value;
+                    }
+                }
+                default
+            }
+            _ => default,
         }
     }
 
@@ -4920,24 +4971,9 @@ impl CertStore {
         if let Some(s) = status {
             let normalized = s.trim().to_lowercase();
             if !normalized.is_empty() && normalized != "all" {
-                sql.push_str(
-                    " AND (
-                        CASE
-                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('', 'unknown', 'unk', 'none', 'null', 'nil', '-') THEN 'unknown'
-                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('running', 'active', 'online', 'started', 'up', '1') THEN 'running'
-                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('stopped', 'stop', 'offline', 'terminated', 'shutdown', 'shutoff', 'down', '0') THEN 'stopped'
-                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN (
-                                'pending', 'starting', 'stopping', 'provisioning', 'initializing', 'booting',
-                                'creating', 'rebooting', 'restarting', 'resetting', 'reinstalling', 'migrating', '2'
-                            ) THEN 'pending'
-                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN (
-                                'failed', 'error', 'err', 'unhealthy',
-                                'launch_failed', 'create_failed', 'start_failed', 'stop_failed', 'reboot_failed', '3'
-                            ) THEN 'error'
-                            ELSE 'unknown'
-                        END
-                    ) = ?",
-                );
+                sql.push_str(&format!(
+                    " AND ({NORMALIZED_CLOUD_INSTANCE_STATUS_SQL}) = ?"
+                ));
                 params.push(Box::new(normalized));
             }
         }
@@ -5049,24 +5085,9 @@ impl CertStore {
         if let Some(s) = status {
             let normalized = s.trim().to_lowercase();
             if !normalized.is_empty() && normalized != "all" {
-                sql.push_str(
-                    " AND (
-                        CASE
-                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('', 'unknown', 'unk', 'none', 'null', 'nil', '-') THEN 'unknown'
-                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('running', 'active', 'online', 'started', 'up', '1') THEN 'running'
-                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('stopped', 'stop', 'offline', 'terminated', 'shutdown', 'shutoff', 'down', '0') THEN 'stopped'
-                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN (
-                                'pending', 'starting', 'stopping', 'provisioning', 'initializing', 'booting',
-                                'creating', 'rebooting', 'restarting', 'resetting', 'reinstalling', 'migrating', '2'
-                            ) THEN 'pending'
-                            WHEN LOWER(TRIM(COALESCE(status, ''))) IN (
-                                'failed', 'error', 'err', 'unhealthy',
-                                'launch_failed', 'create_failed', 'start_failed', 'stop_failed', 'reboot_failed', '3'
-                            ) THEN 'error'
-                            ELSE 'unknown'
-                        END
-                    ) = ?",
-                );
+                sql.push_str(&format!(
+                    " AND ({NORMALIZED_CLOUD_INSTANCE_STATUS_SQL}) = ?"
+                ));
                 params.push(Box::new(normalized));
             }
         }
@@ -5098,6 +5119,32 @@ impl CertStore {
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let count: i64 = stmt.query_row(param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
+    }
+
+    pub fn cloud_instance_status_summary(&self) -> Result<CloudInstanceStatusSummary> {
+        let conn = self.lock_conn();
+        let sql = format!(
+            "SELECT
+                COUNT(*) AS total_instances,
+                COALESCE(SUM(CASE WHEN ({n}) = 'running' THEN 1 ELSE 0 END), 0) AS running_instances,
+                COALESCE(SUM(CASE WHEN ({n}) = 'stopped' THEN 1 ELSE 0 END), 0) AS stopped_instances,
+                COALESCE(SUM(CASE WHEN ({n}) = 'pending' THEN 1 ELSE 0 END), 0) AS pending_instances,
+                COALESCE(SUM(CASE WHEN ({n}) = 'error' THEN 1 ELSE 0 END), 0) AS error_instances,
+                COALESCE(SUM(CASE WHEN ({n}) = 'unknown' THEN 1 ELSE 0 END), 0) AS unknown_instances
+             FROM cloud_instances",
+            n = NORMALIZED_CLOUD_INSTANCE_STATUS_SQL
+        );
+
+        Ok(conn.query_row(&sql, [], |row| {
+            Ok(CloudInstanceStatusSummary {
+                total_instances: row.get::<_, i64>(0)? as u64,
+                running_instances: row.get::<_, i64>(1)? as u64,
+                stopped_instances: row.get::<_, i64>(2)? as u64,
+                pending_instances: row.get::<_, i64>(3)? as u64,
+                error_instances: row.get::<_, i64>(4)? as u64,
+                unknown_instances: row.get::<_, i64>(5)? as u64,
+            })
+        })?)
     }
 
     /// Get cloud instance by ID
@@ -5347,6 +5394,22 @@ pub struct CloudInstanceRow {
     pub project_id: Option<String>,
     pub resource_group_id: Option<String>,
     pub auto_renew_flag: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CloudInstanceStatusSummary {
+    pub total_instances: u64,
+    pub running_instances: u64,
+    pub stopped_instances: u64,
+    pub pending_instances: u64,
+    pub error_instances: u64,
+    pub unknown_instances: u64,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CloudAccountSummary {
+    pub total_accounts: u64,
+    pub enabled_accounts: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -6778,5 +6841,123 @@ mod tests {
         // 验证表结构正确（不应该有id_v2列）
         let has_id_v2 = CertStore::table_has_column(&conn, "cloud_instances", "id_v2").unwrap();
         assert!(!has_id_v2, "id_v2 column should not exist after migration");
+    }
+
+    #[test]
+    fn test_cloud_instance_status_summary_should_normalize_statuses() {
+        oxmon_common::id::init(1, 1);
+        let dir = tempfile::tempdir().unwrap();
+        let store = CertStore::new(dir.path()).unwrap();
+        let now = chrono::Utc::now().timestamp();
+
+        for (instance_id, status) in [
+            ("ins-run", Some("RUNNING")),
+            ("ins-stop", Some("Stopped")),
+            ("ins-pending", Some("creating")),
+            ("ins-error", Some("error")),
+            ("ins-unknown-null", None),
+            ("ins-unknown-garbage", Some("weird_status")),
+        ] {
+            store
+                .upsert_cloud_instance(&CloudInstanceRow {
+                    id: String::new(),
+                    instance_id: instance_id.to_string(),
+                    instance_name: None,
+                    provider: "tencent".to_string(),
+                    account_config_key: "cloud_tencent_test".to_string(),
+                    region: "ap-guangzhou".to_string(),
+                    public_ip: None,
+                    private_ip: None,
+                    os: None,
+                    status: status.map(str::to_string),
+                    last_seen_at: now,
+                    created_at: now,
+                    updated_at: now,
+                    instance_type: None,
+                    cpu_cores: None,
+                    memory_gb: None,
+                    disk_gb: None,
+                    created_time: None,
+                    expired_time: None,
+                    charge_type: None,
+                    vpc_id: None,
+                    subnet_id: None,
+                    security_group_ids: None,
+                    zone: None,
+                    internet_max_bandwidth: None,
+                    ipv6_addresses: None,
+                    eip_allocation_id: None,
+                    internet_charge_type: None,
+                    image_id: None,
+                    hostname: None,
+                    description: None,
+                    gpu: None,
+                    io_optimized: None,
+                    latest_operation: None,
+                    latest_operation_state: None,
+                    tags: None,
+                    project_id: None,
+                    resource_group_id: None,
+                    auto_renew_flag: None,
+                })
+                .unwrap();
+        }
+
+        let summary = store.cloud_instance_status_summary().unwrap();
+        assert_eq!(summary.total_instances, 6);
+        assert_eq!(summary.running_instances, 1);
+        assert_eq!(summary.stopped_instances, 1);
+        assert_eq!(summary.pending_instances, 1);
+        assert_eq!(summary.error_instances, 1);
+        assert_eq!(summary.unknown_instances, 2);
+    }
+
+    #[test]
+    fn test_cloud_account_summary_should_count_total_and_enabled() {
+        oxmon_common::id::init(1, 1);
+        let dir = tempfile::tempdir().unwrap();
+        let store = CertStore::new(dir.path()).unwrap();
+        let now = chrono::Utc::now();
+
+        for (key, enabled) in [
+            ("cloud_tencent_a", true),
+            ("cloud_alibaba_b", false),
+            ("cloud_tencent_c", true),
+        ] {
+            store
+                .insert_system_config(&SystemConfigRow {
+                    id: oxmon_common::id::next_id(),
+                    config_key: key.to_string(),
+                    config_type: "cloud_account".to_string(),
+                    provider: Some("tencent".to_string()),
+                    display_name: key.to_string(),
+                    description: None,
+                    config_json: "{}".to_string(),
+                    enabled,
+                    created_at: now,
+                    updated_at: now,
+                })
+                .unwrap();
+        }
+
+        // Non-cloud config should not be counted
+        store
+            .insert_system_config(&SystemConfigRow {
+                id: oxmon_common::id::next_id(),
+                config_key: "runtime_test".to_string(),
+                config_type: "runtime".to_string(),
+                provider: None,
+                display_name: "runtime".to_string(),
+                description: None,
+                config_json: "{\"value\":1}".to_string(),
+                enabled: true,
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+
+        let summary = store.cloud_account_summary().unwrap();
+        assert_eq!(summary.total_accounts, 3);
+        assert_eq!(summary.enabled_accounts, 2);
     }
 }

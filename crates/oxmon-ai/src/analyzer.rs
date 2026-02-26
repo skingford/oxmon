@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 /// AI 分析输入
 #[derive(Debug, Clone, Serialize)]
@@ -63,14 +64,18 @@ impl RiskLevel {
             Self::Normal => "normal",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+impl FromStr for RiskLevel {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "high" => Self::High,
             "medium" => Self::Medium,
             "low" => Self::Low,
             _ => Self::Normal,
-        }
+        })
     }
 }
 

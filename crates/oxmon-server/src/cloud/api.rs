@@ -285,16 +285,59 @@ struct TriggerCollectionResponse {
     collected_count: Option<usize>,
 }
 
-fn normalize_cloud_account_config_value(config: &serde_json::Value) -> serde_json::Value {
-    serde_json::from_value::<CloudAccountConfig>(config.clone())
-        .and_then(|cfg| serde_json::to_value(cfg))
+fn normalize_cloud_account_config_value_with_default(
+    config: &serde_json::Value,
+    default_collection_interval_secs: u64,
+) -> serde_json::Value {
+    let mut normalized_input = config.clone();
+    if normalized_input
+        .get("collection_interval_secs")
+        .and_then(|v| v.as_u64())
+        .is_none()
+    {
+        if let Some(obj) = normalized_input.as_object_mut() {
+            obj.insert(
+                "collection_interval_secs".to_string(),
+                serde_json::json!(default_collection_interval_secs),
+            );
+        }
+    }
+
+    serde_json::from_value::<CloudAccountConfig>(normalized_input)
+        .and_then(serde_json::to_value)
         .unwrap_or_else(|_| config.clone())
 }
 
-fn row_to_cloud_account_response(row: SystemConfigRow) -> CloudAccountResponse {
+fn parse_cloud_account_config_with_default(
+    config_json: &str,
+    default_collection_interval_secs: u64,
+) -> Result<CloudAccountConfig, serde_json::Error> {
+    let mut config_val: serde_json::Value = serde_json::from_str(config_json)?;
+    if config_val
+        .get("collection_interval_secs")
+        .and_then(|v| v.as_u64())
+        .is_none()
+    {
+        if let Some(obj) = config_val.as_object_mut() {
+            obj.insert(
+                "collection_interval_secs".to_string(),
+                serde_json::json!(default_collection_interval_secs),
+            );
+        }
+    }
+    serde_json::from_value(config_val)
+}
+
+fn row_to_cloud_account_response(state: &AppState, row: SystemConfigRow) -> CloudAccountResponse {
     let config_val: serde_json::Value =
         serde_json::from_str(&row.config_json).unwrap_or_else(|_| serde_json::json!({}));
-    let config_val = normalize_cloud_account_config_value(&config_val);
+    let config_val = normalize_cloud_account_config_value_with_default(
+        &config_val,
+        state
+            .config
+            .cloud_check
+            .default_account_collection_interval_secs,
+    );
 
     // Extract provider from config_key (e.g., "cloud_tencent_prod" -> "tencent")
     let provider = row
@@ -479,7 +522,7 @@ async fn list_cloud_accounts(
         Ok(rows) => {
             let resp: Vec<CloudAccountResponse> = rows
                 .into_iter()
-                .map(row_to_cloud_account_response)
+                .map(|row| row_to_cloud_account_response(&state, row))
                 .collect();
             success_paginated_response(StatusCode::OK, &trace_id, resp, total, limit, offset)
         }
@@ -539,7 +582,15 @@ async fn create_cloud_account(
 
     // Validate config JSON structure
     // Try to parse as CloudAccountConfig to validate structure and normalize aliases
-    let normalized_config = match serde_json::from_value::<CloudAccountConfig>(req.config.clone()) {
+    let normalized_config = match serde_json::from_value::<CloudAccountConfig>(
+        normalize_cloud_account_config_value_with_default(
+            &req.config,
+            state
+                .config
+                .cloud_check
+                .default_account_collection_interval_secs,
+        ),
+    ) {
         Ok(cfg) => cfg,
         Err(e) => {
             tracing::error!(error = %e, "Invalid cloud account config structure");
@@ -582,7 +633,7 @@ async fn create_cloud_account(
 
     match state.cert_store.insert_system_config(&row) {
         Ok(row) => {
-            let resp = row_to_cloud_account_response(row);
+            let resp = row_to_cloud_account_response(&state, row);
             success_response(StatusCode::CREATED, &trace_id, resp)
         }
         Err(e) => {
@@ -639,7 +690,7 @@ async fn get_cloud_account(
                 )
                 .into_response();
             }
-            let resp = row_to_cloud_account_response(row);
+            let resp = row_to_cloud_account_response(&state, row);
             success_response(StatusCode::OK, &trace_id, resp)
         }
         Ok(None) => error_response(
@@ -685,7 +736,15 @@ async fn update_cloud_account(
 ) -> impl IntoResponse {
     // Validate config if provided
     let config_str = if let Some(ref config) = req.config {
-        let normalized = match serde_json::from_value::<CloudAccountConfig>(config.clone()) {
+        let normalized = match serde_json::from_value::<CloudAccountConfig>(
+            normalize_cloud_account_config_value_with_default(
+                config,
+                state
+                    .config
+                    .cloud_check
+                    .default_account_collection_interval_secs,
+            ),
+        ) {
             Ok(cfg) => cfg,
             Err(e) => {
                 tracing::error!(error = %e, "Invalid cloud account config structure");
@@ -727,7 +786,7 @@ async fn update_cloud_account(
 
     match state.cert_store.update_system_config(&id, &update) {
         Ok(Some(row)) => {
-            let resp = row_to_cloud_account_response(row);
+            let resp = row_to_cloud_account_response(&state, row);
             success_response(StatusCode::OK, &trace_id, resp)
         }
         Ok(None) => error_response(
@@ -846,7 +905,13 @@ async fn test_cloud_account_connection(
     };
 
     // Parse config
-    let account_config: CloudAccountConfig = match serde_json::from_str(&row.config_json) {
+    let account_config: CloudAccountConfig = match parse_cloud_account_config_with_default(
+        &row.config_json,
+        state
+            .config
+            .cloud_check
+            .default_account_collection_interval_secs,
+    ) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to parse cloud account config");
@@ -957,7 +1022,13 @@ async fn trigger_cloud_account_collection(
     };
 
     // Parse config
-    let account_config: CloudAccountConfig = match serde_json::from_str(&row.config_json) {
+    let account_config: CloudAccountConfig = match parse_cloud_account_config_with_default(
+        &row.config_json,
+        state
+            .config
+            .cloud_check
+            .default_account_collection_interval_secs,
+    ) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to parse cloud account config");

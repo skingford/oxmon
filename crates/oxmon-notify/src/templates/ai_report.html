@@ -19,10 +19,10 @@
             --accent-soft: #fff4a3;
             --risk-high: #dc2626;
             --risk-high-bg: #fef2f2;
-            --risk-medium: #d97706;
-            --risk-medium-bg: #fffbeb;
-            --risk-low: #059669;
-            --risk-low-bg: #ecfdf5;
+            --risk-medium: #8a6a00;
+            --risk-medium-bg: #fff8cc;
+            --risk-low: #111827;
+            --risk-low-bg: #f3f4f6;
             --risk-normal: #111827;
             --risk-normal-bg: #fffbe6;
             --shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
@@ -74,10 +74,18 @@
             padding: 32px;
             margin-bottom: 24px;
             box-shadow: var(--shadow);
+            position: relative;
         }
 
         .header::before {
-            content: none;
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            border-radius: 16px 16px 0 0;
+            background: linear-gradient(90deg, #f4d000 0%, #f4d000 55%, #111827 100%);
         }
 
         .header-title {
@@ -166,6 +174,27 @@
             margin-bottom: 6px;
         }
 
+        .meta-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 30px;
+            height: 18px;
+            padding: 0 6px;
+            border-radius: 999px;
+            background: #fff7bf;
+            border: 1px solid #f1dd68;
+            color: #111827;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            line-height: 1;
+        }
+
+        .meta-text {
+            color: var(--text-muted);
+        }
+
         .meta-value {
             font-size: 16px;
             font-weight: 600;
@@ -209,13 +238,13 @@
         .risk-medium {
             color: var(--risk-medium);
             background: var(--risk-medium-bg);
-            border-color: #fde68a;
+            border-color: #f4d000;
         }
 
         .risk-low {
             color: var(--risk-low);
             background: var(--risk-low-bg);
-            border-color: #a7f3d0;
+            border-color: #d1d5db;
         }
 
         .risk-normal {
@@ -227,6 +256,7 @@
         .content {
             display: grid;
             gap: 18px;
+            counter-reset: report-h2;
         }
 
         .section {
@@ -255,14 +285,25 @@
             gap: 10px;
             color: var(--text-primary);
             line-height: 1.35;
+            counter-increment: report-h2;
+            counter-reset: report-h3;
         }
 
         .content h2::before {
-            content: '';
-            width: 4px;
-            height: 20px;
-            background: linear-gradient(180deg, #f4d000, #e5b800);
+            content: counter(report-h2, decimal-leading-zero);
+            min-width: 28px;
+            height: 24px;
+            padding: 0 6px;
             border-radius: 999px;
+            border: 1px solid #ead25a;
+            background: linear-gradient(180deg, #fff8cc, #fff1a8);
+            color: #111827;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 800;
+            line-height: 1;
             flex: 0 0 auto;
         }
 
@@ -271,6 +312,20 @@
             font-weight: 700;
             margin: 20px 0 10px;
             color: #111827;
+            counter-increment: report-h3;
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+        }
+
+        .content h3::before {
+            content: counter(report-h2) "." counter(report-h3);
+            color: #8a6a00;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+            flex: 0 0 auto;
         }
 
         .content p {
@@ -358,6 +413,65 @@
             transform: none;
         }
 
+        /* Table helper classes for structured report content */
+        table th.num,
+        table td.num,
+        table th.numeric,
+        table td.numeric {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        table th.center,
+        table td.center {
+            text-align: center;
+        }
+
+        .status-badge,
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 22px;
+            padding: 0 8px;
+            border-radius: 999px;
+            border: 1px solid #d1d5db;
+            background: #f9fafb;
+            color: #111827;
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1;
+            white-space: nowrap;
+        }
+
+        .status-badge.is-ok,
+        .badge.is-ok {
+            background: #f3f4f6;
+            border-color: #d1d5db;
+            color: #111827;
+        }
+
+        .status-badge.is-warn,
+        .badge.is-warn {
+            background: #fff8cc;
+            border-color: #f4d000;
+            color: #8a6a00;
+        }
+
+        .status-badge.is-danger,
+        .badge.is-danger {
+            background: #fef2f2;
+            border-color: #fecaca;
+            color: #b91c1c;
+        }
+
+        .status-badge.is-info,
+        .badge.is-info {
+            background: #fffbe6;
+            border-color: #f1dd68;
+            color: #111827;
+        }
+
         code {
             background: #f1f5f9;
             color: #0f172a;
@@ -397,6 +511,60 @@
             background: #fffdf0;
             color: var(--text-secondary);
             border-radius: 0 8px 8px 0;
+        }
+
+        /* Generic callouts for markdown/html content blocks */
+        .content .note,
+        .content .tip,
+        .content .warning,
+        .content .danger,
+        .content .summary,
+        .content .conclusion,
+        .content .recommendation {
+            margin: 14px 0;
+            padding: 12px 14px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background: #fafafa;
+        }
+
+        .content .summary,
+        .content .conclusion,
+        .content .recommendation {
+            background: #fffdf0;
+            border-color: #f1dd68;
+        }
+
+        .content .note,
+        .content .tip {
+            background: #f9fafb;
+            border-color: #d1d5db;
+        }
+
+        .content .warning {
+            background: #fff8cc;
+            border-color: #f4d000;
+        }
+
+        .content .danger {
+            background: #fef2f2;
+            border-color: #fecaca;
+        }
+
+        .content .summary > :first-child,
+        .content .conclusion > :first-child,
+        .content .recommendation > :first-child,
+        .content .warning > :first-child,
+        .content .danger > :first-child {
+            margin-top: 0;
+        }
+
+        .content .summary > :last-child,
+        .content .conclusion > :last-child,
+        .content .recommendation > :last-child,
+        .content .warning > :last-child,
+        .content .danger > :last-child {
+            margin-bottom: 0;
         }
 
         .footer {
@@ -500,6 +668,16 @@
                 font-size: 15px;
             }
 
+            .content h2::before {
+                min-width: 24px;
+                height: 22px;
+                font-size: 11px;
+            }
+
+            .content h3::before {
+                font-size: 11px;
+            }
+
             .meta-value,
             td,
             th,
@@ -514,6 +692,8 @@
                 --page-bg: #ffffff;
                 --accent: #d4aa00;
                 --accent-soft: #f3df79;
+                --risk-medium-bg: #f7edb2;
+                --risk-low-bg: #f3f4f6;
                 --risk-normal-bg: #f8efbf;
             }
 
@@ -538,6 +718,7 @@
                 box-shadow: none;
                 border-color: #d1d5db;
                 break-inside: avoid;
+                page-break-inside: avoid;
             }
 
             .footer-brand {
@@ -551,14 +732,83 @@
                 margin-bottom: 12px;
             }
 
+            .content h2,
+            .content h3 {
+                break-after: avoid;
+                page-break-after: avoid;
+            }
+
+            .content h2 {
+                break-before: auto;
+                page-break-before: auto;
+                margin-top: 4px;
+            }
+
+            .content h2 + p,
+            .content h2 + ul,
+            .content h2 + ol,
+            .content h2 + table,
+            .content h2 + pre,
+            .content h2 + blockquote,
+            .content h2 + .summary,
+            .content h2 + .conclusion,
+            .content h2 + .recommendation,
+            .content h2 + .warning,
+            .content h2 + .danger,
+            .content h2 + .note,
+            .content h2 + .tip,
+            .content h3 + p,
+            .content h3 + ul,
+            .content h3 + ol,
+            .content h3 + table,
+            .content h3 + pre,
+            .content h3 + blockquote {
+                break-before: avoid;
+                page-break-before: avoid;
+            }
+
+            table,
+            pre,
+            blockquote,
+            .content .summary,
+            .content .conclusion,
+            .content .recommendation,
+            .content .warning,
+            .content .danger,
+            .content .note,
+            .content .tip {
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+
+            thead {
+                display: table-header-group;
+            }
+
+            tfoot {
+                display: table-footer-group;
+            }
+
+            tr,
+            img {
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+
             table {
                 display: table;
                 overflow: visible;
+                width: 100%;
             }
 
             a {
                 color: inherit;
                 text-decoration: none;
+            }
+
+            @page {
+                size: A4;
+                margin: 14mm 12mm;
             }
         }
     </style>
@@ -575,24 +825,24 @@
             <div class="header-meta">
                 <div class="meta-item">
                     <div class="meta-label">
-                        <span>📅</span>
-                        <span>报告日期</span>
+                        <span class="meta-badge">DATE</span>
+                        <span class="meta-text">报告日期</span>
                     </div>
                     <div class="meta-value">{{report_date}}</div>
                 </div>
 
                 <div class="meta-item">
                     <div class="meta-label">
-                        <span>🖥️</span>
-                        <span>监控节点</span>
+                        <span class="meta-badge">NODE</span>
+                        <span class="meta-text">监控节点</span>
                     </div>
                     <div class="meta-value">{{total_agents}}</div>
                 </div>
 
                 <div class="meta-item">
                     <div class="meta-label">
-                        <span>🤖</span>
-                        <span>AI 模型</span>
+                        <span class="meta-badge">MODEL</span>
+                        <span class="meta-text">AI 模型</span>
                     </div>
                     <div class="meta-value">{{ai_model}}</div>
                 </div>

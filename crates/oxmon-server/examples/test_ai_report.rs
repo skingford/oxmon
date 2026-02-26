@@ -5,7 +5,7 @@
 /// 运行: cargo run --example test_ai_report
 use anyhow::Result;
 use oxmon_ai::{AIAnalyzer, AnalysisInput, HistoryMetric, MetricSnapshot, ZhipuProvider};
-use oxmon_notify::report_template::ReportRenderer;
+use oxmon_notify::report_template::{ReportParams, ReportRenderer};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -129,16 +129,16 @@ async fn main() -> Result<()> {
 
     // 5. 渲染 HTML 报告
     println!("🎨 步骤 5: 渲染 HTML 报告");
-    let html_content = ReportRenderer::render_report(
-        &report_date,
-        current_metrics.len() as i32,
+    let html_content = ReportRenderer::render_report(&ReportParams {
+        report_date: &report_date,
+        total_agents: current_metrics.len() as i32,
         risk_level,
-        "zhipu",
-        "glm-4-flash",
+        ai_provider: "zhipu",
+        ai_model: "glm-4-flash",
         ai_analysis,
-        &chrono::Utc::now().to_rfc3339(),
-        "zh-CN",
-    )?;
+        created_at: &chrono::Utc::now().to_rfc3339(),
+        locale: "zh-CN",
+    })?;
     println!("   ✅ HTML 长度: {} 字节\n", html_content.len());
 
     // 6. 保存报告到文件
