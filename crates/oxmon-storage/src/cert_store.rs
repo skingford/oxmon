@@ -286,6 +286,26 @@ CREATE INDEX IF NOT EXISTS idx_ai_accounts_provider ON ai_accounts(provider);
 CREATE INDEX IF NOT EXISTS idx_ai_accounts_enabled ON ai_accounts(enabled);
 ";
 
+const CLOUD_ACCOUNTS_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS cloud_accounts (
+    id TEXT PRIMARY KEY,
+    config_key TEXT NOT NULL UNIQUE,
+    provider TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    description TEXT,
+    secret_id TEXT NOT NULL,
+    secret_key TEXT NOT NULL,
+    region TEXT,
+    extra_config TEXT,
+    collection_interval_secs INTEGER NOT NULL DEFAULT 300,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cloud_accounts_provider ON cloud_accounts(provider);
+CREATE INDEX IF NOT EXISTS idx_cloud_accounts_enabled ON cloud_accounts(enabled);
+";
+
 const USERS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -425,6 +445,7 @@ impl CertStore {
         conn.execute_batch(DICTIONARY_TYPES_SCHEMA)?;
         conn.execute_batch(AI_REPORTS_SCHEMA)?;
         conn.execute_batch(AI_ACCOUNTS_SCHEMA)?;
+        conn.execute_batch(CLOUD_ACCOUNTS_SCHEMA)?;
         conn.execute_batch(NOTIFICATION_LOGS_SCHEMA)?;
         conn.execute_batch(CLOUD_COLLECTION_STATE_SCHEMA)?;
         conn.execute_batch(CLOUD_INSTANCES_SCHEMA)?;
@@ -474,6 +495,9 @@ impl CertStore {
 
         // Phase 2 & 3: 添加所有剩余字段
         Self::migrate_cloud_instances_phase2_3_fields(&conn)?;
+
+        // 自动迁移云账号：如果 cloud_accounts 表为空且 system_configs 中有云账号数据
+        Self::auto_migrate_cloud_accounts(&conn)?;
 
         let token_encryptor = TokenEncryptor::load_or_create(data_dir)?;
         tracing::info!(path = %db_path.display(), "Initialized cert store");
@@ -910,6 +934,81 @@ impl CertStore {
         conn.execute("CREATE INDEX IF NOT EXISTS idx_cloud_instances_resource_group ON cloud_instances(resource_group_id)", [])?;
 
         tracing::info!("Phase 2 & 3 fields migration completed");
+        Ok(())
+    }
+
+    /// 自动迁移云账号：如果 cloud_accounts 表为空且 system_configs 中有云账号数据
+    fn auto_migrate_cloud_accounts(conn: &Connection) -> Result<()> {
+        // 检查 cloud_accounts 是否有数据
+        let cloud_accounts_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM cloud_accounts", [], |row| row.get(0))?;
+
+        if cloud_accounts_count > 0 {
+            // 表中已有数据，跳过迁移
+            return Ok(());
+        }
+
+        // 检查 system_configs 中是否有云账号数据
+        let system_configs_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM system_configs WHERE config_type='cloud_account'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        if system_configs_count == 0 {
+            // 没有需要迁移的数据
+            return Ok(());
+        }
+
+        tracing::info!(
+            count = system_configs_count,
+            "Auto-migrating cloud accounts from system_configs to cloud_accounts"
+        );
+
+        // 执行迁移
+        conn.execute(
+            "INSERT INTO cloud_accounts (
+                id, config_key, provider, display_name, description,
+                secret_id, secret_key, region, extra_config,
+                collection_interval_secs, enabled, created_at, updated_at
+            )
+            SELECT
+                id,
+                config_key,
+                provider,
+                display_name,
+                description,
+                COALESCE(json_extract(config_json, '$.secret_id'), '') as secret_id,
+                COALESCE(json_extract(config_json, '$.secret_key'), '') as secret_key,
+                json_extract(config_json, '$.region') as region,
+                json_object(
+                    'base_url', json_extract(config_json, '$.base_url'),
+                    'timeout_secs', json_extract(config_json, '$.timeout_secs')
+                ) as extra_config,
+                COALESCE(json_extract(config_json, '$.collection_interval_secs'), 300) as collection_interval_secs,
+                enabled,
+                created_at,
+                updated_at
+            FROM system_configs
+            WHERE config_type='cloud_account'",
+            [],
+        )?;
+
+        let migrated_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM cloud_accounts", [], |row| row.get(0))?;
+
+        tracing::info!(
+            migrated = migrated_count,
+            "Auto-migration completed, deleting old cloud_account entries from system_configs"
+        );
+
+        // 删除旧数据
+        conn.execute(
+            "DELETE FROM system_configs WHERE config_type='cloud_account'",
+            [],
+        )?;
+
+        tracing::info!("Cloud accounts auto-migration completed successfully");
         Ok(())
     }
 
@@ -2740,7 +2839,8 @@ impl CertStore {
                 row.updated_at.timestamp(),
             ],
         )?;
-        self.get_ai_account_by_id(&row.id)?.ok_or_else(|| anyhow::anyhow!("Failed to retrieve inserted AI account"))
+        self.get_ai_account_by_id(&row.id)?
+            .ok_or_else(|| anyhow::anyhow!("Failed to retrieve inserted AI account"))
     }
 
     pub fn get_ai_account_by_id(&self, id: &str) -> Result<Option<AIAccountRow>> {
@@ -2749,7 +2849,9 @@ impl CertStore {
             "SELECT id, config_key, provider, display_name, description, api_key, api_secret, model, extra_config, enabled, created_at, updated_at
              FROM ai_accounts WHERE id = ?1",
         )?;
-        let mut rows = stmt.query_map(rusqlite::params![id], |row| Ok(Self::row_to_ai_account(row)))?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
+            Ok(Self::row_to_ai_account(row))
+        })?;
         match rows.next() {
             Some(Ok(Ok(r))) => Ok(Some(r)),
             Some(Ok(Err(e))) => Err(e),
@@ -2764,7 +2866,9 @@ impl CertStore {
             "SELECT id, config_key, provider, display_name, description, api_key, api_secret, model, extra_config, enabled, created_at, updated_at
              FROM ai_accounts WHERE config_key = ?1",
         )?;
-        let mut rows = stmt.query_map(rusqlite::params![config_key], |row| Ok(Self::row_to_ai_account(row)))?;
+        let mut rows = stmt.query_map(rusqlite::params![config_key], |row| {
+            Ok(Self::row_to_ai_account(row))
+        })?;
         match rows.next() {
             Some(Ok(Ok(r))) => Ok(Some(r)),
             Some(Ok(Err(e))) => Err(e),
@@ -2799,7 +2903,9 @@ impl CertStore {
 
         let mut stmt = conn.prepare(&sql)?;
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt.query_map(param_refs.as_slice(), |row| Ok(Self::row_to_ai_account(row)))?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok(Self::row_to_ai_account(row))
+        })?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row??);
@@ -2807,11 +2913,7 @@ impl CertStore {
         Ok(results)
     }
 
-    pub fn count_ai_accounts(
-        &self,
-        provider: Option<&str>,
-        enabled: Option<bool>,
-    ) -> Result<u64> {
+    pub fn count_ai_accounts(&self, provider: Option<&str>, enabled: Option<bool>) -> Result<u64> {
         let conn = self.lock_conn();
         let mut sql = "SELECT COUNT(*) FROM ai_accounts WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -2831,7 +2933,17 @@ impl CertStore {
         Ok(count as u64)
     }
 
-    pub fn update_ai_account(&self, id: &str, display_name: Option<String>, description: Option<String>, api_key: Option<String>, api_secret: Option<String>, model: Option<String>, extra_config: Option<String>, enabled: Option<bool>) -> Result<bool> {
+    pub fn update_ai_account(
+        &self,
+        id: &str,
+        display_name: Option<String>,
+        description: Option<String>,
+        api_key: Option<String>,
+        api_secret: Option<String>,
+        model: Option<String>,
+        extra_config: Option<String>,
+        enabled: Option<bool>,
+    ) -> Result<bool> {
         let conn = self.lock_conn();
         let now = Utc::now().timestamp();
 
@@ -2899,6 +3011,200 @@ impl CertStore {
             api_secret: row.get(6)?,
             model: row.get(7)?,
             extra_config: row.get(8)?,
+            enabled: enabled_int != 0,
+            created_at,
+            updated_at,
+        })
+    }
+
+    // ==================== Cloud Accounts ====================
+
+    pub fn insert_cloud_account(&self, row: &CloudAccountRow) -> Result<CloudAccountRow> {
+        let conn = self.lock_conn();
+        conn.execute(
+            "INSERT INTO cloud_accounts (
+                id, config_key, provider, display_name, description,
+                secret_id, secret_key, region, extra_config,
+                collection_interval_secs, enabled, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            rusqlite::params![
+                row.id,
+                row.config_key,
+                row.provider,
+                row.display_name,
+                row.description,
+                row.secret_id,
+                row.secret_key,
+                row.region,
+                row.extra_config,
+                row.collection_interval_secs,
+                if row.enabled { 1 } else { 0 },
+                row.created_at.timestamp(),
+                row.updated_at.timestamp(),
+            ],
+        )?;
+        self.get_cloud_account_by_id(&row.id)
+    }
+
+    pub fn get_cloud_account_by_id(&self, id: &str) -> Result<CloudAccountRow> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, config_key, provider, display_name, description,
+                    secret_id, secret_key, region, extra_config,
+                    collection_interval_secs, enabled, created_at, updated_at
+             FROM cloud_accounts WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
+            Ok(Self::row_to_cloud_account(row))
+        })?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(r),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Err(anyhow::anyhow!("Cloud account not found")),
+        }
+    }
+
+    pub fn get_cloud_account_by_config_key(&self, config_key: &str) -> Result<CloudAccountRow> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, config_key, provider, display_name, description,
+                    secret_id, secret_key, region, extra_config,
+                    collection_interval_secs, enabled, created_at, updated_at
+             FROM cloud_accounts WHERE config_key = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![config_key], |row| {
+            Ok(Self::row_to_cloud_account(row))
+        })?;
+        match rows.next() {
+            Some(Ok(Ok(r))) => Ok(r),
+            Some(Ok(Err(e))) => Err(e),
+            Some(Err(e)) => Err(e.into()),
+            None => Err(anyhow::anyhow!("Cloud account not found")),
+        }
+    }
+
+    pub fn list_cloud_accounts(
+        &self,
+        provider: Option<String>,
+        enabled: Option<bool>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<CloudAccountRow>> {
+        let conn = self.lock_conn();
+
+        let mut query = String::from(
+            "SELECT id, config_key, provider, display_name, description,
+                    secret_id, secret_key, region, extra_config,
+                    collection_interval_secs, enabled, created_at, updated_at
+             FROM cloud_accounts WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(p) = provider {
+            query.push_str(" AND provider = ?");
+            params.push(Box::new(p));
+        }
+        if let Some(e) = enabled {
+            query.push_str(" AND enabled = ?");
+            params.push(Box::new(if e { 1 } else { 0 }));
+        }
+
+        query.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok(Self::row_to_cloud_account(row))
+        })?;
+
+        let mut accounts = Vec::new();
+        for row_result in rows {
+            match row_result {
+                Ok(Ok(account)) => accounts.push(account),
+                Ok(Err(e)) => return Err(e),
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(accounts)
+    }
+
+    pub fn count_cloud_accounts(
+        &self,
+        provider: Option<String>,
+        enabled: Option<bool>,
+    ) -> Result<u64> {
+        let conn = self.lock_conn();
+
+        let mut query = String::from("SELECT COUNT(*) FROM cloud_accounts WHERE 1=1");
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(p) = provider {
+            query.push_str(" AND provider = ?");
+            params.push(Box::new(p));
+        }
+        if let Some(e) = enabled {
+            query.push_str(" AND enabled = ?");
+            params.push(Box::new(if e { 1 } else { 0 }));
+        }
+
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = conn.query_row(&query, param_refs.as_slice(), |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
+    pub fn update_cloud_account(&self, id: &str, row: &CloudAccountRow) -> Result<CloudAccountRow> {
+        let conn = self.lock_conn();
+        conn.execute(
+            "UPDATE cloud_accounts SET
+                config_key = ?2, provider = ?3, display_name = ?4, description = ?5,
+                secret_id = ?6, secret_key = ?7, region = ?8, extra_config = ?9,
+                collection_interval_secs = ?10, enabled = ?11, updated_at = ?12
+             WHERE id = ?1",
+            rusqlite::params![
+                id,
+                row.config_key,
+                row.provider,
+                row.display_name,
+                row.description,
+                row.secret_id,
+                row.secret_key,
+                row.region,
+                row.extra_config,
+                row.collection_interval_secs,
+                if row.enabled { 1 } else { 0 },
+                row.updated_at.timestamp(),
+            ],
+        )?;
+        self.get_cloud_account_by_id(id)
+    }
+
+    pub fn delete_cloud_account(&self, id: &str) -> Result<bool> {
+        let conn = self.lock_conn();
+        let deleted = conn.execute(
+            "DELETE FROM cloud_accounts WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        Ok(deleted > 0)
+    }
+
+    fn row_to_cloud_account(row: &rusqlite::Row) -> Result<CloudAccountRow> {
+        let enabled_int: i32 = row.get(10)?;
+        let created_at = Self::read_sqlite_datetime_utc(row, 11, "created_at")?;
+        let updated_at = Self::read_sqlite_datetime_utc(row, 12, "updated_at")?;
+        Ok(CloudAccountRow {
+            id: row.get(0)?,
+            config_key: row.get(1)?,
+            provider: row.get(2)?,
+            display_name: row.get(3)?,
+            description: row.get(4)?,
+            secret_id: row.get(5)?,
+            secret_key: row.get(6)?,
+            region: row.get(7)?,
+            extra_config: row.get(8)?,
+            collection_interval_secs: row.get(9)?,
             enabled: enabled_int != 0,
             created_at,
             updated_at,
@@ -5756,6 +6062,24 @@ pub struct AIAccountRow {
     pub api_secret: Option<String>,
     pub model: Option<String>,
     pub extra_config: Option<String>,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 云账号行
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CloudAccountRow {
+    pub id: String,
+    pub config_key: String,
+    pub provider: String,
+    pub display_name: String,
+    pub description: Option<String>,
+    pub secret_id: String,
+    pub secret_key: String,
+    pub region: Option<String>,
+    pub extra_config: Option<String>,
+    pub collection_interval_secs: i64,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

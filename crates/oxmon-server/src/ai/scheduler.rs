@@ -87,7 +87,11 @@ impl AIReportScheduler {
             let interval_secs = if let Some(extra) = &account.extra_config {
                 serde_json::from_str::<serde_json::Value>(extra)
                     .ok()
-                    .and_then(|config| config.get("collection_interval_secs").and_then(|v| v.as_i64()))
+                    .and_then(|config| {
+                        config
+                            .get("collection_interval_secs")
+                            .and_then(|v| v.as_i64())
+                    })
                     .unwrap_or(86400)
             } else {
                 86400 // 默认每天
@@ -336,17 +340,18 @@ impl AIReportScheduler {
                 let model = account.model.clone();
 
                 // 从 extra_config 中解析其他配置
-                let (base_url, timeout, max_tokens, temperature) = if let Some(extra) = &account.extra_config {
-                    let config: serde_json::Value = serde_json::from_str(extra)
-                        .context("Failed to parse extra_config JSON")?;
-                    let base_url = config["base_url"].as_str().map(|s| s.to_string());
-                    let timeout = config["timeout_secs"].as_u64();
-                    let max_tokens = config["max_tokens"].as_u64().map(|v| v as usize);
-                    let temperature = config["temperature"].as_f64().map(|v| v as f32);
-                    (base_url, timeout, max_tokens, temperature)
-                } else {
-                    (None, None, None, None)
-                };
+                let (base_url, timeout, max_tokens, temperature) =
+                    if let Some(extra) = &account.extra_config {
+                        let config: serde_json::Value = serde_json::from_str(extra)
+                            .context("Failed to parse extra_config JSON")?;
+                        let base_url = config["base_url"].as_str().map(|s| s.to_string());
+                        let timeout = config["timeout_secs"].as_u64();
+                        let max_tokens = config["max_tokens"].as_u64().map(|v| v as usize);
+                        let temperature = config["temperature"].as_f64().map(|v| v as f32);
+                        (base_url, timeout, max_tokens, temperature)
+                    } else {
+                        (None, None, None, None)
+                    };
 
                 tracing::debug!(
                     model = ?model,

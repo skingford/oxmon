@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use oxmon_cloud::{build_provider, CloudAccountConfig};
-use oxmon_storage::cert_store::{CloudInstanceRow, SystemConfigRow, SystemConfigUpdate};
+use oxmon_storage::cert_store::{CloudAccountRow, CloudInstanceRow};
 use oxmon_storage::StorageEngine;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -21,7 +21,11 @@ struct CloudAccountResponse {
     provider: String,
     display_name: String,
     description: Option<String>,
-    config: serde_json::Value,
+    secret_id: String,
+    secret_key: String,
+    region: Option<String>,
+    extra_config: Option<serde_json::Value>,
+    collection_interval_secs: i64,
     enabled: bool,
     created_at: String,
     updated_at: String,
@@ -38,8 +42,16 @@ struct CreateCloudAccountRequest {
     display_name: String,
     /// 描述
     description: Option<String>,
-    /// 云账户配置 JSON
-    config: serde_json::Value,
+    /// API 密钥 ID（腾讯云 SecretId, 阿里云 AccessKeyId）
+    secret_id: String,
+    /// API 密钥 Secret（腾讯云 SecretKey, 阿里云 AccessKeySecret）
+    secret_key: String,
+    /// 地域（如 ap-shanghai）
+    region: Option<String>,
+    /// 额外配置（JSON，存储 base_url, timeout_secs 等）
+    extra_config: Option<serde_json::Value>,
+    /// 采集间隔（秒，默认 300）
+    collection_interval_secs: Option<i64>,
 }
 
 /// 更新云账户请求
@@ -47,7 +59,11 @@ struct CreateCloudAccountRequest {
 struct UpdateCloudAccountRequest {
     display_name: Option<String>,
     description: Option<Option<String>>,
-    config: Option<serde_json::Value>,
+    secret_id: Option<String>,
+    secret_key: Option<String>,
+    region: Option<Option<String>>,
+    extra_config: Option<Option<serde_json::Value>>,
+    collection_interval_secs: Option<i64>,
     enabled: Option<bool>,
 }
 
@@ -285,29 +301,6 @@ struct TriggerCollectionResponse {
     collected_count: Option<usize>,
 }
 
-fn normalize_cloud_account_config_value_with_default(
-    config: &serde_json::Value,
-    default_collection_interval_secs: u64,
-) -> serde_json::Value {
-    let mut normalized_input = config.clone();
-    if normalized_input
-        .get("collection_interval_secs")
-        .and_then(|v| v.as_u64())
-        .is_none()
-    {
-        if let Some(obj) = normalized_input.as_object_mut() {
-            obj.insert(
-                "collection_interval_secs".to_string(),
-                serde_json::json!(default_collection_interval_secs),
-            );
-        }
-    }
-
-    serde_json::from_value::<CloudAccountConfig>(normalized_input)
-        .and_then(serde_json::to_value)
-        .unwrap_or_else(|_| config.clone())
-}
-
 fn parse_cloud_account_config_with_default(
     config_json: &str,
     default_collection_interval_secs: u64,
@@ -328,32 +321,23 @@ fn parse_cloud_account_config_with_default(
     serde_json::from_value(config_val)
 }
 
-fn row_to_cloud_account_response(state: &AppState, row: SystemConfigRow) -> CloudAccountResponse {
-    let config_val: serde_json::Value =
-        serde_json::from_str(&row.config_json).unwrap_or_else(|_| serde_json::json!({}));
-    let config_val = normalize_cloud_account_config_value_with_default(
-        &config_val,
-        state
-            .config
-            .cloud_check
-            .default_account_collection_interval_secs,
-    );
-
-    // Extract provider from config_key (e.g., "cloud_tencent_prod" -> "tencent")
-    let provider = row
-        .config_key
-        .strip_prefix("cloud_")
-        .and_then(|s| s.split('_').next())
-        .unwrap_or("unknown")
-        .to_string();
+fn row_to_cloud_account_response(_state: &AppState, row: CloudAccountRow) -> CloudAccountResponse {
+    let extra_config = row
+        .extra_config
+        .as_ref()
+        .and_then(|s| serde_json::from_str(s).ok());
 
     CloudAccountResponse {
         id: row.id,
         config_key: row.config_key,
-        provider,
+        provider: row.provider,
         display_name: row.display_name,
         description: row.description,
-        config: config_val,
+        secret_id: row.secret_id,
+        secret_key: row.secret_key,
+        region: row.region,
+        extra_config,
+        collection_interval_secs: row.collection_interval_secs,
         enabled: row.enabled,
         created_at: row.created_at.to_rfc3339(),
         updated_at: row.updated_at.to_rfc3339(),
@@ -469,6 +453,9 @@ struct ListCloudAccountParams {
         deserialize_with = "crate::api::pagination::deserialize_optional_u64"
     )]
     offset: Option<u64>,
+    /// 按供应商过滤（tencent 或 alibaba）
+    #[param(required = false)]
+    provider: Option<String>,
     /// 按启用状态过滤
     #[param(required = false)]
     enabled: Option<bool>,
@@ -494,31 +481,27 @@ async fn list_cloud_accounts(
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
 
-    let total =
-        match state
-            .cert_store
-            .count_system_configs(Some("cloud_account"), None, params.enabled)
-        {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to count cloud accounts");
-                return error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &trace_id,
-                    "storage_error",
-                    "Database error",
-                )
-                .into_response();
-            }
-        };
+    let total = match state
+        .cert_store
+        .count_cloud_accounts(params.provider.clone(), params.enabled)
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count cloud accounts");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
 
-    match state.cert_store.list_system_configs(
-        Some("cloud_account"),
-        None,
-        params.enabled,
-        limit,
-        offset,
-    ) {
+    match state
+        .cert_store
+        .list_cloud_accounts(params.provider, params.enabled, limit, offset)
+    {
         Ok(rows) => {
             let resp: Vec<CloudAccountResponse> = rows
                 .into_iter()
@@ -580,58 +563,36 @@ async fn create_cloud_account(
         .into_response();
     }
 
-    // Validate config JSON structure
-    // Try to parse as CloudAccountConfig to validate structure and normalize aliases
-    let normalized_config = match serde_json::from_value::<CloudAccountConfig>(
-        normalize_cloud_account_config_value_with_default(
-            &req.config,
-            state
-                .config
-                .cloud_check
-                .default_account_collection_interval_secs,
-        ),
-    ) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            tracing::error!(error = %e, "Invalid cloud account config structure");
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                &trace_id,
-                "invalid_config_structure",
-                &format!("Invalid config structure: {}", e),
-            )
-            .into_response();
-        }
-    };
-    let config_str = match serde_json::to_string(&normalized_config) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to serialize normalized cloud account config");
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                &trace_id,
-                "invalid_config",
-                "Invalid config JSON",
-            )
-            .into_response();
-        }
-    };
-
     let now = chrono::Utc::now();
-    let row = SystemConfigRow {
+    let extra_config_str = req
+        .extra_config
+        .as_ref()
+        .and_then(|v| serde_json::to_string(v).ok());
+
+    let collection_interval = req.collection_interval_secs.unwrap_or(
+        state
+            .config
+            .cloud_check
+            .default_account_collection_interval_secs as i64,
+    );
+
+    let row = CloudAccountRow {
         id: oxmon_common::id::next_id(),
         config_key: req.config_key,
-        config_type: "cloud_account".to_string(),
-        provider: Some(req.provider),
+        provider: req.provider,
         display_name: req.display_name,
         description: req.description,
-        config_json: config_str,
+        secret_id: req.secret_id,
+        secret_key: req.secret_key,
+        region: req.region,
+        extra_config: extra_config_str,
+        collection_interval_secs: collection_interval,
         enabled: true,
         created_at: now,
         updated_at: now,
     };
 
-    match state.cert_store.insert_system_config(&row) {
+    match state.cert_store.insert_cloud_account(&row) {
         Ok(row) => {
             let resp = row_to_cloud_account_response(&state, row);
             success_response(StatusCode::CREATED, &trace_id, resp)
@@ -679,36 +640,31 @@ async fn get_cloud_account(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.get_system_config_by_id(&id) {
-        Ok(Some(row)) => {
-            if row.config_type != "cloud_account" {
-                return error_response(
+    match state.cert_store.get_cloud_account_by_id(&id) {
+        Ok(row) => {
+            let resp = row_to_cloud_account_response(&state, row);
+            success_response(StatusCode::OK, &trace_id, resp)
+        }
+        Err(e) => {
+            let err_msg = e.to_string();
+            if err_msg.contains("no rows") || err_msg.contains("NOT FOUND") {
+                error_response(
                     StatusCode::NOT_FOUND,
                     &trace_id,
                     "not_found",
                     "Cloud account not found",
                 )
-                .into_response();
+                .into_response()
+            } else {
+                tracing::error!(error = %e, "Failed to get cloud account");
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &trace_id,
+                    "storage_error",
+                    "Database error",
+                )
+                .into_response()
             }
-            let resp = row_to_cloud_account_response(&state, row);
-            success_response(StatusCode::OK, &trace_id, resp)
-        }
-        Ok(None) => error_response(
-            StatusCode::NOT_FOUND,
-            &trace_id,
-            "not_found",
-            "Cloud account not found",
-        )
-        .into_response(),
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to get cloud account");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "storage_error",
-                "Database error",
-            )
-            .into_response()
         }
     }
 }
@@ -734,68 +690,74 @@ async fn update_cloud_account(
     Path(id): Path<String>,
     Json(req): Json<UpdateCloudAccountRequest>,
 ) -> impl IntoResponse {
-    // Validate config if provided
-    let config_str = if let Some(ref config) = req.config {
-        let normalized = match serde_json::from_value::<CloudAccountConfig>(
-            normalize_cloud_account_config_value_with_default(
-                config,
-                state
-                    .config
-                    .cloud_check
-                    .default_account_collection_interval_secs,
-            ),
-        ) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                tracing::error!(error = %e, "Invalid cloud account config structure");
+    // Get existing account
+    let existing = match state.cert_store.get_cloud_account_by_id(&id) {
+        Ok(row) => row,
+        Err(e) => {
+            let err_msg = e.to_string();
+            if err_msg.contains("no rows") || err_msg.contains("NOT FOUND") {
                 return error_response(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::NOT_FOUND,
                     &trace_id,
-                    "invalid_config_structure",
-                    &format!("Invalid config structure: {}", e),
+                    "not_found",
+                    "Cloud account not found",
+                )
+                .into_response();
+            } else {
+                tracing::error!(error = %e, "Failed to get cloud account");
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &trace_id,
+                    "storage_error",
+                    "Database error",
                 )
                 .into_response();
             }
-        };
-
-        let s = match serde_json::to_string(&normalized) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to serialize normalized cloud account config");
-                return error_response(
-                    StatusCode::BAD_REQUEST,
-                    &trace_id,
-                    "invalid_config",
-                    "Invalid config JSON",
-                )
-                .into_response();
-            }
-        };
-
-        Some(s)
-    } else {
-        None
+        }
     };
 
-    let update = SystemConfigUpdate {
-        display_name: req.display_name,
-        description: req.description,
-        config_json: config_str,
-        enabled: req.enabled,
+    // Build updated row
+    let extra_config_str = req
+        .extra_config
+        .as_ref()
+        .and_then(|opt| opt.as_ref().and_then(|v| serde_json::to_string(v).ok()))
+        .or(existing.extra_config);
+
+    let region = match req.region {
+        Some(Some(r)) => Some(r),
+        Some(None) => None,
+        None => existing.region,
     };
 
-    match state.cert_store.update_system_config(&id, &update) {
-        Ok(Some(row)) => {
+    let description = match req.description {
+        Some(Some(d)) => Some(d),
+        Some(None) => None,
+        None => existing.description,
+    };
+
+    let updated = CloudAccountRow {
+        id: existing.id,
+        config_key: existing.config_key,
+        provider: existing.provider,
+        display_name: req.display_name.unwrap_or(existing.display_name),
+        description,
+        secret_id: req.secret_id.unwrap_or(existing.secret_id),
+        secret_key: req.secret_key.unwrap_or(existing.secret_key),
+        region,
+        extra_config: extra_config_str,
+        collection_interval_secs: req
+            .collection_interval_secs
+            .unwrap_or(existing.collection_interval_secs),
+        enabled: req.enabled.unwrap_or(existing.enabled),
+        created_at: existing.created_at,
+        updated_at: chrono::Utc::now(),
+    };
+
+    match state.cert_store.update_cloud_account(&id, &updated) {
+        Ok(row) => {
             let resp = row_to_cloud_account_response(&state, row);
             success_response(StatusCode::OK, &trace_id, resp)
         }
-        Ok(None) => error_response(
-            StatusCode::NOT_FOUND,
-            &trace_id,
-            "not_found",
-            "Cloud account not found",
-        )
-        .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Failed to update cloud account");
             error_response(
@@ -828,7 +790,7 @@ async fn delete_cloud_account(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.delete_system_config(&id) {
+    match state.cert_store.delete_cloud_account(&id) {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,

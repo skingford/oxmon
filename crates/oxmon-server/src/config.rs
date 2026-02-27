@@ -121,24 +121,6 @@ fn default_seed_severity() -> String {
 
 // ---- Cloud accounts seed file types (used by `init-cloud-accounts` CLI subcommand) ----
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CloudAccountsSeedFile {
-    #[serde(default)]
-    pub accounts: Vec<SeedCloudAccount>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SeedCloudAccount {
-    pub config_key: String,
-    pub provider: String,
-    pub display_name: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    pub config: serde_json::Value,
-    #[serde(default = "default_seed_enabled")]
-    pub enabled: bool,
-}
-
 // ---- Dictionaries seed file types (used by `init-dictionaries` CLI subcommand) ----
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

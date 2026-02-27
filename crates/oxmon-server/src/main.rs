@@ -34,7 +34,6 @@ fn print_usage() {
     eprintln!("  oxmon-server init-rules <config.toml> <seed.json>             Initialize alert rules from seed file");
     eprintln!("  oxmon-server init-dictionaries <config.toml> <seed.json>      Initialize dictionaries from seed file");
     eprintln!("  oxmon-server init-configs <config.toml> <seed.json>           Initialize/update system configs (runtime settings, etc.)");
-    eprintln!("  oxmon-server init-cloud-accounts <config.toml> <seed.json>    Initialize cloud accounts from seed file");
 }
 
 #[tokio::main]
@@ -97,19 +96,6 @@ async fn main() -> Result<()> {
                 anyhow::anyhow!("init-configs requires <seed.json> argument")
             })?;
             run_init_configs(config_path, seed_path)
-        }
-        Some("init-cloud-accounts") => {
-            let config_path = args.get(2).ok_or_else(|| {
-                print_usage();
-                anyhow::anyhow!(
-                    "init-cloud-accounts requires <config.toml> and <seed.json> arguments"
-                )
-            })?;
-            let seed_path = args.get(3).ok_or_else(|| {
-                print_usage();
-                anyhow::anyhow!("init-cloud-accounts requires <seed.json> argument")
-            })?;
-            run_init_cloud_accounts(config_path, seed_path)
         }
         Some("--help" | "-h") => {
             print_usage();
@@ -384,59 +370,6 @@ fn run_init_configs(config_path: &str, seed_path: &str) -> Result<()> {
 }
 
 /// Initialize cloud accounts from a JSON seed file.
-fn run_init_cloud_accounts(config_path: &str, seed_path: &str) -> Result<()> {
-    use oxmon_storage::cert_store::SystemConfigRow;
-
-    let config = config::ServerConfig::load(config_path)?;
-    let cert_store = CertStore::new(Path::new(&config.data_dir))?;
-
-    let seed_content = std::fs::read_to_string(seed_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read seed file '{}': {}", seed_path, e))?;
-    let seed: config::CloudAccountsSeedFile = serde_json::from_str(&seed_content)
-        .map_err(|e| anyhow::anyhow!("Failed to parse seed file '{}': {}", seed_path, e))?;
-
-    // List existing cloud accounts for dedup
-    let existing = cert_store.list_system_configs(Some("cloud_account"), None, None, 10000, 0)?;
-    let existing_keys: std::collections::HashSet<String> =
-        existing.iter().map(|c| c.config_key.clone()).collect();
-
-    let mut created = 0u32;
-    let mut skipped = 0u32;
-
-    for account in &seed.accounts {
-        if existing_keys.contains(&account.config_key) {
-            tracing::warn!(config_key = %account.config_key, "Cloud account already exists, skipping");
-            skipped += 1;
-            continue;
-        }
-
-        let row = SystemConfigRow {
-            id: oxmon_common::id::next_id(),
-            config_key: account.config_key.clone(),
-            config_type: "cloud_account".to_string(),
-            provider: Some(account.provider.clone()),
-            display_name: account.display_name.clone(),
-            description: account.description.clone(),
-            config_json: account.config.to_string(),
-            enabled: account.enabled,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-
-        match cert_store.insert_system_config(&row) {
-            Ok(inserted) => {
-                tracing::info!(config_key = %account.config_key, id = %inserted.id, "Cloud account created");
-                created += 1;
-            }
-            Err(e) => {
-                tracing::error!(config_key = %account.config_key, error = %e, "Failed to create cloud account");
-            }
-        }
-    }
-
-    tracing::info!(created, skipped, "init-cloud-accounts completed");
-    Ok(())
-}
 async fn run_server(config_path: &str) -> Result<()> {
     let config = config::ServerConfig::load(config_path)?;
 

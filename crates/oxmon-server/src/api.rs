@@ -900,6 +900,63 @@ struct MetricDiscoveryParams {
     timestamp_lte: Option<DateTime<Utc>>,
 }
 
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct MetricSourceQueryParams {
+    /// 最近时间下界（按 last_seen 过滤）
+    #[param(required = false)]
+    #[serde(rename = "timestamp__gte")]
+    timestamp_gte: Option<DateTime<Utc>>,
+    /// 最近时间上界（按 last_seen 过滤）
+    #[param(required = false)]
+    #[serde(rename = "timestamp__lte")]
+    timestamp_lte: Option<DateTime<Utc>>,
+    /// 数据来源过滤（agent / cloud，留空表示全部）
+    #[param(required = false)]
+    #[serde(rename = "source__eq")]
+    source_eq: Option<String>,
+    /// 模糊搜索关键字（匹配 agent_id / 云实例ID/名称/账号/地域等）
+    #[param(required = false)]
+    #[serde(rename = "query__contains")]
+    query_contains: Option<String>,
+    /// 云实例 provider 精确匹配（仅 cloud 来源生效）
+    #[param(required = false)]
+    #[serde(rename = "provider__eq")]
+    provider_eq: Option<String>,
+    /// 云实例 region 精确匹配（仅 cloud 来源生效）
+    #[param(required = false)]
+    #[serde(rename = "region__eq")]
+    region_eq: Option<String>,
+    /// 状态过滤：
+    /// - agent: active / inactive
+    /// - cloud: running / stopped / pending / error / unknown
+    #[param(required = false)]
+    #[serde(rename = "status__eq")]
+    status_eq: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct MetricSourceItemResponse {
+    /// 用于指标查询的主体 ID（agent: 原始 agent_id；cloud: cloud:{provider}:{instance_id}）
+    id: String,
+    /// 来源类型（agent / cloud）
+    source: String,
+    /// 展示名称
+    display_name: String,
+    /// 状态（agent: active/inactive；cloud: running/stopped/pending/error/unknown）
+    status: String,
+    /// provider（仅 cloud 有值）
+    provider: Option<String>,
+    /// region（仅 cloud 有值）
+    region: Option<String>,
+    /// cloud 原始实例 ID（仅 cloud 有值）
+    instance_id: Option<String>,
+    /// cloud 账号配置键（仅 cloud 有值）
+    account_config_key: Option<String>,
+    /// 最近时间（agent: last_seen；cloud: last_seen_at）
+    last_seen: Option<DateTime<Utc>>,
+}
+
 /// 获取时间范围内所有指标名称。
 #[utoipa::path(
     get,
@@ -1026,6 +1083,183 @@ async fn metric_agents(
     }
 }
 
+fn normalize_cloud_status(value: Option<&str>) -> &'static str {
+    match value.unwrap_or("").trim().to_ascii_lowercase().as_str() {
+        "running" => "running",
+        "stopped" | "stop" => "stopped",
+        "pending" | "starting" | "stopping" => "pending",
+        "error" | "failed" | "terminated" => "error",
+        _ => "unknown",
+    }
+}
+
+/// 获取可用于指标查询的数据来源（主动上报 Agent + 云实例）。
+/// 支持分页、来源过滤和模糊搜索；默认分页：`limit=20&offset=0`。
+#[utoipa::path(
+    get,
+    path = "/v1/metrics/sources",
+    tag = "Metrics",
+    security(("bearer_auth" = [])),
+    params(MetricSourceQueryParams, PaginationParams),
+    responses(
+        (status = 200, description = "指标来源列表", body = Vec<MetricSourceItemResponse>),
+        (status = 401, description = "未认证", body = ApiError)
+    )
+)]
+async fn metric_sources(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Query(params): Query<MetricSourceQueryParams>,
+    Query(pagination): Query<PaginationParams>,
+) -> impl IntoResponse {
+    let limit = pagination.limit();
+    let offset = pagination.offset();
+    let source_filter = params
+        .source_eq
+        .as_deref()
+        .map(|v| v.trim().to_ascii_lowercase());
+    let status_filter = params
+        .status_eq
+        .as_deref()
+        .map(|v| v.trim().to_ascii_lowercase());
+    let include_agent = source_filter
+        .as_deref()
+        .map(|v| v == "agent")
+        .unwrap_or(true);
+    let include_cloud = source_filter
+        .as_deref()
+        .map(|v| v == "cloud")
+        .unwrap_or(true);
+
+    let keyword = params
+        .query_contains
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("");
+    let keyword_lc = keyword.to_ascii_lowercase();
+    let has_keyword = !keyword_lc.is_empty();
+    let last_seen_gte_ts = params.timestamp_gte.map(|dt| dt.timestamp());
+    let last_seen_lte_ts = params.timestamp_lte.map(|dt| dt.timestamp());
+
+    let mut items: Vec<MetricSourceItemResponse> = Vec::new();
+
+    if include_agent {
+        let mut agent_filter = oxmon_storage::cert_store::AgentListFilter::default();
+        if has_keyword {
+            agent_filter.agent_id_contains = Some(keyword.to_string());
+        }
+        agent_filter.last_seen_gte = last_seen_gte_ts;
+        agent_filter.last_seen_lte = last_seen_lte_ts;
+
+        let agents = match state
+            .cert_store
+            .list_agents_from_db_with_filter(&agent_filter, 10000, 0)
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to list agents for metric sources");
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &trace_id,
+                    "storage_error",
+                    "Internal query error",
+                )
+                .into_response();
+            }
+        };
+
+        for agent_info in agents {
+            let collection_interval = agent_info
+                .collection_interval_secs
+                .unwrap_or(state.config.agent_collection_interval_secs);
+            let timeout = chrono::Duration::seconds((collection_interval * 3) as i64);
+            let active = Utc::now() - agent_info.last_seen < timeout;
+            let status = if active { "active" } else { "inactive" };
+
+            if let Some(ref wanted_status) = status_filter {
+                if wanted_status != status {
+                    continue;
+                }
+            }
+
+            items.push(MetricSourceItemResponse {
+                id: agent_info.agent_id.clone(),
+                source: "agent".to_string(),
+                display_name: agent_info.agent_id,
+                status: status.to_string(),
+                provider: None,
+                region: None,
+                instance_id: None,
+                account_config_key: None,
+                last_seen: Some(agent_info.last_seen),
+            });
+        }
+    }
+
+    if include_cloud {
+        let cloud_rows = match state.cert_store.list_cloud_instances(
+            params.provider_eq.as_deref(),
+            params.region_eq.as_deref(),
+            status_filter.as_deref(),
+            if has_keyword { Some(keyword) } else { None },
+            10000,
+            0,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to list cloud instances for metric sources");
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &trace_id,
+                    "storage_error",
+                    "Internal query error",
+                )
+                .into_response();
+            }
+        };
+
+        for row in cloud_rows {
+            if let Some(gte) = last_seen_gte_ts {
+                if row.last_seen_at < gte {
+                    continue;
+                }
+            }
+            if let Some(lte) = last_seen_lte_ts {
+                if row.last_seen_at > lte {
+                    continue;
+                }
+            }
+            let normalized_status = normalize_cloud_status(row.status.as_deref()).to_string();
+            let provider = row.provider.clone();
+            let display_name = row
+                .instance_name
+                .clone()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| row.instance_id.clone());
+
+            items.push(MetricSourceItemResponse {
+                id: format!("cloud:{}:{}", provider, row.instance_id),
+                source: "cloud".to_string(),
+                display_name,
+                status: normalized_status,
+                provider: Some(provider),
+                region: Some(row.region),
+                instance_id: Some(row.instance_id),
+                account_config_key: Some(row.account_config_key),
+                last_seen: DateTime::from_timestamp(row.last_seen_at, 0),
+            });
+        }
+    }
+
+    items.sort_by(|a, b| b.last_seen.cmp(&a.last_seen).then_with(|| a.id.cmp(&b.id)));
+
+    let total = items.len() as u64;
+    let paged_items: Vec<MetricSourceItemResponse> =
+        items.into_iter().skip(offset).take(limit).collect();
+
+    success_paginated_response(StatusCode::OK, &trace_id, paged_items, total, limit, offset)
+}
+
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 struct MetricSummaryParams {
@@ -1103,6 +1337,7 @@ pub fn protected_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(query_all_metrics))
         .routes(routes!(metric_names))
         .routes(routes!(metric_agents))
+        .routes(routes!(metric_sources))
         .routes(routes!(metric_summary))
         .merge(whitelist::whitelist_routes())
         .merge(certificates::certificates_routes())

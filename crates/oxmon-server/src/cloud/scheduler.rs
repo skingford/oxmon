@@ -62,67 +62,65 @@ impl CloudCheckScheduler {
     }
 
     async fn collect_due_accounts(&self) -> Result<()> {
-        // Load all cloud accounts from system_configs
-        let configs = self
+        // Load all enabled cloud accounts from cloud_accounts table
+        let accounts = self
             .cert_store
-            .list_system_configs(Some("cloud_account"), None, Some(true), 1000, 0)
+            .list_cloud_accounts(None, Some(true), 1000, 0)
             .context("Failed to load cloud accounts")?;
 
-        if configs.is_empty() {
+        if accounts.is_empty() {
             return Ok(());
         }
 
         let now = Utc::now().timestamp();
         let mut due_accounts = Vec::new();
 
-        for config in configs {
-            // Check if this account is due for collection
-            let mut config_value: serde_json::Value = serde_json::from_str(&config.config_json)
-                .context("Failed to parse cloud account config json")?;
-            if config_value
-                .get("collection_interval_secs")
-                .and_then(|v| v.as_u64())
-                .is_none()
-            {
-                if let Some(obj) = config_value.as_object_mut() {
-                    obj.insert(
-                        "collection_interval_secs".to_string(),
-                        serde_json::json!(self.default_account_collection_interval_secs),
-                    );
-                }
-            }
+        for account in accounts {
+            // Parse extra_config JSON to build CloudAccountConfig
+            let extra_config: serde_json::Value = account
+                .extra_config
+                .as_ref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_else(|| serde_json::json!({}));
+
+            // Build full config JSON for CloudAccountConfig
+            let config_value = serde_json::json!({
+                "secret_id": account.secret_id,
+                "secret_key": account.secret_key,
+                "region": account.region.unwrap_or_else(|| "ap-shanghai".to_string()),
+                "collection_interval_secs": account.collection_interval_secs,
+                "base_url": extra_config.get("base_url"),
+                "timeout_secs": extra_config.get("timeout_secs"),
+            });
+
             let account_config: CloudAccountConfig = serde_json::from_value(config_value)
                 .context("Failed to parse cloud account config")?;
 
             // Check last collection time from cloud_collection_state table
             let state = self
                 .cert_store
-                .get_cloud_collection_state(&config.config_key)?;
+                .get_cloud_collection_state(&account.config_key)?;
 
             let is_due = if let Some(state) = state {
                 let elapsed = now - state.last_collected_at;
-                elapsed >= account_config.collection_interval_secs as i64
+                elapsed >= account.collection_interval_secs
             } else {
                 // Never collected before
                 true
             };
 
             if is_due {
-                // Parse provider type from config_key (e.g., "cloud_tencent_myacct" -> "tencent")
-                let provider_type = config
-                    .config_key
-                    .strip_prefix("cloud_")
-                    .and_then(|s| s.split('_').next())
-                    .unwrap_or("unknown");
+                // Provider type is stored directly in account.provider
+                let provider_type = &account.provider;
 
                 // Account name is the part after "cloud_{provider}_" (e.g., "myacct")
-                let account_name = config
+                let account_name = account
                     .config_key
                     .strip_prefix(&format!("cloud_{}_", provider_type))
                     .unwrap_or("default");
 
                 due_accounts.push((
-                    config.config_key.clone(),
+                    account.config_key.clone(),
                     provider_type.to_string(),
                     account_name.to_string(),
                     account_config,

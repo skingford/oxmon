@@ -158,10 +158,10 @@ async fn list_ai_accounts(
     let offset = PaginationParams::resolve_offset(query.offset);
 
     // 获取总数
-    let total = match state.cert_store.count_ai_accounts(
-        query.provider.as_deref(),
-        query.enabled,
-    ) {
+    let total = match state
+        .cert_store
+        .count_ai_accounts(query.provider.as_deref(), query.enabled)
+    {
         Ok(count) => count,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count AI accounts");
@@ -305,16 +305,22 @@ async fn create_ai_account(
     Json(req): Json<CreateAIAccountRequest>,
 ) -> Result<(StatusCode, Json<AIAccountResponse>), AppError> {
     // 从 config JSON 中提取字段
-    let api_key = req.config.get("api_key")
+    let api_key = req
+        .config
+        .get("api_key")
         .and_then(|v| v.as_str())
         .ok_or(AppError::BadRequest("api_key is required in config".into()))?
         .to_string();
 
-    let api_secret = req.config.get("secret_key")
+    let api_secret = req
+        .config
+        .get("secret_key")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let model = req.config.get("model")
+    let model = req
+        .config
+        .get("model")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
@@ -325,7 +331,11 @@ async fn create_ai_account(
         obj.remove("secret_key");
         obj.remove("model");
     }
-    let extra_config = if extra_fields.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+    let extra_config = if extra_fields
+        .as_object()
+        .map(|o| o.is_empty())
+        .unwrap_or(true)
+    {
         None
     } else {
         Some(extra_fields.to_string())
@@ -394,15 +404,18 @@ async fn update_ai_account(
 
     // 从 config JSON 中提取字段（如果提供）
     let (api_key, api_secret, model, extra_config) = if let Some(config) = &req.config {
-        let api_key = config.get("api_key")
+        let api_key = config
+            .get("api_key")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let api_secret = config.get("secret_key")
+        let api_secret = config
+            .get("secret_key")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let model = config.get("model")
+        let model = config
+            .get("model")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
@@ -413,7 +426,11 @@ async fn update_ai_account(
             obj.remove("secret_key");
             obj.remove("model");
         }
-        let extra_config = if extra_fields.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        let extra_config = if extra_fields
+            .as_object()
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
             Some(extra_fields.to_string())
@@ -439,7 +456,9 @@ async fn update_ai_account(
     let updated = state
         .cert_store
         .get_ai_account_by_id(&id)?
-        .ok_or(AppError::NotFound("AI account not found after update".into()))?;
+        .ok_or(AppError::NotFound(
+            "AI account not found after update".into(),
+        ))?;
 
     // 构建响应配置（脱敏）
     let mut config = json!({});
