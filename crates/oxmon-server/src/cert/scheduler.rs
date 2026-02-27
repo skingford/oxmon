@@ -1,10 +1,12 @@
 use anyhow::Result;
 use chrono::Utc;
+use oxmon_alert::engine::AlertEngine;
 use oxmon_common::types::MetricDataPoint;
+use oxmon_notify::manager::NotificationManager;
 use oxmon_storage::cert_store::CertStore;
 use oxmon_storage::StorageEngine;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::Semaphore;
 use tokio::time::{interval, Duration};
 
@@ -14,6 +16,8 @@ use super::collector::CertificateCollector;
 pub struct CertCheckScheduler {
     cert_store: Arc<CertStore>,
     storage: Arc<dyn StorageEngine>,
+    alert_engine: Arc<Mutex<AlertEngine>>,
+    notifier: Arc<NotificationManager>,
     default_interval_secs: u64,
     tick_secs: u64,
     connect_timeout_secs: u64,
@@ -24,6 +28,8 @@ impl CertCheckScheduler {
     pub fn new(
         cert_store: Arc<CertStore>,
         storage: Arc<dyn StorageEngine>,
+        alert_engine: Arc<Mutex<AlertEngine>>,
+        notifier: Arc<NotificationManager>,
         default_interval_secs: u64,
         tick_secs: u64,
         connect_timeout_secs: u64,
@@ -32,6 +38,8 @@ impl CertCheckScheduler {
         Self {
             cert_store,
             storage,
+            alert_engine,
+            notifier,
             default_interval_secs,
             tick_secs,
             connect_timeout_secs,
@@ -77,6 +85,8 @@ impl CertCheckScheduler {
             let permit = semaphore.clone().acquire_owned().await?;
             let cert_store = self.cert_store.clone();
             let storage = self.storage.clone();
+            let alert_engine = self.alert_engine.clone();
+            let notifier = self.notifier.clone();
             let timeout = self.connect_timeout_secs;
 
             let handle = tokio::spawn(async move {
@@ -156,6 +166,16 @@ impl CertCheckScheduler {
 
                 if let Err(e) = storage.write_batch(&batch) {
                     tracing::error!(domain = %domain.domain, error = %e, "Failed to write cert metrics");
+                } else {
+                    // Feed cert metrics to alert engine
+                    evaluate_alerts_for_cert(
+                        &batch.data_points,
+                        &cert_store,
+                        &alert_engine,
+                        &storage,
+                        &notifier,
+                    )
+                    .await;
                 }
 
                 if let Some(ref err) = result.error {
@@ -182,5 +202,42 @@ impl CertCheckScheduler {
         }
 
         Ok(())
+    }
+}
+
+/// Feed cert metrics to the alert engine and dispatch any triggered notifications.
+async fn evaluate_alerts_for_cert(
+    data_points: &[MetricDataPoint],
+    cert_store: &CertStore,
+    alert_engine: &Arc<std::sync::Mutex<AlertEngine>>,
+    storage: &Arc<dyn StorageEngine>,
+    notifier: &Arc<NotificationManager>,
+) {
+    let locale =
+        cert_store.get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
+
+    let mut engine = alert_engine
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    for dp in data_points {
+        let outputs = engine.ingest_with_locale(dp, &locale);
+        for output in outputs {
+            let event = output.event().clone();
+            if let Err(e) = storage.write_alert_event(&event) {
+                tracing::error!(error = %e, "Failed to write cert alert event");
+            }
+            if event.status == 3 {
+                tracing::info!(
+                    rule_id = %event.rule_id,
+                    agent_id = %event.agent_id,
+                    "Cert alert auto-recovered"
+                );
+            }
+            let notifier = notifier.clone();
+            tokio::spawn(async move {
+                notifier.notify(&event).await;
+            });
+        }
     }
 }

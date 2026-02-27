@@ -558,6 +558,8 @@ async fn run_server(config_path: &str) -> Result<()> {
         let scheduler = CertCheckScheduler::new(
             cert_store.clone(),
             storage.clone(),
+            state.alert_engine.clone(),
+            notifier.clone(),
             config.cert_check.default_interval_secs,
             config.cert_check.tick_secs,
             config.cert_check.connect_timeout_secs,
