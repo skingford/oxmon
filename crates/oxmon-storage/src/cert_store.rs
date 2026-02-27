@@ -499,6 +499,9 @@ impl CertStore {
         // 自动迁移云账号：如果 cloud_accounts 表为空且 system_configs 中有云账号数据
         Self::auto_migrate_cloud_accounts(&conn)?;
 
+        // 迁移 cert_domains：将 UUID 主键替换为雪花ID，同步更新 cert_check_results.domain_id
+        Self::migrate_cert_domains_to_snowflake_id(&conn)?;
+
         let token_encryptor = TokenEncryptor::load_or_create(data_dir)?;
         tracing::info!(path = %db_path.display(), "Initialized cert store");
         Ok(Self {
@@ -1009,6 +1012,114 @@ impl CertStore {
         )?;
 
         tracing::info!("Cloud accounts auto-migration completed successfully");
+        Ok(())
+    }
+
+    /// 迁移 cert_domains：将 UUID 格式主键替换为雪花ID，同步更新 cert_check_results.domain_id
+    fn migrate_cert_domains_to_snowflake_id(conn: &Connection) -> Result<()> {
+        // 检查 cert_domains 表是否存在
+        let table_exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='cert_domains'",
+            [],
+            |row| row.get(0),
+        )?;
+        if !table_exists {
+            return Ok(());
+        }
+
+        // 检查是否有 UUID 格式的记录（含 '-' 的为 UUID，纯数字为雪花ID）
+        let uuid_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM cert_domains WHERE id LIKE '%-%'",
+            [],
+            |row| row.get(0),
+        )?;
+        if uuid_count == 0 {
+            return Ok(());
+        }
+
+        tracing::info!(
+            count = uuid_count,
+            "Migrating cert_domains: replacing UUID IDs with Snowflake IDs"
+        );
+
+        // 收集所有需要迁移的 old_id -> new_id 映射
+        let mut stmt = conn.prepare("SELECT id FROM cert_domains WHERE id LIKE '%-%'")?;
+        let old_ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let mapping: Vec<(String, String)> = old_ids
+            .into_iter()
+            .map(|old_id| {
+                let new_id = oxmon_common::id::next_id();
+                (old_id, new_id)
+            })
+            .collect();
+
+        // 在事务中原子性完成迁移
+        conn.execute_batch("BEGIN TRANSACTION;")?;
+
+        // 创建新表（与原表结构相同）
+        conn.execute_batch(
+            "CREATE TABLE cert_domains_new (
+                id TEXT PRIMARY KEY,
+                domain TEXT NOT NULL UNIQUE,
+                port INTEGER NOT NULL DEFAULT 443,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                check_interval_secs INTEGER,
+                note TEXT,
+                last_checked_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );",
+        )?;
+
+        // 复制非 UUID 行（理论上不存在，但保险起见）
+        conn.execute_batch(
+            "INSERT INTO cert_domains_new
+             SELECT * FROM cert_domains WHERE id NOT LIKE '%-%';",
+        )?;
+
+        // 逐行插入 UUID 行，使用新的雪花ID
+        {
+            let mut insert_stmt = conn.prepare(
+                "INSERT INTO cert_domains_new
+                 (id, domain, port, enabled, check_interval_secs, note, last_checked_at, created_at, updated_at)
+                 SELECT ?1, domain, port, enabled, check_interval_secs, note, last_checked_at, created_at, updated_at
+                 FROM cert_domains WHERE id = ?2",
+            )?;
+            for (old_id, new_id) in &mapping {
+                insert_stmt.execute(rusqlite::params![new_id, old_id])?;
+            }
+        }
+
+        // 同步更新 cert_check_results.domain_id
+        {
+            let mut update_stmt = conn.prepare(
+                "UPDATE cert_check_results SET domain_id = ?1 WHERE domain_id = ?2",
+            )?;
+            for (old_id, new_id) in &mapping {
+                update_stmt.execute(rusqlite::params![new_id, old_id])?;
+            }
+        }
+
+        // 替换旧表
+        conn.execute_batch("DROP TABLE cert_domains;")?;
+        conn.execute_batch("ALTER TABLE cert_domains_new RENAME TO cert_domains;")?;
+
+        // 重建索引
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_cert_domains_domain ON cert_domains(domain);
+             CREATE INDEX IF NOT EXISTS idx_cert_domains_enabled ON cert_domains(enabled);",
+        )?;
+
+        conn.execute_batch("COMMIT;")?;
+
+        tracing::info!(
+            count = uuid_count,
+            "cert_domains migration completed: {} records migrated to Snowflake IDs",
+            uuid_count
+        );
         Ok(())
     }
 
