@@ -42,7 +42,11 @@ struct ListDictTypesParams {
 
 #[derive(Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
-struct ListByTypeQuery {
+struct ListByTypesAllQuery {
+    /// 字典类型，逗号分隔多个（如 ?dict_type__in=channel_type,severity_level）
+    #[param(required = false, rename = "dict_type__in")]
+    #[serde(rename = "dict_type__in")]
+    dict_type_in: Option<String>,
     /// 是否仅返回启用的条目（默认 false）
     #[serde(default)]
     enabled_only: bool,
@@ -111,44 +115,48 @@ async fn list_dict_types(
     }
 }
 
-/// 获取指定类型下的所有字典条目。
+/// 批量获取指定类型下的字典条目，支持同时查询多个类型。
 #[utoipa::path(
     get,
-    path = "/v1/dictionaries/type/{dict_type}",
+    path = "/v1/dictionaries/types/all",
     tag = "Dictionaries",
     security(("bearer_auth" = [])),
-    params(
-        ("dict_type" = String, Path, description = "字典类型"),
-        ListByTypeQuery,
-        PaginationParams
-    ),
+    params(ListByTypesAllQuery, PaginationParams),
     responses(
         (status = 200, description = "字典条目列表", body = Vec<DictionaryItem>),
         (status = 401, description = "未认证", body = crate::api::ApiError)
     )
 )]
-async fn list_by_type(
+async fn list_by_types_all(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
-    Path(dict_type): Path<String>,
-    Query(query): Query<ListByTypeQuery>,
+    Query(query): Query<ListByTypesAllQuery>,
     Query(pagination): Query<PaginationParams>,
 ) -> impl IntoResponse {
     let limit = pagination.limit();
     let offset = pagination.offset();
 
+    let dict_types: Vec<&str> = query
+        .dict_type_in
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+
     let key_contains = query.key_contains.as_deref();
     let label_contains = query.label_contains.as_deref();
 
-    let total = match state.cert_store.count_dictionaries_by_type(
-        &dict_type,
+    let total = match state.cert_store.count_dictionaries_by_types(
+        &dict_types,
         query.enabled_only,
         key_contains,
         label_contains,
     ) {
         Ok(c) => c,
         Err(e) => {
-            tracing::error!(error = %e, dict_type = %dict_type, "Failed to count dictionaries by type");
+            tracing::error!(error = %e, "Failed to count dictionaries by types");
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
@@ -159,8 +167,8 @@ async fn list_by_type(
         }
     };
 
-    match state.cert_store.list_dictionaries_by_type(
-        &dict_type,
+    match state.cert_store.list_dictionaries_by_types(
+        &dict_types,
         query.enabled_only,
         key_contains,
         label_contains,
@@ -171,7 +179,7 @@ async fn list_by_type(
             success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
         }
         Err(e) => {
-            tracing::error!(error = %e, dict_type = %dict_type, "Failed to list dictionaries by type");
+            tracing::error!(error = %e, "Failed to list dictionaries by types");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
@@ -515,7 +523,7 @@ pub fn dictionary_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_dict_types, create_dict_type))
         .routes(routes!(update_dict_type, delete_dict_type))
-        .routes(routes!(list_by_type))
+        .routes(routes!(list_by_types_all))
         .routes(routes!(get_dictionary))
         .routes(routes!(create_dictionary, delete_dictionary))
         .routes(routes!(update_dictionary))

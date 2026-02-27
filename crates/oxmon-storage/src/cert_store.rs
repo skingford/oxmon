@@ -2729,8 +2729,7 @@ impl CertStore {
             "SELECT
                 COUNT(*) AS total_accounts,
                 COALESCE(SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END), 0) AS enabled_accounts
-             FROM system_configs
-             WHERE config_type = 'cloud_account'",
+             FROM cloud_accounts",
             [],
             |row| {
                 Ok(CloudAccountSummary {
@@ -2839,6 +2838,7 @@ impl CertStore {
                 row.updated_at.timestamp(),
             ],
         )?;
+        drop(conn);
         self.get_ai_account_by_id(&row.id)?
             .ok_or_else(|| anyhow::anyhow!("Failed to retrieve inserted AI account"))
     }
@@ -3043,6 +3043,7 @@ impl CertStore {
                 row.updated_at.timestamp(),
             ],
         )?;
+        drop(conn);
         self.get_cloud_account_by_id(&row.id)
     }
 
@@ -4910,21 +4911,30 @@ impl CertStore {
         }
     }
 
-    pub fn list_dictionaries_by_type(
+    pub fn list_dictionaries_by_types(
         &self,
-        dict_type: &str,
+        dict_types: &[&str],
         enabled_only: bool,
         key_contains: Option<&str>,
         label_contains: Option<&str>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<DictionaryItem>> {
-        let mut sql = String::from(
+        if dict_types.is_empty() {
+            return Ok(vec![]);
+        }
+        let placeholders: String = (1..=dict_types.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut sql = format!(
             "SELECT id, dict_type, dict_key, dict_label, dict_value, sort_order, enabled, is_system, description, extra_json, created_at, updated_at
-             FROM system_dictionaries WHERE dict_type = ?1",
+             FROM system_dictionaries WHERE dict_type IN ({placeholders})"
         );
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
-            vec![Box::new(dict_type.to_string())];
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = dict_types
+            .iter()
+            .map(|t| Box::new(t.to_string()) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
         if enabled_only {
             sql.push_str(" AND enabled = 1");
         }
@@ -4941,7 +4951,7 @@ impl CertStore {
         let limit_idx = params.len() + 1;
         let offset_idx = params.len() + 2;
         sql.push_str(&format!(
-            " ORDER BY sort_order ASC, created_at ASC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
+            " ORDER BY dict_type ASC, sort_order ASC, created_at ASC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
         ));
         params.push(Box::new(limit as i64));
         params.push(Box::new(offset as i64));
@@ -5081,16 +5091,27 @@ impl CertStore {
         Ok(count as u64)
     }
 
-    pub fn count_dictionaries_by_type(
+    pub fn count_dictionaries_by_types(
         &self,
-        dict_type: &str,
+        dict_types: &[&str],
         enabled_only: bool,
         key_contains: Option<&str>,
         label_contains: Option<&str>,
     ) -> Result<u64> {
-        let mut sql = String::from("SELECT COUNT(*) FROM system_dictionaries WHERE dict_type = ?1");
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
-            vec![Box::new(dict_type.to_string())];
+        if dict_types.is_empty() {
+            return Ok(0);
+        }
+        let placeholders: String = (1..=dict_types.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut sql = format!(
+            "SELECT COUNT(*) FROM system_dictionaries WHERE dict_type IN ({placeholders})"
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = dict_types
+            .iter()
+            .map(|t| Box::new(t.to_string()) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
         if enabled_only {
             sql.push_str(" AND enabled = 1");
         }
@@ -7922,42 +7943,29 @@ mod tests {
         let store = CertStore::new(dir.path()).unwrap();
         let now = chrono::Utc::now();
 
-        for (key, enabled) in [
-            ("cloud_tencent_a", true),
-            ("cloud_alibaba_b", false),
-            ("cloud_tencent_c", true),
+        for (key, provider, enabled) in [
+            ("cloud_tencent_a", "tencent", true),
+            ("cloud_alibaba_b", "alibaba", false),
+            ("cloud_tencent_c", "tencent", true),
         ] {
             store
-                .insert_system_config(&SystemConfigRow {
+                .insert_cloud_account(&CloudAccountRow {
                     id: oxmon_common::id::next_id(),
                     config_key: key.to_string(),
-                    config_type: "cloud_account".to_string(),
-                    provider: Some("tencent".to_string()),
+                    provider: provider.to_string(),
                     display_name: key.to_string(),
                     description: None,
-                    config_json: "{}".to_string(),
+                    secret_id: "test_id".to_string(),
+                    secret_key: "test_key".to_string(),
+                    region: None,
+                    extra_config: None,
+                    collection_interval_secs: 300,
                     enabled,
                     created_at: now,
                     updated_at: now,
                 })
                 .unwrap();
         }
-
-        // Non-cloud config should not be counted
-        store
-            .insert_system_config(&SystemConfigRow {
-                id: oxmon_common::id::next_id(),
-                config_key: "runtime_test".to_string(),
-                config_type: "runtime".to_string(),
-                provider: None,
-                display_name: "runtime".to_string(),
-                description: None,
-                config_json: "{\"value\":1}".to_string(),
-                enabled: true,
-                created_at: now,
-                updated_at: now,
-            })
-            .unwrap();
 
         let summary = store.cloud_account_summary().unwrap();
         assert_eq!(summary.total_accounts, 3);
