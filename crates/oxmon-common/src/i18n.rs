@@ -209,6 +209,32 @@ pub static TRANSLATIONS: LazyLock<Translations> = LazyLock::new(|| {
     t!("en", "time.hours", "{n} hours");
     t!("zh-CN", "time.hours", "{n} 小时");
 
+    // ---- Certificate alert report ----
+    t!("en", "cert_report.title", "Certificate Alert Report");
+    t!("zh-CN", "cert_report.title", "证书告警报告");
+    t!("en", "cert_report.date", "Report Date");
+    t!("zh-CN", "cert_report.date", "报告日期");
+    t!("en", "cert_report.total_checked", "Checked Domains");
+    t!("zh-CN", "cert_report.total_checked", "检查域名数");
+    t!("en", "cert_report.alert_count", "Alert Domains");
+    t!("zh-CN", "cert_report.alert_count", "告警域名数");
+    t!("en", "cert_report.critical", "Critical");
+    t!("zh-CN", "cert_report.critical", "严重");
+    t!("en", "cert_report.warning", "Warning");
+    t!("zh-CN", "cert_report.warning", "警告");
+    t!("en", "cert_report.domain", "Domain");
+    t!("zh-CN", "cert_report.domain", "域名");
+    t!("en", "cert_report.days_left", "Days Left");
+    t!("zh-CN", "cert_report.days_left", "剩余天数");
+    t!("en", "cert_report.expiry_date", "Expiry Date");
+    t!("zh-CN", "cert_report.expiry_date", "过期日期");
+    t!("en", "cert_report.issuer", "Issuer");
+    t!("zh-CN", "cert_report.issuer", "颁发者");
+    t!("en", "cert_report.expired_tag", "Expired");
+    t!("zh-CN", "cert_report.expired_tag", "已过期");
+    t!("en", "cert_report.subject_prefix", "[oxmon][Cert Alert]");
+    t!("zh-CN", "cert_report.subject_prefix", "[oxmon][证书告警]");
+
     // ---- Notification labels ----
     t!("en", "notify.severity", "Severity");
     t!("zh-CN", "notify.severity", "级别");

@@ -199,6 +199,20 @@ impl EmailChannel {
 
 #[async_trait]
 impl NotificationChannel for EmailChannel {
+    async fn send_cert_report(
+        &self,
+        subject: &str,
+        html_content: &str,
+        _markdown_content: &str,
+        plain_content: &str,
+        recipients: &[String],
+    ) -> Option<Result<SendResponse>> {
+        Some(
+            self.send_html(subject, html_content.to_string(), plain_content.to_string(), recipients)
+                .await,
+        )
+    }
+
     async fn send(
         &self,
         alert: &AlertEvent,

@@ -195,6 +195,55 @@ impl WeixinChannel {
 
 #[async_trait]
 impl NotificationChannel for WeixinChannel {
+    async fn send_cert_report(
+        &self,
+        _subject: &str,
+        _html_content: &str,
+        markdown_content: &str,
+        _plain_content: &str,
+        recipients: &[String],
+    ) -> Option<Result<SendResponse>> {
+        let payload = serde_json::json!({
+            "msgtype": "markdown",
+            "markdown": {
+                "content": markdown_content,
+            },
+        });
+
+        let payload_json = serde_json::to_string(&payload).unwrap_or_default();
+        let request_body = truncate_string(&payload_json, MAX_BODY_LENGTH);
+        let mut response = SendResponse {
+            request_body: Some(request_body),
+            ..Default::default()
+        };
+
+        let mut recipient_results = Vec::new();
+        let mut total_retries = 0u32;
+
+        let urls: Vec<&str> = if recipients.is_empty() {
+            vec![self.webhook_url.as_str()]
+        } else {
+            recipients.iter().map(|s| s.as_str()).collect()
+        };
+
+        for url in &urls {
+            let result = self.send_to_url(url, &payload).await;
+            total_retries += result.retries;
+            response.http_status = result.status_code;
+            response.response_body = result.response_body.clone();
+            response.api_error_code = result.error_code.clone();
+            recipient_results.push(RecipientResult {
+                recipient: url.to_string(),
+                status: if result.error.is_none() { "success".to_string() } else { "failed".to_string() },
+                error: result.error.as_ref().map(|e| e.to_string()),
+            });
+        }
+
+        response.retry_count = total_retries;
+        response.recipient_results = recipient_results;
+        Some(Ok(response))
+    }
+
     async fn send(
         &self,
         alert: &AlertEvent,

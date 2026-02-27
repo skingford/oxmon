@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{title}}</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --page-bg: #f3f5f9;
+            --card-bg: #ffffff;
+            --card-muted: #f8fafc;
+            --text-primary: #0f172a;
+            --text-secondary: #334155;
+            --text-muted: #64748b;
+            --border-color: #e2e8f0;
+            --border-strong: #cbd5e1;
+            --accent: #f4d000;
+            --accent-soft: #fff4a3;
+            --risk-high: #dc2626;
+            --risk-high-bg: #fef2f2;
+            --risk-medium: #8a6a00;
+            --risk-medium-bg: #fff8cc;
+            --risk-low: #111827;
+            --risk-low-bg: #f3f4f6;
+            --risk-normal: #111827;
+            --risk-normal-bg: #fffbe6;
+            --shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: var(--page-bg);
+            color: var(--text-primary);
+            line-height: 1.7;
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(circle at 20% 0%, rgba(244, 208, 0, 0.10), transparent 35%),
+                radial-gradient(circle at 100% 10%, rgba(17, 24, 39, 0.04), transparent 30%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .container {
+            max-width: 1040px;
+            margin: 0 auto;
+            padding: 40px 20px 56px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .header {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: var(--shadow);
+            position: relative;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 4px;
+            border-radius: 16px 16px 0 0;
+            background: linear-gradient(90deg, #f4d000 0%, #f4d000 55%, #111827 100%);
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+
+        .header-icon {
+            width: 44px; height: 44px;
+            background: #f4d000;
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            position: relative;
+            box-shadow: inset 0 0 0 1px rgba(17, 24, 39, 0.08);
+            flex: 0 0 auto;
+        }
+
+        .brand-mark {
+            position: relative; width: 22px; height: 22px; display: block;
+        }
+        .brand-mark::before {
+            content: '';
+            position: absolute; left: 2px; right: 2px; top: 4px; height: 12px;
+            border: 4px solid #ffffff; border-top: 0; border-radius: 0 0 10px 10px;
+        }
+        .brand-mark::after {
+            content: '';
+            position: absolute; width: 6px; height: 6px; border-radius: 50%;
+            background: #111827; top: 1px; left: 1px;
+            box-shadow: 0 0 0 2px rgba(17, 24, 39, 0.08);
+        }
+
+        h1 {
+            font-size: 28px; line-height: 1.25; font-weight: 700;
+            color: var(--text-primary); letter-spacing: -0.01em;
+        }
+
+        .header-meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+
+        .meta-item {
+            background: var(--card-muted);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 14px 16px;
+        }
+
+        .meta-label {
+            display: flex; align-items: center; gap: 6px;
+            color: var(--text-muted); font-size: 12px; font-weight: 600;
+            letter-spacing: 0.04em; margin-bottom: 6px;
+        }
+
+        .meta-badge {
+            display: inline-flex; align-items: center; justify-content: center;
+            min-width: 30px; height: 18px; padding: 0 6px; border-radius: 999px;
+            background: #fff7bf; border: 1px solid #f1dd68;
+            color: #111827; font-size: 10px; font-weight: 700;
+            letter-spacing: 0.06em; line-height: 1;
+        }
+
+        .meta-text { color: var(--text-muted); }
+
+        .meta-value {
+            font-size: 22px; font-weight: 800; color: var(--text-primary);
+            font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .meta-value.is-danger { color: #dc2626; }
+        .meta-value.is-warn { color: #8a6a00; }
+
+        .risk-indicator {
+            display: inline-flex; align-items: center; gap: 10px;
+            min-height: 40px; padding: 8px 14px; border-radius: 10px;
+            border: 1px solid var(--border-strong);
+            font-weight: 700; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase;
+        }
+
+        .risk-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+        .risk-high  { color: var(--risk-high);   background: var(--risk-high-bg);   border-color: #fecaca; }
+        .risk-medium{ color: var(--risk-medium);  background: var(--risk-medium-bg); border-color: #f4d000; }
+        .risk-normal{ color: var(--risk-normal);  background: var(--risk-normal-bg); border-color: #f4d000; }
+        .risk-low   { color: var(--risk-low);     background: var(--risk-low-bg);    border-color: #d1d5db; }
+
+        .section {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 28px;
+            margin-bottom: 18px;
+            box-shadow: var(--shadow);
+        }
+
+        .section-title {
+            font-size: 16px; font-weight: 700; color: var(--text-primary);
+            margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
+        }
+
+        table {
+            width: 100%; border-collapse: collapse; margin: 0;
+            background: #fff; border: 1px solid var(--border-color);
+            border-radius: 10px; overflow: hidden; display: block; overflow-x: auto;
+        }
+
+        thead { background: #f8fafc; }
+
+        th {
+            color: var(--text-primary); font-weight: 700; text-align: left;
+            padding: 12px 14px; font-size: 12px; text-transform: uppercase;
+            letter-spacing: 0.04em; border-bottom: 1px solid var(--border-strong);
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 12px 14px; border-bottom: 1px solid var(--border-color);
+            color: var(--text-secondary); font-size: 13px; vertical-align: middle;
+            font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+        }
+
+        tr:last-child td { border-bottom: none; }
+        tbody tr:nth-child(even) { background: #fbfdff; }
+        tbody tr:hover { background: #fffdf0; }
+
+        td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+        code {
+            background: #f1f5f9; color: #0f172a; padding: 2px 6px; border-radius: 4px;
+            font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+            font-size: 12px; border: 1px solid #e2e8f0;
+        }
+
+        .badge {
+            display: inline-flex; align-items: center; justify-content: center;
+            min-height: 22px; padding: 0 8px; border-radius: 999px;
+            border: 1px solid #d1d5db; background: #f9fafb;
+            color: #111827; font-size: 11px; font-weight: 700;
+            line-height: 1; white-space: nowrap;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .badge.is-ok     { background: #f3f4f6; border-color: #d1d5db; color: #111827; }
+        .badge.is-warn   { background: #fff8cc; border-color: #f4d000; color: #8a6a00; }
+        .badge.is-danger { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+        .badge.is-info   { background: #fffbe6; border-color: #f1dd68; color: #111827; }
+
+        .footer {
+            margin-top: 24px; padding: 20px 24px;
+            background: var(--card-bg); border-radius: 14px;
+            border: 1px solid var(--border-color);
+            text-align: center; box-shadow: var(--shadow);
+        }
+
+        .footer-brand {
+            display: inline-flex; align-items: center; justify-content: center;
+            min-height: 30px; gap: 8px; padding: 0 12px 0 10px;
+            border-radius: 8px; border: 1px solid #e5b800; background: #f4d000;
+            font-size: 14px; font-weight: 700; color: #111827;
+            margin-bottom: 6px; letter-spacing: 0.08em;
+        }
+
+        .footer-brand::before {
+            content: '';
+            width: 12px; height: 12px; border-radius: 3px;
+            background:
+                radial-gradient(circle at 3px 3px, #111827 0 2px, transparent 2.1px),
+                linear-gradient(#ffffff, #ffffff);
+            background-size: 100% 100%, 7px 7px;
+            background-position: center, center 4px;
+            background-repeat: no-repeat;
+            border: 1px solid rgba(17, 24, 39, 0.12); box-sizing: border-box;
+        }
+
+        .footer-meta { color: var(--text-muted); font-size: 12px; margin-bottom: 4px; }
+
+        @media (max-width: 768px) {
+            .container { padding: 20px 12px 28px; }
+            .header, .section, .footer { padding: 18px 16px; border-radius: 12px; }
+            h1 { font-size: 22px; }
+            .header-meta { grid-template-columns: 1fr 1fr; gap: 10px; }
+            .meta-value { font-size: 18px; }
+        }
+
+        @media print {
+            body { background: #fff; }
+            .container { max-width: none; padding: 0; }
+            .header, .section, .footer { box-shadow: none; border-color: #d1d5db; break-inside: avoid; }
+            table { display: table; overflow: visible; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <div class="header">
+        <div class="header-title">
+            <div class="header-icon" aria-hidden="true"><span class="brand-mark"></span></div>
+            <h1>{{title}}</h1>
+        </div>
+
+        <div class="header-meta">
+            <div class="meta-item">
+                <div class="meta-label">
+                    <span class="meta-badge">DATE</span>
+                    <span class="meta-text">{{date_label}}</span>
+                </div>
+                <div class="meta-value">{{report_date}}</div>
+            </div>
+
+            <div class="meta-item">
+                <div class="meta-label">
+                    <span class="meta-badge">CHK</span>
+                    <span class="meta-text">{{total_label}}</span>
+                </div>
+                <div class="meta-value">{{total_checked}}</div>
+            </div>
+
+            <div class="meta-item">
+                <div class="meta-label">
+                    <span class="meta-badge">ALERT</span>
+                    <span class="meta-text">{{alert_label}}</span>
+                </div>
+                <div class="meta-value {{alert_value_class}}">{{alert_count}}</div>
+            </div>
+
+            <div class="meta-item">
+                <div class="meta-label">
+                    <span class="meta-badge" style="background:#fef2f2;border-color:#fecaca;color:#b91c1c;">ERR</span>
+                    <span class="meta-text">{{critical_label}}</span>
+                </div>
+                <div class="meta-value is-danger">{{critical_count}}</div>
+            </div>
+
+            <div class="meta-item">
+                <div class="meta-label">
+                    <span class="meta-badge" style="background:#fff8cc;border-color:#f4d000;color:#8a6a00;">WARN</span>
+                    <span class="meta-text">{{warning_label}}</span>
+                </div>
+                <div class="meta-value is-warn">{{warning_count}}</div>
+            </div>
+        </div>
+
+        <div class="risk-indicator risk-{{risk_level}}">
+            <div class="risk-dot"></div>
+            <span>{{risk_label}}</span>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">🔒 {{section_title}}</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>{{domain_label}}</th>
+                    <th>{{days_label}}</th>
+                    <th>{{expiry_label}}</th>
+                    <th>{{severity_label}}</th>
+                    <th>{{issuer_label}}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{table_rows}}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="footer">
+        <div class="footer-brand">OXMON</div>
+        <div class="footer-meta">{{footer_desc}}</div>
+        <div class="footer-meta" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color);">
+            {{generated_label}}: {{created_at}}
+        </div>
+    </div>
+
+</div>
+</body>
+</html>

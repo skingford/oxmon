@@ -359,6 +359,114 @@ async fn test_channel(
     }
 }
 
+/// 发送证书告警批量报告测试（读取真实监控域名数据）
+#[utoipa::path(
+    post,
+    path = "/v1/notifications/test-cert-report",
+    responses(
+        (status = 200, description = "测试报告已发送"),
+        (status = 500, description = "发送失败")
+    )
+)]
+async fn test_cert_report(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    use oxmon_notify::cert_report_template::CertAlertDetail;
+
+    let now = chrono::Utc::now();
+    let report_date = now.format("%Y-%m-%d").to_string();
+
+    // 读取所有已启用域名的最新检查结果（上限 1000 条）
+    let all_results = match state
+        .cert_store
+        .query_latest_results(None, None, None, 1000, 0)
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to query cert check results");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                &format!("Failed to query cert results: {e}"),
+            )
+            .into_response();
+        }
+    };
+
+    let total_checked = all_results.len() as i32;
+
+    // 过滤出需要告警的域名：证书无效 或 30 天内到期
+    let alert_items: Vec<CertAlertDetail> = all_results
+        .into_iter()
+        .filter(|r| !r.is_valid || r.days_until_expiry.map_or(false, |d| d <= 30))
+        .map(|r| {
+            let days = r.days_until_expiry.unwrap_or(i64::MIN);
+            let severity = if !r.is_valid && r.days_until_expiry.is_none() {
+                // 无法连接或证书完全无效（无剩余天数）
+                "critical"
+            } else if days <= 7 {
+                "critical"
+            } else {
+                "warning"
+            };
+
+            let message = if let Some(ref err) = r.error {
+                err.clone()
+            } else if days < 0 {
+                format!("证书已过期 {} 天", days.abs())
+            } else {
+                format!("证书将在 {days} 天后到期")
+            };
+
+            let not_after = r.not_after.map(|dt| dt.format("%Y-%m-%d").to_string());
+
+            CertAlertDetail {
+                domain: r.domain,
+                days_until_expiry: days,
+                severity: severity.to_string(),
+                not_after,
+                issuer: r.issuer,
+                message,
+            }
+        })
+        .collect();
+
+    let locale = state
+        .cert_store
+        .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
+
+    tracing::info!(
+        locale = %locale,
+        total_checked,
+        alert_count = alert_items.len(),
+        "Sending test cert alert batch report with real domain data"
+    );
+
+    if alert_items.is_empty() {
+        return success_empty_response(
+            StatusCode::OK,
+            &trace_id,
+            &format!("No alerts found among {total_checked} checked domains"),
+        );
+    }
+
+    state
+        .notifier
+        .send_cert_report(&alert_items, total_checked, &report_date, &locale)
+        .await;
+
+    success_empty_response(
+        StatusCode::OK,
+        &trace_id,
+        &format!(
+            "Cert report sent: {}/{total_checked} domains with alerts",
+            alert_items.len()
+        ),
+    )
+}
+
 // ---- Notification channels CRUD ----
 
 #[derive(Deserialize, ToSchema)]
@@ -1307,6 +1415,7 @@ pub fn notification_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(list_channels, create_channel))
         .routes(routes!(get_channel_by_id, update_channel, delete_channel))
         .routes(routes!(test_channel))
+        .routes(routes!(test_cert_report))
         .routes(routes!(list_silence_windows, create_silence_window))
         .routes(routes!(
             get_silence_window,

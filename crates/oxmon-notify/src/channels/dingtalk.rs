@@ -315,6 +315,78 @@ impl DingTalkChannel {
 
 #[async_trait]
 impl NotificationChannel for DingTalkChannel {
+    async fn send_cert_report(
+        &self,
+        subject: &str,
+        _html_content: &str,
+        markdown_content: &str,
+        _plain_content: &str,
+        recipients: &[String],
+    ) -> Option<Result<SendResponse>> {
+        let mut at_obj = serde_json::json!({ "isAtAll": self.is_at_all });
+        if !self.at_mobiles.is_empty() {
+            at_obj["atMobiles"] = serde_json::json!(self.at_mobiles);
+        }
+        if !self.at_user_ids.is_empty() {
+            at_obj["atUserIds"] = serde_json::json!(self.at_user_ids);
+        }
+        let payload = serde_json::json!({
+            "msgtype": "markdown",
+            "markdown": {
+                "title": subject,
+                "text": markdown_content,
+            },
+            "at": at_obj,
+        });
+
+        let payload_json = serde_json::to_string(&payload).unwrap_or_default();
+        let request_body = crate::utils::truncate_string(&payload_json, crate::utils::MAX_BODY_LENGTH);
+        let mut response = SendResponse {
+            request_body: Some(request_body),
+            ..Default::default()
+        };
+
+        let mut recipient_results = Vec::new();
+        let mut total_retries = 0u32;
+
+        if recipients.is_empty() {
+            let url = self.sign_url(&self.webhook_url);
+            let result = self.send_to_url(&url, &payload).await;
+            total_retries += result.retries;
+            response.http_status = result.status_code;
+            response.response_body = result.response_body.clone();
+            response.api_error_code = result.error_code.clone();
+            recipient_results.push(RecipientResult {
+                recipient: self.webhook_url.clone(),
+                status: if result.error.is_none() { "success".to_string() } else { "failed".to_string() },
+                error: result.error.as_ref().map(|e| e.to_string()),
+            });
+            if let Some(err) = result.error {
+                response.retry_count = total_retries;
+                response.recipient_results = recipient_results;
+                return Some(Err(err));
+            }
+        } else {
+            for webhook in recipients {
+                let url = self.sign_url(webhook);
+                let result = self.send_to_url(&url, &payload).await;
+                total_retries += result.retries;
+                response.http_status = result.status_code;
+                response.response_body = result.response_body.clone();
+                response.api_error_code = result.error_code.clone();
+                recipient_results.push(RecipientResult {
+                    recipient: webhook.clone(),
+                    status: if result.error.is_none() { "success".to_string() } else { "failed".to_string() },
+                    error: result.error.as_ref().map(|e| e.to_string()),
+                });
+            }
+        }
+
+        response.retry_count = total_retries;
+        response.recipient_results = recipient_results;
+        Some(Ok(response))
+    }
+
     async fn send(
         &self,
         alert: &AlertEvent,

@@ -1,3 +1,4 @@
+use crate::cert_report_template::{CertAlertDetail, CertReportParams, CertReportRenderer};
 use crate::plugin::ChannelRegistry;
 use crate::utils::{redact_json_string, truncate_string, MAX_BODY_LENGTH};
 use crate::NotificationChannel;
@@ -430,6 +431,210 @@ impl NotificationManager {
                 "Failed to write notification log"
             );
         }
+    }
+
+    /// 发送证书告警批量报告。
+    ///
+    /// 将本次检查周期内所有触发告警的域名汇总为一条通知发送，
+    /// 而非每个域名单独发一条。
+    ///
+    /// - Email 渠道：发送 HTML 格式报告
+    /// - 钉钉/企业微信渠道：发送 Markdown 格式报告
+    /// - 其他渠道：发送纯文本格式（通过 `send` 接口）
+    pub async fn send_cert_report(
+        &self,
+        alert_items: &[CertAlertDetail],
+        total_checked: i32,
+        report_date: &str,
+        locale: &str,
+    ) {
+        if alert_items.is_empty() {
+            return;
+        }
+
+        let now = Utc::now();
+
+        // 检查静默窗口
+        if let Ok(windows) = self.cert_store.list_silence_windows(None, 100, 0) {
+            for sw in &windows {
+                if let (Ok(start), Ok(end)) = (
+                    NaiveTime::parse_from_str(&sw.start_time, "%H:%M"),
+                    NaiveTime::parse_from_str(&sw.end_time, "%H:%M"),
+                ) {
+                    let window = SilenceWindow { start, end, recurrence: sw.recurrence.clone() };
+                    if window.is_active(now) {
+                        tracing::info!("Cert report suppressed (silence window active)");
+                        return;
+                    }
+                }
+            }
+        }
+
+        let params = CertReportParams {
+            report_date,
+            total_checked,
+            alert_items,
+            locale,
+        };
+
+        // 渲染三种格式
+        let html_content = match CertReportRenderer::render_html(&params) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to render cert report HTML");
+                String::new()
+            }
+        };
+        let markdown_content = CertReportRenderer::render_markdown(&params);
+        let plain_content = CertReportRenderer::render_plain(&params);
+
+        let alert_count = alert_items.len();
+        let subject = if locale == "zh-CN" {
+            format!(
+                "[oxmon][证书告警] {} | {} 个域名告警",
+                report_date, alert_count
+            )
+        } else {
+            format!(
+                "[oxmon][Cert Alert] {} | {} domain(s) alerting",
+                report_date, alert_count
+            )
+        };
+
+        // 构建兜底用的合成 AlertEvent（供不支持 send_cert_report 的渠道使用）
+        let max_severity = alert_items
+            .iter()
+            .map(|d| match d.severity.as_str() {
+                "critical" => oxmon_common::types::Severity::Critical,
+                "warning" => oxmon_common::types::Severity::Warning,
+                _ => oxmon_common::types::Severity::Info,
+            })
+            .max()
+            .unwrap_or(oxmon_common::types::Severity::Warning);
+
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("report_date".to_string(), report_date.to_string());
+        labels.insert("alert_count".to_string(), alert_count.to_string());
+
+        let fallback_event = oxmon_common::types::AlertEvent {
+            id: format!("cert-report-{}", now.timestamp_millis()),
+            rule_id: "cert-alert-report".to_string(),
+            rule_name: subject.clone(),
+            agent_id: "cert-checker".to_string(),
+            metric_name: "certificate.report".to_string(),
+            severity: max_severity,
+            message: plain_content.clone(),
+            value: alert_count as f64,
+            threshold: 0.0,
+            timestamp: now,
+            predicted_breach: None,
+            status: 1,
+            labels,
+            first_triggered_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let instances = self.instances.read().await;
+        for (channel_id, instance) in instances.iter() {
+            if max_severity < instance.min_severity {
+                continue;
+            }
+
+            let start = Instant::now();
+
+            // 尝试使用渠道原生的报告发送能力
+            let result = instance
+                .channel
+                .send_cert_report(
+                    &subject,
+                    &html_content,
+                    &markdown_content,
+                    &plain_content,
+                    &instance.recipients,
+                )
+                .await;
+
+            let (send_result, response) = match result {
+                Some(Ok(resp)) => (Ok(()), Some(resp)),
+                Some(Err(e)) => {
+                    tracing::error!(
+                        channel_id = %channel_id,
+                        channel_type = %instance.channel_type,
+                        error = %e,
+                        "Failed to send cert report via native channel"
+                    );
+                    (Err(anyhow::anyhow!("{e}")), None)
+                }
+                // 渠道不支持 send_cert_report，回退到普通 send 接口（纯文本）
+                None => {
+                    let r = instance
+                        .channel
+                        .send(&fallback_event, &instance.recipients, locale)
+                        .await;
+                    let duration_ms = start.elapsed().as_millis() as i64;
+                    match r {
+                        Ok(resp) => {
+                            let ctx = SendLogContext {
+                                channel_id,
+                                channel_name: &instance.name,
+                                channel_type: &instance.channel_type,
+                                duration_ms,
+                                recipient_count: instance.recipients.len() as i32,
+                                response: Some(resp),
+                            };
+                            Self::record_send_log(
+                                &self.cert_store,
+                                &fallback_event,
+                                &ctx,
+                                &Ok(()),
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                channel_id = %channel_id,
+                                channel_type = %instance.channel_type,
+                                error = %e,
+                                "Failed to send cert report via fallback channel"
+                            );
+                            let ctx = SendLogContext {
+                                channel_id,
+                                channel_name: &instance.name,
+                                channel_type: &instance.channel_type,
+                                duration_ms,
+                                recipient_count: instance.recipients.len() as i32,
+                                response: None,
+                            };
+                            Self::record_send_log(
+                                &self.cert_store,
+                                &fallback_event,
+                                &ctx,
+                                &Err(anyhow::anyhow!("{e}")),
+                            );
+                        }
+                    }
+                    continue;
+                }
+            };
+
+            let duration_ms = start.elapsed().as_millis() as i64;
+            let ctx = SendLogContext {
+                channel_id,
+                channel_name: &instance.name,
+                channel_type: &instance.channel_type,
+                duration_ms,
+                recipient_count: instance.recipients.len() as i32,
+                response,
+            };
+            Self::record_send_log(&self.cert_store, &fallback_event, &ctx, &send_result);
+        }
+
+        tracing::info!(
+            alert_count = alert_count,
+            total_checked = total_checked,
+            report_date = report_date,
+            "Cert alert report sent to all channels"
+        );
     }
 
     /// 获取已加载的渠道数量。

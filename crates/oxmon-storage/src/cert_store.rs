@@ -4969,6 +4969,25 @@ impl CertStore {
         Ok(results)
     }
 
+    pub fn list_dictionaries_by_type(
+        &self,
+        dict_type: &str,
+        enabled_only: bool,
+        key_contains: Option<&str>,
+        label_contains: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<DictionaryItem>> {
+        self.list_dictionaries_by_types(
+            &[dict_type],
+            enabled_only,
+            key_contains,
+            label_contains,
+            limit,
+            offset,
+        )
+    }
+
     pub fn list_all_dict_types(
         &self,
         dict_type_contains: Option<&str>,
@@ -5130,6 +5149,21 @@ impl CertStore {
             params.iter().map(|p| p.as_ref()).collect();
         let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
         Ok(count as u64)
+    }
+
+    pub fn count_dictionaries_by_type(
+        &self,
+        dict_type: &str,
+        enabled_only: bool,
+        key_contains: Option<&str>,
+        label_contains: Option<&str>,
+    ) -> Result<u64> {
+        self.count_dictionaries_by_types(
+            &[dict_type],
+            enabled_only,
+            key_contains,
+            label_contains,
+        )
     }
 
     // ---- Dictionary types CRUD ----

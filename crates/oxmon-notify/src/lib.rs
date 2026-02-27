@@ -5,6 +5,7 @@
 //! Built-in channels include email (SMTP), webhook, SMS, DingTalk,
 //! and WeCom (WeChat Work).
 
+pub mod cert_report_template;
 pub mod channels;
 pub mod manager;
 pub mod plugin;
@@ -54,6 +55,29 @@ pub trait NotificationChannel: Send + Sync {
         recipients: &[String],
         locale: &str,
     ) -> Result<SendResponse>;
+
+    /// Send a structured cert alert report with format-specific content.
+    ///
+    /// Channel implementations that support rich formatting (e.g., email → HTML,
+    /// DingTalk / WeChat Work → Markdown) should override this method.
+    /// The manager falls back to [`send`] with a plain-text synthetic event when
+    /// this returns `None`.
+    ///
+    /// - `subject`          – email subject / message title
+    /// - `html_content`     – full HTML string (for email)
+    /// - `markdown_content` – Markdown string (for DingTalk / WeChat Work)
+    /// - `plain_content`    – plain text (for SMS / webhook / fallback)
+    async fn send_cert_report(
+        &self,
+        subject: &str,
+        html_content: &str,
+        markdown_content: &str,
+        plain_content: &str,
+        recipients: &[String],
+    ) -> Option<Result<SendResponse>> {
+        let _ = (subject, html_content, markdown_content, plain_content, recipients);
+        None
+    }
 
     /// Returns the channel type name (e.g., `"email"`, `"webhook"`).
     fn channel_type(&self) -> &str;
