@@ -23,6 +23,7 @@ use rsa::{Oaep, RsaPublicKey};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sha2::Sha256;
+use std::fmt::Display;
 use std::sync::{Arc, Mutex, OnceLock};
 use tempfile::TempDir;
 use tonic::metadata::MetadataValue;
@@ -39,6 +40,20 @@ fn ensure_rustls_provider() {
     RUSTLS_PROVIDER_INIT.get_or_init(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();
     });
+}
+
+pub fn must_ok<T, E: Display>(result: std::result::Result<T, E>, context: &str) -> T {
+    match result {
+        Ok(value) => value,
+        Err(err) => panic!("{context}: {err}"),
+    }
+}
+
+pub fn must_some<T>(value: Option<T>, context: &str) -> T {
+    match value {
+        Some(value) => value,
+        None => panic!("{context}"),
+    }
 }
 
 pub async fn build_test_context() -> Result<TestContext> {
@@ -61,7 +76,7 @@ pub async fn build_test_context() -> Result<TestContext> {
         name: "Test Threshold".to_string(),
         metric: "cpu.usage".to_string(),
         agent_pattern: "*".to_string(),
-        severity: "warning".parse().expect("warning should parse"),
+        severity: must_ok("warning".parse(), "warning should parse"),
         operator: CompareOp::GreaterThan,
         value: 9999.0,
         duration_secs: 60,
@@ -130,15 +145,9 @@ pub async fn request_json(
     builder = builder.header("Content-Type", "application/json");
 
     let req_body = body.unwrap_or(Value::Null).to_string();
-    let req = builder
-        .body(Body::from(req_body))
-        .expect("request should build");
+    let req = must_ok(builder.body(Body::from(req_body)), "request should build");
 
-    let resp = app
-        .clone()
-        .oneshot(req)
-        .await
-        .expect("request should be handled");
+    let resp = must_ok(app.clone().oneshot(req).await, "request should be handled");
 
     let status = resp.status();
     let trace_id = resp
@@ -146,9 +155,10 @@ pub async fn request_json(
         .get("x-trace-id")
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string());
-    let bytes = to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .expect("body should read");
+    let bytes = must_ok(
+        to_bytes(resp.into_body(), usize::MAX).await,
+        "body should read",
+    );
     let json = if bytes.is_empty() {
         Value::Null
     } else {
@@ -170,22 +180,19 @@ pub async fn request_no_body(
         builder = builder.header("Authorization", format!("Bearer {token}"));
     }
 
-    let req = builder.body(Body::empty()).expect("request should build");
+    let req = must_ok(builder.body(Body::empty()), "request should build");
 
-    let resp = app
-        .clone()
-        .oneshot(req)
-        .await
-        .expect("request should be handled");
+    let resp = must_ok(app.clone().oneshot(req).await, "request should be handled");
     let status = resp.status();
     let trace_id = resp
         .headers()
         .get("x-trace-id")
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string());
-    let bytes = to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .expect("body should read");
+    let bytes = must_ok(
+        to_bytes(resp.into_body(), usize::MAX).await,
+        "body should read",
+    );
     let json = if bytes.is_empty() {
         Value::Null
     } else {
@@ -204,9 +211,10 @@ pub fn encrypt_password(public_key: &RsaPublicKey, password: &str) -> String {
     });
     let padding = Oaep::new::<Sha256>();
     let mut rng = rand::thread_rng();
-    let ciphertext = public_key
-        .encrypt(&mut rng, padding, payload.to_string().as_bytes())
-        .expect("RSA encryption should succeed");
+    let ciphertext = must_ok(
+        public_key.encrypt(&mut rng, padding, payload.to_string().as_bytes()),
+        "RSA encryption should succeed",
+    );
     general_purpose::STANDARD.encode(&ciphertext)
 }
 
@@ -219,11 +227,14 @@ pub async fn login_and_get_token(app: &axum::Router) -> String {
     // First get the public key
     let (status, pk_body, _) = request_no_body(app, "GET", "/v1/auth/public-key", None).await;
     assert_eq!(status, StatusCode::OK);
-    let pem = pk_body["data"]["public_key"]
-        .as_str()
-        .expect("public_key should exist");
-    let public_key =
-        rsa::pkcs8::DecodePublicKey::from_public_key_pem(pem).expect("PEM should parse");
+    let pem = must_some(
+        pk_body["data"]["public_key"].as_str(),
+        "public_key should exist",
+    );
+    let public_key = must_ok(
+        rsa::pkcs8::DecodePublicKey::from_public_key_pem(pem),
+        "PEM should parse",
+    );
 
     let encrypted = encrypt_password(&public_key, "changeme");
 
@@ -232,22 +243,23 @@ pub async fn login_and_get_token(app: &axum::Router) -> String {
         "POST",
         "/v1/auth/login",
         None,
-        Some(
+        Some(must_ok(
             serde_json::to_value(LoginRequest {
                 username: "admin".to_string(),
                 encrypted_password: encrypted,
-            })
-            .expect("login request should serialize"),
-        ),
+            }),
+            "login request should serialize",
+        )),
     )
     .await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["err_code"], 0);
-    body["data"]["access_token"]
-        .as_str()
-        .expect("access_token should exist")
-        .to_string()
+    must_some(
+        body["data"]["access_token"].as_str(),
+        "access_token should exist",
+    )
+    .to_string()
 }
 
 pub async fn add_whitelist_agent(app: &axum::Router, token: &str, agent_id: &str) -> String {
@@ -256,22 +268,23 @@ pub async fn add_whitelist_agent(app: &axum::Router, token: &str, agent_id: &str
         "POST",
         "/v1/agents/whitelist",
         Some(token),
-        Some(
+        Some(must_ok(
             serde_json::to_value(AddAgentRequest {
                 agent_id: agent_id.to_string(),
                 description: Some("test agent".to_string()),
                 collection_interval_secs: None,
-            })
-            .expect("add agent request should serialize"),
-        ),
+            }),
+            "add agent request should serialize",
+        )),
     )
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
-    body["data"]["token"]
-        .as_str()
-        .expect("whitelist token should exist")
-        .to_string()
+    must_some(
+        body["data"]["token"].as_str(),
+        "whitelist token should exist",
+    )
+    .to_string()
 }
 
 pub fn assert_ok_envelope(json: &Value) {
@@ -289,7 +302,10 @@ pub fn assert_err_envelope(json: &Value, err_code: i32) {
 }
 
 pub fn decode_data<T: DeserializeOwned>(json: &Value) -> T {
-    serde_json::from_value(json["data"].clone()).expect("data should decode")
+    must_ok(
+        serde_json::from_value(json["data"].clone()),
+        "data should decode",
+    )
 }
 
 pub async fn grpc_report_direct(
@@ -313,16 +329,18 @@ pub async fn grpc_report_direct(
     });
 
     if let Some(token) = token {
-        let value = format!("Bearer {token}")
-            .parse::<MetadataValue<_>>()
-            .expect("authorization metadata should parse");
+        let value = must_ok(
+            format!("Bearer {token}").parse::<MetadataValue<_>>(),
+            "authorization metadata should parse",
+        );
         req.metadata_mut().insert("authorization", value);
     }
 
     if let Some(meta_agent_id) = metadata_agent_id {
-        let value = meta_agent_id
-            .parse::<MetadataValue<_>>()
-            .expect("agent-id metadata should parse");
+        let value = must_ok(
+            meta_agent_id.parse::<MetadataValue<_>>(),
+            "agent-id metadata should parse",
+        );
         req.metadata_mut().insert("agent-id", value);
     }
 
@@ -355,24 +373,24 @@ pub fn sample_cert_check_result(
 }
 
 pub async fn ensure_cert_domain_with_result(ctx: &TestContext, domain: &str) -> (String, String) {
-    let created = ctx
-        .state
-        .cert_store
-        .insert_domain(&oxmon_common::types::CreateDomainRequest {
-            domain: domain.to_string(),
-            port: Some(443),
-            check_interval_secs: Some(3600),
-            note: Some("seed".to_string()),
-        })
-        .await
-        .expect("insert domain should succeed");
+    let created = must_ok(
+        ctx.state
+            .cert_store
+            .insert_domain(&oxmon_common::types::CreateDomainRequest {
+                domain: domain.to_string(),
+                port: Some(443),
+                check_interval_secs: Some(3600),
+                note: Some("seed".to_string()),
+            })
+            .await,
+        "insert domain should succeed",
+    );
 
     let result = sample_cert_check_result(&created.id, domain);
-    ctx.state
-        .cert_store
-        .insert_check_result(&result)
-        .await
-        .expect("insert check result should succeed");
+    let _ = must_ok(
+        ctx.state.cert_store.insert_check_result(&result).await,
+        "insert check result should succeed",
+    );
 
     let details = oxmon_common::types::CertificateDetails {
         id: oxmon_common::id::next_id(),
@@ -410,23 +428,25 @@ pub async fn ensure_cert_domain_with_result(ctx: &TestContext, domain: &str) -> 
         cipher_suite: None,
         chain_depth: None,
     };
-    ctx.state
-        .cert_store
-        .upsert_certificate_details(&details)
-        .await
-        .expect("upsert cert details should succeed");
+    let _ = must_ok(
+        ctx.state
+            .cert_store
+            .upsert_certificate_details(&details)
+            .await,
+        "upsert cert details should succeed",
+    );
 
-    let details = ctx
-        .state
-        .cert_store
-        .get_certificate_details(domain)
-        .await
-        .expect("query cert details should succeed")
-        .expect("cert details should exist");
+    let details = must_some(
+        must_ok(
+            ctx.state.cert_store.get_certificate_details(domain).await,
+            "query cert details should succeed",
+        ),
+        "cert details should exist",
+    );
 
     (created.id, details.id)
 }
 
 pub fn make_json_body<T: serde::Serialize>(v: &T) -> Value {
-    serde_json::to_value(v).expect("json encode should succeed")
+    must_ok(serde_json::to_value(v), "json encode should succeed")
 }

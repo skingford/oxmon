@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use oxmon_cloud::{build_provider, CloudAccountConfig};
-use oxmon_storage::{CloudAccountRow, CloudInstanceRow};
+use oxmon_storage::{CloudAccountRow, CloudInstanceRow, MetricQuery};
 use oxmon_storage::StorageEngine;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -1484,6 +1484,397 @@ async fn batch_create_cloud_accounts(
     success_response(StatusCode::OK, &trace_id, resp)
 }
 
+// ─── 解析指标简名 → 完整指标名 ────────────────────────────────────────────────
+
+fn parse_metric_names(metrics_param: Option<&str>) -> Vec<String> {
+    match metrics_param {
+        None | Some("") => vec![
+            "cloud.cpu.usage".to_string(),
+            "cloud.memory.usage".to_string(),
+            "cloud.disk.usage".to_string(),
+        ],
+        Some(s) => s
+            .split(',')
+            .map(|m| match m.trim() {
+                "cpu" => "cloud.cpu.usage",
+                "memory" | "mem" => "cloud.memory.usage",
+                "disk" => "cloud.disk.usage",
+                "network_in" => "cloud.network.in_bytes",
+                "network_out" => "cloud.network.out_bytes",
+                "iops_read" | "disk_read" => "cloud.disk.iops_read",
+                "iops_write" | "disk_write" => "cloud.disk.iops_write",
+                "connections" | "conns" => "cloud.connections",
+                other => other,
+            })
+            .map(|s| s.to_string())
+            .collect(),
+    }
+}
+
+// ─── 云实例历史指标（时间序列）─────────────────────────────────────────────────
+
+/// 时间序列单个数据点
+#[derive(Serialize, ToSchema)]
+#[schema(example = json!({"t": 1740787200, "v": 45.2}))]
+struct MetricPoint {
+    /// Unix 时间戳（秒）
+    #[schema(example = 1740787200_i64)]
+    t: i64,
+    /// 指标值（百分比 0‒100，或字节/IOPS 等原始数值，取决于指标类型）
+    #[schema(example = 45.2)]
+    v: f64,
+}
+
+/// 云实例历史指标响应
+#[derive(Serialize, ToSchema)]
+struct CloudInstanceMetricsResponse {
+    /// 云厂商实例 ID（如 ins-abc123 / i-abc123456）
+    #[schema(example = "ins-abc123")]
+    instance_id: String,
+    /// 实例显示名称
+    #[schema(example = "web-server-01")]
+    instance_name: Option<String>,
+    /// 时间序列数据，key 为完整指标名，value 为按时间升序排列的数据点数组。
+    ///
+    /// 常用 key：
+    /// - `cloud.cpu.usage` — CPU 使用率（%）
+    /// - `cloud.memory.usage` — 内存使用率（%）
+    /// - `cloud.disk.usage` — 磁盘使用率（%）
+    /// - `cloud.network.in_bytes` — 入流量（字节/秒）
+    /// - `cloud.network.out_bytes` — 出流量（字节/秒）
+    /// - `cloud.disk.iops_read` — 磁盘读 IOPS
+    /// - `cloud.disk.iops_write` — 磁盘写 IOPS
+    /// - `cloud.connections` — TCP 连接数
+    #[schema(
+        value_type = Object,
+        example = json!({
+            "cloud.cpu.usage":    [{"t": 1740787200, "v": 32.5}, {"t": 1740790800, "v": 45.1}],
+            "cloud.memory.usage": [{"t": 1740787200, "v": 67.8}, {"t": 1740790800, "v": 68.3}],
+            "cloud.disk.usage":   [{"t": 1740787200, "v": 55.0}, {"t": 1740790800, "v": 55.2}]
+        })
+    )]
+    series: std::collections::HashMap<String, Vec<MetricPoint>>,
+}
+
+/// 历史指标查询参数
+#[derive(Deserialize, utoipa::IntoParams, ToSchema)]
+#[into_params(parameter_in = Query)]
+struct CloudInstanceMetricsParams {
+    /// 查询开始时间（RFC3339/ISO8601）。
+    /// 默认为今天 00:00:00 UTC；最早不超过当前时间往前 7 天（与数据保留期一致）。
+    #[param(example = "2025-03-01T00:00:00Z")]
+    from: Option<String>,
+    /// 查询结束时间（RFC3339/ISO8601）。
+    /// 默认为当前时间。
+    #[param(example = "2025-03-01T23:59:59Z")]
+    to: Option<String>,
+    /// 要返回的指标，逗号分隔。
+    /// 支持简名（`cpu` / `memory` / `disk` / `network_in` / `network_out` / `iops_read` / `iops_write` / `connections`）
+    /// 或完整指标名（`cloud.cpu.usage` 等）。
+    /// 默认值：`cpu,memory,disk`
+    #[param(example = "cpu,memory,disk")]
+    metrics: Option<String>,
+}
+
+/// 获取云实例历史指标时间序列（用于折线图等可视化）
+#[utoipa::path(
+    get,
+    path = "/v1/cloud/instances/{id}/metrics",
+    operation_id = "getCloudInstanceMetrics",
+    tag = "Cloud",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "云实例系统雪花ID（cloud_instances 表主键，例如 1234567890123456789）"),
+        CloudInstanceMetricsParams,
+    ),
+    responses(
+        (status = 200, description = "历史指标时间序列，series 中每个 key 对应一条折线", body = CloudInstanceMetricsResponse),
+        (status = 401, description = "未认证", body = crate::api::ApiError),
+        (status = 404, description = "实例不存在", body = crate::api::ApiError)
+    )
+)]
+async fn cloud_instance_metrics(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<CloudInstanceMetricsParams>,
+) -> impl IntoResponse {
+    // 1. 加载实例元数据
+    let instance = match state.cert_store.get_cloud_instance_by_id(&id).await {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                "Cloud instance not found",
+            )
+            .into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to get cloud instance");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
+    // 2. 解析时间范围（默认今天 00:00 UTC 到现在，最长 7 天）
+    let now = chrono::Utc::now();
+    let max_retention = chrono::Duration::days(7);
+
+    let to_time = params
+        .to
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .unwrap_or(now);
+
+    let from_time = params
+        .from
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|| {
+            // 默认今天 00:00 UTC
+            now.date_naive()
+                .and_hms_opt(0, 0, 0)
+                .and_then(|ndt| ndt.and_local_timezone(chrono::Utc).single())
+                .unwrap_or(now - chrono::Duration::hours(24))
+        });
+
+    // 强制不超过 7 天
+    let from_time = from_time.max(to_time - max_retention);
+
+    // 3. 确定要查询的指标列表
+    let metric_names = parse_metric_names(params.metrics.as_deref());
+
+    // 4. 逐指标查询时间序列
+    let agent_id = format!("cloud:{}:{}", instance.provider, instance.instance_id);
+    let mut series: std::collections::HashMap<String, Vec<MetricPoint>> =
+        std::collections::HashMap::new();
+
+    for metric_name in &metric_names {
+        let pts = match state.storage.query(&MetricQuery {
+            agent_id: agent_id.clone(),
+            metric_name: metric_name.clone(),
+            from: from_time,
+            to: to_time,
+        }) {
+            Ok(dps) => dps
+                .into_iter()
+                .map(|dp| MetricPoint {
+                    t: dp.timestamp.timestamp(),
+                    v: dp.value,
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, metric = %metric_name, agent_id = %agent_id, "Failed to query metric series");
+                vec![]
+            }
+        };
+        series.insert(metric_name.clone(), pts);
+    }
+
+    let resp = CloudInstanceMetricsResponse {
+        instance_id: instance.instance_id,
+        instance_name: instance.instance_name,
+        series,
+    };
+    success_response(StatusCode::OK, &trace_id, resp)
+}
+
+// ─── 所有实例指标图表（并行数组格式）────────────────────────────────────────────
+
+/// 图表中单个实例的元信息（与 labels / series 数组下标一一对应）
+#[derive(Serialize, ToSchema)]
+struct CloudInstanceChartMeta {
+    /// 系统雪花ID（cloud_instances 表主键）
+    #[schema(example = "1234567890123456789")]
+    id: String,
+    /// 云厂商实例 ID（如 ins-abc123 / i-abc123456）
+    #[schema(example = "ins-abc123")]
+    instance_id: String,
+    /// 实例显示名称
+    #[schema(example = "web-server-01")]
+    instance_name: Option<String>,
+    /// 云供应商（tencent / alibaba）
+    #[schema(example = "tencent")]
+    provider: String,
+    /// 地域
+    #[schema(example = "ap-shanghai")]
+    region: String,
+    /// 云厂商原始状态（如 RUNNING / Stopped）
+    #[schema(example = "RUNNING")]
+    status: Option<String>,
+    /// 归一化状态（running / stopped / pending / error / unknown）
+    #[schema(example = "running")]
+    normalized_status: String,
+}
+
+/// 所有实例最新指标图表响应
+///
+/// 采用并行数组格式，`labels[i]`、`instances[i]`、`series[metric][i]` 三者下标对应同一台实例，
+/// 可直接传入 ECharts / Chart.js 等图表库使用。
+#[derive(Serialize, ToSchema)]
+struct CloudInstancesChartResponse {
+    /// X 轴标签列表，优先使用实例名，无名称时使用实例 ID
+    #[schema(example = json!(["web-server-01", "db-primary", "cache-01"]))]
+    labels: Vec<String>,
+    /// 实例元信息列表，与 labels 下标一一对应
+    instances: Vec<CloudInstanceChartMeta>,
+    /// 各指标 Y 轴数据：完整指标名 → 各实例最新值数组。
+    ///
+    /// - 数组长度与 `labels` 相同
+    /// - `null` 表示该实例在最近 2 天内没有该指标数据
+    /// - 常用 key：`cloud.cpu.usage` / `cloud.memory.usage` / `cloud.disk.usage`
+    #[schema(
+        value_type = Object,
+        example = json!({
+            "cloud.cpu.usage":    [45.2, 67.8, 12.3],
+            "cloud.memory.usage": [67.8, 82.1, 55.3],
+            "cloud.disk.usage":   [32.1, 45.6, 28.7]
+        })
+    )]
+    series: std::collections::HashMap<String, Vec<Option<f64>>>,
+}
+
+/// 图表查询过滤参数
+#[derive(Deserialize, utoipa::IntoParams, ToSchema)]
+#[into_params(parameter_in = Query)]
+struct CloudInstancesChartParams {
+    /// 按云供应商过滤（tencent / alibaba）
+    #[param(example = "tencent")]
+    provider: Option<String>,
+    /// 按地域过滤（如 ap-shanghai）
+    #[param(example = "ap-shanghai")]
+    region: Option<String>,
+    /// 按归一化状态过滤（running / stopped / pending / error / unknown）
+    #[param(example = "running")]
+    status: Option<String>,
+    /// 要返回的指标，逗号分隔，支持简名（`cpu` / `memory` / `disk`）或完整名。
+    /// 默认值：`cpu,memory,disk`
+    #[param(example = "cpu,memory,disk")]
+    metrics: Option<String>,
+}
+
+/// 获取所有云实例最新指标图表数据（X 轴 = 实例，Y 轴 = 指标值）
+///
+/// 返回并行数组格式，适合直接传入 ECharts / Chart.js 等图表库渲染柱状图或雷达图。
+/// 每个实例取最近 2 天内的最新一条数据点。
+#[utoipa::path(
+    get,
+    path = "/v1/cloud/instances/chart",
+    operation_id = "getCloudInstancesChart",
+    tag = "Cloud",
+    security(("bearer_auth" = [])),
+    params(CloudInstancesChartParams),
+    responses(
+        (
+            status = 200,
+            description = "所有实例最新指标并行数组（labels / instances / series 下标对应同一实例）",
+            body = CloudInstancesChartResponse
+        ),
+        (status = 401, description = "未认证", body = crate::api::ApiError)
+    )
+)]
+async fn cloud_instances_chart(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Query(params): Query<CloudInstancesChartParams>,
+) -> impl IntoResponse {
+    // 1. 加载实例列表（最多 1000 条，按供应商/地域/状态过滤）
+    let instances = match state
+        .cert_store
+        .list_cloud_instances(
+            params.provider.as_deref(),
+            params.region.as_deref(),
+            params.status.as_deref(),
+            None,
+            1000,
+            0,
+        )
+        .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to list cloud instances for chart");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
+    // 2. 确定指标列表
+    let metric_names = parse_metric_names(params.metrics.as_deref());
+    // 查最近 2 天确保跨分区都能拿到
+    let metric_names_refs: Vec<&str> = metric_names.iter().map(|s| s.as_str()).collect();
+
+    // 3. 为每个实例查最新指标值，构建并行数组
+    let mut labels: Vec<String> = Vec::with_capacity(instances.len());
+    let mut chart_instances: Vec<CloudInstanceChartMeta> = Vec::with_capacity(instances.len());
+    let mut series: std::collections::HashMap<String, Vec<Option<f64>>> = metric_names
+        .iter()
+        .map(|name| (name.clone(), Vec::with_capacity(instances.len())))
+        .collect();
+
+    for inst in &instances {
+        // 标签：优先用实例名，否则用实例ID
+        let label = inst
+            .instance_name
+            .as_deref()
+            .filter(|n| !n.is_empty())
+            .unwrap_or(&inst.instance_id)
+            .to_string();
+        labels.push(label);
+
+        chart_instances.push(CloudInstanceChartMeta {
+            id: inst.id.clone(),
+            instance_id: inst.instance_id.clone(),
+            instance_name: inst.instance_name.clone(),
+            provider: inst.provider.clone(),
+            region: inst.region.clone(),
+            status: inst.status.clone(),
+            normalized_status: normalize_cloud_instance_status(inst.status.as_deref())
+                .to_string(),
+        });
+
+        // 查该实例最新指标
+        let agent_id = format!("cloud:{}:{}", inst.provider, inst.instance_id);
+        let latest = state
+            .storage
+            .query_latest_metrics_for_agent(&agent_id, &metric_names_refs, 2)
+            .unwrap_or_default();
+
+        let latest_map: std::collections::HashMap<&str, f64> = latest
+            .iter()
+            .map(|dp| (dp.metric_name.as_str(), dp.value))
+            .collect();
+
+        for name in &metric_names {
+            let val = latest_map.get(name.as_str()).copied();
+            if let Some(vec) = series.get_mut(name) {
+                vec.push(val);
+            }
+        }
+    }
+
+    let resp = CloudInstancesChartResponse {
+        labels,
+        instances: chart_instances,
+        series,
+    };
+    success_response(StatusCode::OK, &trace_id, resp)
+}
+
 /// 注册云API路由
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -1496,5 +1887,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(test_cloud_account_connection))
         .routes(routes!(trigger_cloud_account_collection))
         .routes(routes!(list_cloud_instances))
+        .routes(routes!(cloud_instances_chart))
         .routes(routes!(get_cloud_instance_detail))
+        .routes(routes!(cloud_instance_metrics))
 }

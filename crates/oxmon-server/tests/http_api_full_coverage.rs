@@ -4,16 +4,14 @@ use axum::http::StatusCode;
 use common::{
     add_whitelist_agent, assert_err_envelope, assert_ok_envelope, build_test_context,
     encrypt_password_with_state, ensure_cert_domain_with_result, login_and_get_token,
-    make_json_body, request_json, request_no_body,
+    make_json_body, must_ok, must_some, request_json, request_no_body,
 };
 use oxmon_storage::StorageEngine;
 use serde_json::json;
 
 #[tokio::test]
 async fn health_should_return_ok_envelope() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let (status, body, trace) = request_no_body(&ctx.app, "GET", "/v1/health", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
@@ -24,9 +22,7 @@ async fn health_should_return_ok_envelope() {
 
 #[tokio::test]
 async fn auth_login_success_and_failure_cases() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
 
     // Success case
     let encrypted = encrypt_password_with_state(&ctx.state, "changeme");
@@ -70,9 +66,7 @@ async fn auth_login_success_and_failure_cases() {
 
 #[tokio::test]
 async fn auth_change_password_success_and_revocation() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let encrypted_current = encrypt_password_with_state(&ctx.state, "changeme");
@@ -90,10 +84,11 @@ async fn auth_change_password_success_and_revocation() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    assert!(body["err_msg"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("login"));
+    let err_msg = match body["err_msg"].as_str() {
+        Some(msg) => msg,
+        None => "",
+    };
+    assert!(err_msg.contains("login"));
 
     let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/agents", Some(&token)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -114,9 +109,7 @@ async fn auth_change_password_success_and_revocation() {
 
 #[tokio::test]
 async fn agents_and_latest_should_cover_auth_and_not_found() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/agents", None).await;
@@ -140,9 +133,7 @@ async fn agents_and_latest_should_cover_auth_and_not_found() {
 
 #[tokio::test]
 async fn metrics_alerts_and_history_should_return_paginated_data() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let _whitelist_token = add_whitelist_agent(&ctx.app, &token, "agent-metrics-1").await;
@@ -162,15 +153,15 @@ async fn metrics_alerts_and_history_should_return_paginated_data() {
             updated_at: now,
         }],
     };
-    ctx.state
-        .storage
-        .write_batch(&batch)
-        .expect("write metric batch should succeed");
-    ctx.state
-        .agent_registry
-        .lock()
-        .expect("registry lock should succeed")
-        .update_agent("agent-metrics-1");
+    must_ok(
+        ctx.state.storage.write_batch(&batch),
+        "write metric batch should succeed",
+    );
+    must_ok(
+        ctx.state.agent_registry.lock(),
+        "registry lock should succeed",
+    )
+    .update_agent("agent-metrics-1");
 
     let (status, body, _) = request_no_body(
         &ctx.app,
@@ -181,9 +172,10 @@ async fn metrics_alerts_and_history_should_return_paginated_data() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let items = body["data"]["items"]
-        .as_array()
-        .expect("data.items should be array");
+    let items = must_some(
+        body["data"]["items"].as_array(),
+        "data.items should be array",
+    );
     assert!(!items.is_empty());
     assert!(items[0]["labels"].is_object());
 
@@ -200,9 +192,7 @@ async fn metrics_alerts_and_history_should_return_paginated_data() {
 
 #[tokio::test]
 async fn whitelist_endpoints_should_cover_sensitive_field_and_crud_paths() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let (status, body, _) = request_json(
@@ -219,10 +209,7 @@ async fn whitelist_endpoints_should_cover_sensitive_field_and_crud_paths() {
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_ok_envelope(&body);
-    let id = body["data"]["id"]
-        .as_str()
-        .expect("id should exist")
-        .to_string();
+    let id = must_some(body["data"]["id"].as_str(), "id should exist").to_string();
 
     let (status, body, _) = request_json(
         &ctx.app,
@@ -244,9 +231,10 @@ async fn whitelist_endpoints_should_cover_sensitive_field_and_crud_paths() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let items = body["data"]["items"]
-        .as_array()
-        .expect("data.items should be array");
+    let items = must_some(
+        body["data"]["items"].as_array(),
+        "data.items should be array",
+    );
     assert!(!items.is_empty());
     assert!(items[0].get("token").is_some());
     assert!(items[0]["token"].is_null());
@@ -296,9 +284,7 @@ async fn whitelist_endpoints_should_cover_sensitive_field_and_crud_paths() {
 
 #[tokio::test]
 async fn certificate_endpoints_should_cover_query_and_crud_paths() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let (domain_id, cert_id) = ensure_cert_domain_with_result(&ctx, "seed.example.com").await;
@@ -338,10 +324,7 @@ async fn certificate_endpoints_should_cover_query_and_crud_paths() {
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_ok_envelope(&body);
-    let created_id = body["data"]["id"]
-        .as_str()
-        .expect("id should exist")
-        .to_string();
+    let created_id = must_some(body["data"]["id"].as_str(), "id should exist").to_string();
 
     let (status, body, _) = request_json(
         &ctx.app,
@@ -448,9 +431,7 @@ async fn certificate_endpoints_should_cover_query_and_crud_paths() {
 
 #[tokio::test]
 async fn certificate_list_should_default_to_20_when_pagination_missing() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     for index in 0..25 {
@@ -461,17 +442,13 @@ async fn certificate_list_should_default_to_20_when_pagination_missing() {
         request_no_body(&ctx.app, "GET", "/v1/certificates", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let items = body["data"]["items"]
-        .as_array()
-        .expect("items should be array");
+    let items = must_some(body["data"]["items"].as_array(), "items should be array");
     assert_eq!(items.len(), 20);
 }
 
 #[tokio::test]
 async fn dictionary_endpoints_should_cover_crud_paths() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     // List types (initially empty)
@@ -479,9 +456,7 @@ async fn dictionary_endpoints_should_cover_crud_paths() {
         request_no_body(&ctx.app, "GET", "/v1/dictionaries/types", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let types = body["data"]["items"]
-        .as_array()
-        .expect("items should be array");
+    let types = must_some(body["data"]["items"].as_array(), "items should be array");
     assert!(types.is_empty());
 
     // Create a dictionary item
@@ -500,10 +475,7 @@ async fn dictionary_endpoints_should_cover_crud_paths() {
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_ok_envelope(&body);
-    let item_id = body["data"]["id"]
-        .as_str()
-        .expect("id should exist")
-        .to_string();
+    let item_id = must_some(body["data"]["id"].as_str(), "id should exist").to_string();
     // 注意：创建操作现在只返回ID，完整数据需要通过GET获取
 
     // Create second item of same type
@@ -571,18 +543,14 @@ async fn dictionary_endpoints_should_cover_crud_paths() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let items = body["data"]["items"]
-        .as_array()
-        .expect("items should be array");
+    let items = must_some(body["data"]["items"].as_array(), "items should be array");
     assert_eq!(items.len(), 2);
 
     // List types again (should have 1 type, with auto-created dict_type_label)
     let (status, body, _) =
         request_no_body(&ctx.app, "GET", "/v1/dictionaries/types", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
-    let types = body["data"]["items"]
-        .as_array()
-        .expect("items should be array");
+    let types = must_some(body["data"]["items"].as_array(), "items should be array");
     assert_eq!(types.len(), 1);
     assert_eq!(types[0]["dict_type"], "channel_type");
     assert_eq!(types[0]["dict_type_label"], "channel_type"); // auto-ensured, label defaults to dict_type
@@ -728,9 +696,7 @@ async fn dictionary_endpoints_should_cover_crud_paths() {
 
 #[tokio::test]
 async fn system_config_endpoints_should_cover_crud_paths() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     // List (initially empty)
@@ -738,9 +704,7 @@ async fn system_config_endpoints_should_cover_crud_paths() {
         request_no_body(&ctx.app, "GET", "/v1/system/configs", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    let items = body["data"]["items"]
-        .as_array()
-        .expect("items should be array");
+    let items = must_some(body["data"]["items"].as_array(), "items should be array");
     assert!(items.is_empty());
 
     // Create a runtime system config
@@ -760,10 +724,7 @@ async fn system_config_endpoints_should_cover_crud_paths() {
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_ok_envelope(&body);
-    let config_id = body["data"]["id"]
-        .as_str()
-        .expect("id should exist")
-        .to_string();
+    let config_id = must_some(body["data"]["id"].as_str(), "id should exist").to_string();
     // 注意：创建操作现在只返回ID，完整数据需要通过GET获取
 
     // Create duplicate config_key should fail
@@ -885,10 +846,7 @@ async fn system_config_endpoints_should_cover_crud_paths() {
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_ok_envelope(&body);
-    let sms_id = body["data"]["id"]
-        .as_str()
-        .expect("id should exist")
-        .to_string();
+    let sms_id = must_some(body["data"]["id"].as_str(), "id should exist").to_string();
     // 注意：创建操作现在只返回ID，完整数据需要通过GET获取
 
     // Delete
@@ -929,9 +887,7 @@ async fn system_config_endpoints_should_cover_crud_paths() {
 
 #[tokio::test]
 async fn notification_log_endpoints_should_support_query_and_summary() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     // Empty result
@@ -945,8 +901,10 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
     assert_eq!(body["data"]["total"], 0);
-    let items: Vec<serde_json::Value> =
-        serde_json::from_value(body["data"]["items"].clone()).unwrap();
+    let items: Vec<serde_json::Value> = must_ok(
+        serde_json::from_value(body["data"]["items"].clone()),
+        "items should decode",
+    );
     assert!(items.is_empty());
 
     // Insert test logs directly via cert_store
@@ -974,11 +932,10 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
         api_message_id: None,
         api_error_code: None,
     };
-    ctx.state
-        .cert_store
-        .insert_notification_log(&log1)
-        .await
-        .unwrap();
+    must_ok(
+        ctx.state.cert_store.insert_notification_log(&log1).await,
+        "insert notification log1 should succeed",
+    );
 
     let log2 = oxmon_storage::NotificationLogRow {
         id: oxmon_common::id::next_id(),
@@ -1005,11 +962,10 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
         api_message_id: None,
         api_error_code: None,
     };
-    ctx.state
-        .cert_store
-        .insert_notification_log(&log2)
-        .await
-        .unwrap();
+    must_ok(
+        ctx.state.cert_store.insert_notification_log(&log2).await,
+        "insert notification log2 should succeed",
+    );
 
     // Query all
     let (status, body, _) =
@@ -1028,8 +984,10 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["total"], 1);
-    let items: Vec<serde_json::Value> =
-        serde_json::from_value(body["data"]["items"].clone()).unwrap();
+    let items: Vec<serde_json::Value> = must_ok(
+        serde_json::from_value(body["data"]["items"].clone()),
+        "items should decode",
+    );
     assert_eq!(items[0]["channel_type"], "email");
 
     // Filter by status
@@ -1042,8 +1000,10 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["total"], 1);
-    let items: Vec<serde_json::Value> =
-        serde_json::from_value(body["data"]["items"].clone()).unwrap();
+    let items: Vec<serde_json::Value> = must_ok(
+        serde_json::from_value(body["data"]["items"].clone()),
+        "items should decode",
+    );
     assert_eq!(items[0]["status"], "failed");
     assert_eq!(items[0]["error_message"], "connection timeout");
 
@@ -1108,9 +1068,7 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
 
 #[tokio::test]
 async fn notification_channel_config_get_by_id_should_work() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let now = chrono::Utc::now();
@@ -1125,12 +1083,10 @@ async fn notification_channel_config_get_by_id_should_work() {
         created_at: now,
         updated_at: now,
     };
-    let inserted = ctx
-        .state
-        .cert_store
-        .insert_notification_channel(&row)
-        .await
-        .expect("insert notification channel should succeed");
+    let inserted = must_ok(
+        ctx.state.cert_store.insert_notification_channel(&row).await,
+        "insert notification channel should succeed",
+    );
 
     let (status, body, _) = request_no_body(
         &ctx.app,
@@ -1177,9 +1133,7 @@ async fn notification_channel_config_get_by_id_should_work() {
 
 #[tokio::test]
 async fn cloud_account_create_and_get_should_normalize_regions_and_default_interval() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let (status, body, _) = request_json(
@@ -1201,10 +1155,7 @@ async fn cloud_account_create_and_get_should_normalize_regions_and_default_inter
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_ok_envelope(&body);
-    let id = body["data"]["id"]
-        .as_str()
-        .expect("id should exist")
-        .to_string();
+    let id = must_some(body["data"]["id"].as_str(), "id should exist").to_string();
     assert_eq!(body["data"]["config"]["regions"], json!(["ap-guangzhou"]));
     assert_eq!(
         body["data"]["config"]["default_region"],
@@ -1231,179 +1182,46 @@ async fn cloud_account_create_and_get_should_normalize_regions_and_default_inter
 
 #[tokio::test]
 async fn dashboard_overview_should_include_cloud_resource_summary() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let now = chrono::Utc::now();
-    ctx.state
-        .cert_store
-        .insert_system_config(&oxmon_storage::SystemConfigRow {
-            id: oxmon_common::id::next_id(),
-            config_key: "cloud_tencent_dashboard".to_string(),
-            config_type: "cloud_account".to_string(),
-            provider: Some("tencent".to_string()),
-            display_name: "Cloud Dashboard".to_string(),
-            description: None,
-            config_json: r#"{"secret_id":"sid","secret_key":"skey","regions":["ap-guangzhou"]}"#
-                .to_string(),
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-        })
-        .await
-        .expect("insert cloud account should succeed");
+    must_ok(
+        ctx.state
+            .cert_store
+            .insert_system_config(&oxmon_storage::SystemConfigRow {
+                id: oxmon_common::id::next_id(),
+                config_key: "cloud_tencent_dashboard".to_string(),
+                config_type: "cloud_account".to_string(),
+                provider: Some("tencent".to_string()),
+                display_name: "Cloud Dashboard".to_string(),
+                description: None,
+                config_json:
+                    r#"{"secret_id":"sid","secret_key":"skey","regions":["ap-guangzhou"]}"#
+                        .to_string(),
+                enabled: true,
+                created_at: now,
+                updated_at: now,
+            })
+            .await,
+        "insert cloud account should succeed",
+    );
 
     let now_ts = now.timestamp();
-    ctx.state
-        .cert_store
-        .upsert_cloud_instance(&oxmon_storage::CloudInstanceRow {
-            id: String::new(),
-            instance_id: "ins-dashboard-1".to_string(),
-            instance_name: Some("Dashboard-1".to_string()),
-            provider: "tencent".to_string(),
-            account_config_key: "cloud_tencent_dashboard".to_string(),
-            region: "ap-guangzhou".to_string(),
-            public_ip: None,
-            private_ip: None,
-            os: None,
-            status: Some("RUNNING".to_string()),
-            last_seen_at: now_ts,
-            created_at: now_ts,
-            updated_at: now_ts,
-            instance_type: None,
-            cpu_cores: None,
-            memory_gb: None,
-            disk_gb: None,
-            created_time: None,
-            expired_time: None,
-            charge_type: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_group_ids: None,
-            zone: None,
-            internet_max_bandwidth: None,
-            ipv6_addresses: None,
-            eip_allocation_id: None,
-            internet_charge_type: None,
-            image_id: None,
-            hostname: None,
-            description: None,
-            gpu: None,
-            io_optimized: None,
-            latest_operation: None,
-            latest_operation_state: None,
-            tags: None,
-            project_id: None,
-            resource_group_id: None,
-            auto_renew_flag: None,
-        })
-        .await
-        .expect("upsert cloud instance should succeed");
-    ctx.state
-        .cert_store
-        .upsert_cloud_instance(&oxmon_storage::CloudInstanceRow {
-            id: String::new(),
-            instance_id: "ins-dashboard-2".to_string(),
-            instance_name: Some("Dashboard-2".to_string()),
-            provider: "tencent".to_string(),
-            account_config_key: "cloud_tencent_dashboard".to_string(),
-            region: "ap-shanghai".to_string(),
-            public_ip: None,
-            private_ip: None,
-            os: None,
-            status: Some("STOPPED".to_string()),
-            last_seen_at: now_ts,
-            created_at: now_ts,
-            updated_at: now_ts,
-            instance_type: None,
-            cpu_cores: None,
-            memory_gb: None,
-            disk_gb: None,
-            created_time: None,
-            expired_time: None,
-            charge_type: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_group_ids: None,
-            zone: None,
-            internet_max_bandwidth: None,
-            ipv6_addresses: None,
-            eip_allocation_id: None,
-            internet_charge_type: None,
-            image_id: None,
-            hostname: None,
-            description: None,
-            gpu: None,
-            io_optimized: None,
-            latest_operation: None,
-            latest_operation_state: None,
-            tags: None,
-            project_id: None,
-            resource_group_id: None,
-            auto_renew_flag: None,
-        })
-        .await
-        .expect("upsert cloud instance should succeed");
-
-    let (status, body, _) =
-        request_no_body(&ctx.app, "GET", "/v1/dashboard/overview", Some(&token)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_ok_envelope(&body);
-    assert_eq!(body["data"]["cloud_summary"]["total_accounts"], 1);
-    assert_eq!(body["data"]["cloud_summary"]["enabled_accounts"], 1);
-    assert_eq!(body["data"]["cloud_summary"]["total_instances"], 2);
-    assert_eq!(body["data"]["cloud_summary"]["running_instances"], 1);
-    assert_eq!(body["data"]["cloud_summary"]["stopped_instances"], 1);
-    assert_eq!(body["data"]["cloud_summary"]["unknown_instances"], 0);
-}
-
-#[tokio::test]
-async fn dashboard_overview_should_count_unknown_cloud_instance_statuses() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
-    let token = login_and_get_token(&ctx.app).await;
-
-    let now = chrono::Utc::now();
-    ctx.state
-        .cert_store
-        .insert_system_config(&oxmon_storage::SystemConfigRow {
-            id: oxmon_common::id::next_id(),
-            config_key: "cloud_tencent_unknown_status".to_string(),
-            config_type: "cloud_account".to_string(),
-            provider: Some("tencent".to_string()),
-            display_name: "Cloud Unknown Status".to_string(),
-            description: None,
-            config_json: r#"{"secret_id":"sid","secret_key":"skey","regions":["ap-guangzhou"]}"#
-                .to_string(),
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-        })
-        .await
-        .expect("insert cloud account should succeed");
-
-    let now_ts = now.timestamp();
-    for (instance_id, status) in [
-        ("ins-unknown-null", None),
-        ("ins-unknown-literal", Some("unknown")),
-        ("ins-unknown-garbage", Some("mystery_status")),
-    ] {
+    must_ok(
         ctx.state
             .cert_store
             .upsert_cloud_instance(&oxmon_storage::CloudInstanceRow {
                 id: String::new(),
-                instance_id: instance_id.to_string(),
-                instance_name: Some(instance_id.to_string()),
+                instance_id: "ins-dashboard-1".to_string(),
+                instance_name: Some("Dashboard-1".to_string()),
                 provider: "tencent".to_string(),
-                account_config_key: "cloud_tencent_unknown_status".to_string(),
+                account_config_key: "cloud_tencent_dashboard".to_string(),
                 region: "ap-guangzhou".to_string(),
                 public_ip: None,
                 private_ip: None,
                 os: None,
-                status: status.map(str::to_string),
+                status: Some("RUNNING".to_string()),
                 last_seen_at: now_ts,
                 created_at: now_ts,
                 updated_at: now_ts,
@@ -1434,8 +1252,149 @@ async fn dashboard_overview_should_count_unknown_cloud_instance_statuses() {
                 resource_group_id: None,
                 auto_renew_flag: None,
             })
-            .await
-            .expect("upsert cloud instance should succeed");
+            .await,
+        "upsert cloud instance should succeed",
+    );
+    must_ok(
+        ctx.state
+            .cert_store
+            .upsert_cloud_instance(&oxmon_storage::CloudInstanceRow {
+                id: String::new(),
+                instance_id: "ins-dashboard-2".to_string(),
+                instance_name: Some("Dashboard-2".to_string()),
+                provider: "tencent".to_string(),
+                account_config_key: "cloud_tencent_dashboard".to_string(),
+                region: "ap-shanghai".to_string(),
+                public_ip: None,
+                private_ip: None,
+                os: None,
+                status: Some("STOPPED".to_string()),
+                last_seen_at: now_ts,
+                created_at: now_ts,
+                updated_at: now_ts,
+                instance_type: None,
+                cpu_cores: None,
+                memory_gb: None,
+                disk_gb: None,
+                created_time: None,
+                expired_time: None,
+                charge_type: None,
+                vpc_id: None,
+                subnet_id: None,
+                security_group_ids: None,
+                zone: None,
+                internet_max_bandwidth: None,
+                ipv6_addresses: None,
+                eip_allocation_id: None,
+                internet_charge_type: None,
+                image_id: None,
+                hostname: None,
+                description: None,
+                gpu: None,
+                io_optimized: None,
+                latest_operation: None,
+                latest_operation_state: None,
+                tags: None,
+                project_id: None,
+                resource_group_id: None,
+                auto_renew_flag: None,
+            })
+            .await,
+        "upsert cloud instance should succeed",
+    );
+
+    let (status, body, _) =
+        request_no_body(&ctx.app, "GET", "/v1/dashboard/overview", Some(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["cloud_summary"]["total_accounts"], 1);
+    assert_eq!(body["data"]["cloud_summary"]["enabled_accounts"], 1);
+    assert_eq!(body["data"]["cloud_summary"]["total_instances"], 2);
+    assert_eq!(body["data"]["cloud_summary"]["running_instances"], 1);
+    assert_eq!(body["data"]["cloud_summary"]["stopped_instances"], 1);
+    assert_eq!(body["data"]["cloud_summary"]["unknown_instances"], 0);
+}
+
+#[tokio::test]
+async fn dashboard_overview_should_count_unknown_cloud_instance_statuses() {
+    let ctx = must_ok(build_test_context().await, "test context should build");
+    let token = login_and_get_token(&ctx.app).await;
+
+    let now = chrono::Utc::now();
+    must_ok(
+        ctx.state
+            .cert_store
+            .insert_system_config(&oxmon_storage::SystemConfigRow {
+                id: oxmon_common::id::next_id(),
+                config_key: "cloud_tencent_unknown_status".to_string(),
+                config_type: "cloud_account".to_string(),
+                provider: Some("tencent".to_string()),
+                display_name: "Cloud Unknown Status".to_string(),
+                description: None,
+                config_json:
+                    r#"{"secret_id":"sid","secret_key":"skey","regions":["ap-guangzhou"]}"#
+                        .to_string(),
+                enabled: true,
+                created_at: now,
+                updated_at: now,
+            })
+            .await,
+        "insert cloud account should succeed",
+    );
+
+    let now_ts = now.timestamp();
+    for (instance_id, status) in [
+        ("ins-unknown-null", None),
+        ("ins-unknown-literal", Some("unknown")),
+        ("ins-unknown-garbage", Some("mystery_status")),
+    ] {
+        must_ok(
+            ctx.state
+                .cert_store
+                .upsert_cloud_instance(&oxmon_storage::CloudInstanceRow {
+                    id: String::new(),
+                    instance_id: instance_id.to_string(),
+                    instance_name: Some(instance_id.to_string()),
+                    provider: "tencent".to_string(),
+                    account_config_key: "cloud_tencent_unknown_status".to_string(),
+                    region: "ap-guangzhou".to_string(),
+                    public_ip: None,
+                    private_ip: None,
+                    os: None,
+                    status: status.map(str::to_string),
+                    last_seen_at: now_ts,
+                    created_at: now_ts,
+                    updated_at: now_ts,
+                    instance_type: None,
+                    cpu_cores: None,
+                    memory_gb: None,
+                    disk_gb: None,
+                    created_time: None,
+                    expired_time: None,
+                    charge_type: None,
+                    vpc_id: None,
+                    subnet_id: None,
+                    security_group_ids: None,
+                    zone: None,
+                    internet_max_bandwidth: None,
+                    ipv6_addresses: None,
+                    eip_allocation_id: None,
+                    internet_charge_type: None,
+                    image_id: None,
+                    hostname: None,
+                    description: None,
+                    gpu: None,
+                    io_optimized: None,
+                    latest_operation: None,
+                    latest_operation_state: None,
+                    tags: None,
+                    project_id: None,
+                    resource_group_id: None,
+                    auto_renew_flag: None,
+                })
+                .await,
+            "upsert cloud instance should succeed",
+        );
     }
 
     let (status, body, _) =
@@ -1449,68 +1408,66 @@ async fn dashboard_overview_should_count_unknown_cloud_instance_statuses() {
 
 #[tokio::test]
 async fn system_certs_backfill_domains_should_backfill_from_certificate_details() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let now = chrono::Utc::now();
     let domain = "manual-backfill.example.com";
-    ctx.state
-        .cert_store
-        .upsert_certificate_details(&oxmon_common::types::CertificateDetails {
-            id: oxmon_common::id::next_id(),
-            domain: domain.to_string(),
-            not_before: now - chrono::Duration::days(1),
-            not_after: now + chrono::Duration::days(30),
-            ip_addresses: vec!["1.1.1.1".to_string()],
-            issuer_cn: Some("Test CA".to_string()),
-            issuer_o: None,
-            issuer_ou: None,
-            issuer_c: None,
-            subject_alt_names: vec![domain.to_string()],
-            chain_valid: true,
-            chain_error: None,
-            last_checked: now,
-            created_at: now,
-            updated_at: now,
-            serial_number: None,
-            fingerprint_sha256: None,
-            version: None,
-            signature_algorithm: None,
-            public_key_algorithm: None,
-            public_key_bits: None,
-            subject_cn: None,
-            subject_o: None,
-            key_usage: None,
-            extended_key_usage: None,
-            is_ca: None,
-            is_wildcard: None,
-            ocsp_urls: None,
-            crl_urls: None,
-            ca_issuer_urls: None,
-            sct_count: None,
-            tls_version: None,
-            cipher_suite: None,
-            chain_depth: None,
-        })
-        .await
-        .expect("upsert certificate details should succeed");
+    must_ok(
+        ctx.state
+            .cert_store
+            .upsert_certificate_details(&oxmon_common::types::CertificateDetails {
+                id: oxmon_common::id::next_id(),
+                domain: domain.to_string(),
+                not_before: now - chrono::Duration::days(1),
+                not_after: now + chrono::Duration::days(30),
+                ip_addresses: vec!["1.1.1.1".to_string()],
+                issuer_cn: Some("Test CA".to_string()),
+                issuer_o: None,
+                issuer_ou: None,
+                issuer_c: None,
+                subject_alt_names: vec![domain.to_string()],
+                chain_valid: true,
+                chain_error: None,
+                last_checked: now,
+                created_at: now,
+                updated_at: now,
+                serial_number: None,
+                fingerprint_sha256: None,
+                version: None,
+                signature_algorithm: None,
+                public_key_algorithm: None,
+                public_key_bits: None,
+                subject_cn: None,
+                subject_o: None,
+                key_usage: None,
+                extended_key_usage: None,
+                is_ca: None,
+                is_wildcard: None,
+                ocsp_urls: None,
+                crl_urls: None,
+                ca_issuer_urls: None,
+                sct_count: None,
+                tls_version: None,
+                cipher_suite: None,
+                chain_depth: None,
+            })
+            .await,
+        "upsert certificate details should succeed",
+    );
 
     // Remove auto-backfilled domain to simulate legacy orphan data, then use manual endpoint.
-    let existing = ctx
-        .state
-        .cert_store
-        .get_domain_by_name(domain)
-        .await
-        .expect("query domain should succeed")
-        .expect("domain should exist after upsert");
-    let deleted = ctx
-        .state
-        .cert_store
-        .delete_domain(&existing.id)
-        .await
-        .expect("delete domain should succeed");
+    let existing = must_some(
+        must_ok(
+            ctx.state.cert_store.get_domain_by_name(domain).await,
+            "query domain should succeed",
+        ),
+        "domain should exist after upsert",
+    );
+    let deleted = must_ok(
+        ctx.state.cert_store.delete_domain(&existing.id).await,
+        "delete domain should succeed",
+    );
     assert!(deleted);
 
     let (status, body, _) = request_no_body(
@@ -1530,66 +1487,65 @@ async fn system_certs_backfill_domains_should_backfill_from_certificate_details(
 
 #[tokio::test]
 async fn system_certs_backfill_domains_dry_run_should_preview_without_writing() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let now = chrono::Utc::now();
     let domain = "manual-backfill-dry-run.example.com";
-    ctx.state
-        .cert_store
-        .upsert_certificate_details(&oxmon_common::types::CertificateDetails {
-            id: oxmon_common::id::next_id(),
-            domain: domain.to_string(),
-            not_before: now - chrono::Duration::days(1),
-            not_after: now + chrono::Duration::days(30),
-            ip_addresses: vec!["1.1.1.1".to_string()],
-            issuer_cn: Some("Test CA".to_string()),
-            issuer_o: None,
-            issuer_ou: None,
-            issuer_c: None,
-            subject_alt_names: vec![domain.to_string()],
-            chain_valid: true,
-            chain_error: None,
-            last_checked: now,
-            created_at: now,
-            updated_at: now,
-            serial_number: None,
-            fingerprint_sha256: None,
-            version: None,
-            signature_algorithm: None,
-            public_key_algorithm: None,
-            public_key_bits: None,
-            subject_cn: None,
-            subject_o: None,
-            key_usage: None,
-            extended_key_usage: None,
-            is_ca: None,
-            is_wildcard: None,
-            ocsp_urls: None,
-            crl_urls: None,
-            ca_issuer_urls: None,
-            sct_count: None,
-            tls_version: None,
-            cipher_suite: None,
-            chain_depth: None,
-        })
-        .await
-        .expect("upsert certificate details should succeed");
+    must_ok(
+        ctx.state
+            .cert_store
+            .upsert_certificate_details(&oxmon_common::types::CertificateDetails {
+                id: oxmon_common::id::next_id(),
+                domain: domain.to_string(),
+                not_before: now - chrono::Duration::days(1),
+                not_after: now + chrono::Duration::days(30),
+                ip_addresses: vec!["1.1.1.1".to_string()],
+                issuer_cn: Some("Test CA".to_string()),
+                issuer_o: None,
+                issuer_ou: None,
+                issuer_c: None,
+                subject_alt_names: vec![domain.to_string()],
+                chain_valid: true,
+                chain_error: None,
+                last_checked: now,
+                created_at: now,
+                updated_at: now,
+                serial_number: None,
+                fingerprint_sha256: None,
+                version: None,
+                signature_algorithm: None,
+                public_key_algorithm: None,
+                public_key_bits: None,
+                subject_cn: None,
+                subject_o: None,
+                key_usage: None,
+                extended_key_usage: None,
+                is_ca: None,
+                is_wildcard: None,
+                ocsp_urls: None,
+                crl_urls: None,
+                ca_issuer_urls: None,
+                sct_count: None,
+                tls_version: None,
+                cipher_suite: None,
+                chain_depth: None,
+            })
+            .await,
+        "upsert certificate details should succeed",
+    );
 
-    let existing = ctx
-        .state
-        .cert_store
-        .get_domain_by_name(domain)
-        .await
-        .expect("query domain should succeed")
-        .expect("domain should exist after upsert");
-    ctx.state
-        .cert_store
-        .delete_domain(&existing.id)
-        .await
-        .expect("delete domain should succeed");
+    let existing = must_some(
+        must_ok(
+            ctx.state.cert_store.get_domain_by_name(domain).await,
+            "query domain should succeed",
+        ),
+        "domain should exist after upsert",
+    );
+    must_ok(
+        ctx.state.cert_store.delete_domain(&existing.id).await,
+        "delete domain should succeed",
+    );
 
     let (status, body, _) = request_no_body(
         &ctx.app,
@@ -1606,20 +1562,16 @@ async fn system_certs_backfill_domains_dry_run_should_preview_without_writing() 
     assert_eq!(body["data"]["domains_preview"][0], domain);
 
     // dry run should not write
-    assert!(ctx
-        .state
-        .cert_store
-        .get_domain_by_name(domain)
-        .await
-        .expect("query domain should succeed")
-        .is_none());
+    assert!(must_ok(
+        ctx.state.cert_store.get_domain_by_name(domain).await,
+        "query domain should succeed",
+    )
+    .is_none());
 }
 
 #[tokio::test]
 async fn openapi_endpoints_should_be_accessible() {
-    let ctx = build_test_context()
-        .await
-        .expect("test context should build");
+    let ctx = must_ok(build_test_context().await, "test context should build");
 
     let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.json", None).await;
     assert_eq!(status, StatusCode::OK);
