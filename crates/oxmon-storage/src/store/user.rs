@@ -1,7 +1,9 @@
 use anyhow::Result;
 use chrono::Utc;
 use oxmon_common::types::User;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
+};
 
 use crate::entities::user::{self, Column, Entity};
 use crate::store::CertStore;

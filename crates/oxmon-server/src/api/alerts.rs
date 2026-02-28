@@ -101,10 +101,7 @@ async fn list_alert_rules(
     let _severity = params.severity_eq.as_deref();
     let enabled = params.enabled_eq;
 
-    let total = match state.cert_store.count_alert_rules(
-        rule_type,
-        enabled,
-    ).await {
+    let total = match state.cert_store.count_alert_rules(rule_type, enabled).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count alert rules");
@@ -118,12 +115,11 @@ async fn list_alert_rules(
         }
     };
 
-    match state.cert_store.list_alert_rules(
-        rule_type,
-        enabled,
-        limit,
-        offset,
-    ).await {
+    match state
+        .cert_store
+        .list_alert_rules(rule_type, enabled, limit, offset)
+        .await
+    {
         Ok(rules) => {
             let items: Vec<AlertRuleResponse> = rules
                 .into_iter()
@@ -296,7 +292,8 @@ async fn create_alert_rule(
     match state.cert_store.insert_alert_rule(&row).await {
         Ok(rule) => {
             if let Err(e) =
-                crate::rule_builder::reload_alert_engine(&state.cert_store, &state.alert_engine).await
+                crate::rule_builder::reload_alert_engine(&state.cert_store, &state.alert_engine)
+                    .await
             {
                 tracing::error!(error = %e, "Failed to reload alert engine after rule creation");
             }
@@ -379,7 +376,10 @@ async fn update_alert_rule(
         severity: req.severity.unwrap_or(existing.severity),
         enabled: req.enabled.unwrap_or(existing.enabled),
         config_json: req.config_json.unwrap_or(existing.config_json),
-        silence_secs: req.silence_secs.map(|s| s as i64).unwrap_or(existing.silence_secs),
+        silence_secs: req
+            .silence_secs
+            .map(|s| s as i64)
+            .unwrap_or(existing.silence_secs),
         source: existing.source,
         created_at: existing.created_at,
         updated_at: chrono::Utc::now(),
@@ -388,7 +388,8 @@ async fn update_alert_rule(
     match state.cert_store.update_alert_rule(&id, &merged).await {
         Ok(Some(rule)) => {
             if let Err(e) =
-                crate::rule_builder::reload_alert_engine(&state.cert_store, &state.alert_engine).await
+                crate::rule_builder::reload_alert_engine(&state.cert_store, &state.alert_engine)
+                    .await
             {
                 tracing::error!(error = %e, "Failed to reload alert engine after rule update");
             }
@@ -435,7 +436,8 @@ async fn delete_alert_rule(
     match state.cert_store.delete_alert_rule(&id).await {
         Ok(true) => {
             if let Err(e) =
-                crate::rule_builder::reload_alert_engine(&state.cert_store, &state.alert_engine).await
+                crate::rule_builder::reload_alert_engine(&state.cert_store, &state.alert_engine)
+                    .await
             {
                 tracing::error!(error = %e, "Failed to reload alert engine after rule deletion");
             }
@@ -486,10 +488,15 @@ async fn set_alert_rule_enabled(
     Path(id): Path<String>,
     Json(req): Json<EnableRequest>,
 ) -> impl IntoResponse {
-    match state.cert_store.set_alert_rule_enabled(&id, req.enabled).await {
+    match state
+        .cert_store
+        .set_alert_rule_enabled(&id, req.enabled)
+        .await
+    {
         Ok(Some(rule)) => {
             if let Err(e) =
-                crate::rule_builder::reload_alert_engine(&state.cert_store, &state.alert_engine).await
+                crate::rule_builder::reload_alert_engine(&state.cert_store, &state.alert_engine)
+                    .await
             {
                 tracing::error!(
                     error = %e,

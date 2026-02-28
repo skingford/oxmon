@@ -154,7 +154,10 @@ impl NotificationManager {
     /// 从数据库重新加载所有已启用的通知渠道。
     /// 使用 build-then-swap 模式：先构建新实例表，再整体替换。
     pub async fn reload(&self) -> anyhow::Result<()> {
-        let channels_with_recipients = self.cert_store.list_enabled_channels_with_recipients().await?;
+        let channels_with_recipients = self
+            .cert_store
+            .list_enabled_channels_with_recipients()
+            .await?;
 
         let mut new_instances = HashMap::new();
         for (row, recipients) in channels_with_recipients {
@@ -220,7 +223,17 @@ impl NotificationManager {
         let now = Utc::now();
 
         // Check silence windows from DB
-        if let Ok(windows) = self.cert_store.list_silence_windows(&SilenceWindowFilter { recurrence_eq: None }, 100, 0).await {
+        if let Ok(windows) = self
+            .cert_store
+            .list_silence_windows(
+                &SilenceWindowFilter {
+                    recurrence_eq: None,
+                },
+                100,
+                0,
+            )
+            .await
+        {
             for sw in &windows {
                 if let (Ok(start), Ok(end)) = (
                     NaiveTime::parse_from_str(&sw.start_time, "%H:%M"),
@@ -456,13 +469,27 @@ impl NotificationManager {
         let now = Utc::now();
 
         // 检查静默窗口
-        if let Ok(windows) = self.cert_store.list_silence_windows(&SilenceWindowFilter { recurrence_eq: None }, 100, 0).await {
+        if let Ok(windows) = self
+            .cert_store
+            .list_silence_windows(
+                &SilenceWindowFilter {
+                    recurrence_eq: None,
+                },
+                100,
+                0,
+            )
+            .await
+        {
             for sw in &windows {
                 if let (Ok(start), Ok(end)) = (
                     NaiveTime::parse_from_str(&sw.start_time, "%H:%M"),
                     NaiveTime::parse_from_str(&sw.end_time, "%H:%M"),
                 ) {
-                    let window = SilenceWindow { start, end, recurrence: sw.recurrence.clone() };
+                    let window = SilenceWindow {
+                        start,
+                        end,
+                        recurrence: sw.recurrence.clone(),
+                    };
                     if window.is_active(now) {
                         tracing::info!("Cert report suppressed (silence window active)");
                         return;
@@ -584,12 +611,8 @@ impl NotificationManager {
                                 recipient_count: instance.recipients.len() as i32,
                                 response: Some(resp),
                             };
-                            Self::record_send_log(
-                                &self.cert_store,
-                                &fallback_event,
-                                &ctx,
-                                &Ok(()),
-                            ).await;
+                            Self::record_send_log(&self.cert_store, &fallback_event, &ctx, &Ok(()))
+                                .await;
                         }
                         Err(e) => {
                             tracing::error!(
@@ -611,7 +634,8 @@ impl NotificationManager {
                                 &fallback_event,
                                 &ctx,
                                 &Err(anyhow::anyhow!("{e}")),
-                            ).await;
+                            )
+                            .await;
                         }
                     }
                     continue;

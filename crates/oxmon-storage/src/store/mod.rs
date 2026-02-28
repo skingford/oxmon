@@ -16,21 +16,21 @@ pub mod notification;
 pub mod user;
 
 // ---- 公开 Row 类型（从各子模块重新导出）----
+pub use agent::{AgentListFilter, AgentWhitelistFilter};
+pub use ai::AIAccountRow;
 pub use alert::{AlertRuleFilter, AlertRuleRow, AlertRuleUpdate};
+pub use cert::{CertDomainSummary, CertHealthSummary, CertStatusFilter, CertStatusSummary};
 pub use cloud::{
     CloudAccountRow, CloudAccountSummary, CloudCollectionStateRow, CloudInstanceRow,
     CloudInstanceStatusSummary,
 };
 pub use config::{SystemConfigFilter, SystemConfigRow, SystemConfigUpdate};
-pub use ai::AIAccountRow;
+pub use dictionary::DictTypeFilter;
 pub use notification::{
     ActiveAlertFilter, NotificationChannelFilter, NotificationChannelRow,
-    NotificationChannelUpdate, NotificationLogFilter, NotificationLogRow,
-    NotificationRecipientRow, SilenceWindowFilter, SilenceWindowRow,
+    NotificationChannelUpdate, NotificationLogFilter, NotificationLogRow, NotificationRecipientRow,
+    SilenceWindowFilter, SilenceWindowRow,
 };
-pub use agent::{AgentListFilter, AgentWhitelistFilter};
-pub use cert::{CertDomainSummary, CertHealthSummary, CertStatusFilter, CertStatusSummary};
-pub use dictionary::DictTypeFilter;
 
 /// 管理数据库（oxmon.db）的统一访问层。
 ///
@@ -65,7 +65,10 @@ impl CertStore {
         let token_encryptor = TokenEncryptor::load_or_create(data_dir)?;
         tracing::info!(db_url = %db_url, "Initialized cert store (SeaORM)");
 
-        Ok(Self { db, token_encryptor })
+        Ok(Self {
+            db,
+            token_encryptor,
+        })
     }
 
     /// 返回底层数据库连接引用（供子模块使用）。

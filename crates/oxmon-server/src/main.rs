@@ -16,10 +16,12 @@ use tonic::transport::Server as TonicServer;
 use tracing_subscriber::EnvFilter;
 
 use oxmon_server::ai::scheduler::AIReportScheduler;
+use oxmon_server::ai_seed;
 use oxmon_server::app;
 use oxmon_server::cert::scheduler::CertCheckScheduler;
 use oxmon_server::channel_seed;
 use oxmon_server::cloud::scheduler::CloudCheckScheduler;
+use oxmon_server::cloud_seed;
 use oxmon_server::config::{self, SeedFile};
 use oxmon_server::grpc;
 use oxmon_server::rule_builder;
@@ -436,6 +438,21 @@ async fn run_server(config_path: &str) -> Result<()> {
     // Seed default runtime settings (notification aggregation window, log retention days)
     if let Err(e) = runtime_seed::init_default_runtime_settings(&cert_store).await {
         tracing::error!(error = %e, "Failed to initialize default runtime settings");
+    }
+
+    // Seed default AI accounts (GLM/Codex, credentials cleared, disabled by default)
+    if let Err(e) = ai_seed::init_default_ai_accounts(&cert_store).await {
+        tracing::error!(error = %e, "Failed to initialize default AI accounts");
+    }
+
+    // Seed default cloud accounts (Tencent/Alibaba, credentials cleared, disabled by default)
+    if let Err(e) = cloud_seed::init_default_cloud_accounts(
+        &cert_store,
+        config.cloud_check.default_account_collection_interval_secs,
+    )
+    .await
+    {
+        tracing::error!(error = %e, "Failed to initialize default cloud accounts");
     }
 
     // Build notification manager backed by DB

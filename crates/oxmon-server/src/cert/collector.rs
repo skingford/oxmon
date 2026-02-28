@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use hickory_resolver::TokioResolver;
 use oxmon_common::types::CertificateDetails;
 use rustls::pki_types::ServerName;
 use sha2::{Digest, Sha256};
@@ -9,7 +10,6 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
-use hickory_resolver::TokioResolver;
 use x509_parser::oid_registry;
 use x509_parser::prelude::*;
 

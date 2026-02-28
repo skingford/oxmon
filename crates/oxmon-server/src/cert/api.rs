@@ -750,7 +750,11 @@ async fn check_all_domains(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    let domains = match state.cert_store.query_domains(Some(true), None, 10000, 0).await {
+    let domains = match state
+        .cert_store
+        .query_domains(Some(true), None, 10000, 0)
+        .await
+    {
         Ok(d) => d,
         Err(e) => {
             tracing::error!(error = %e, "Query failed");

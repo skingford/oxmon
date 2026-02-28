@@ -786,7 +786,9 @@ pub async fn init_from_seed_file(cert_store: &CertStore, seed_path: &str) -> any
                 updated_at: now,
             })
             .collect();
-        let types_inserted = cert_store.batch_insert_dictionary_types(&type_items).await?;
+        let types_inserted = cert_store
+            .batch_insert_dictionary_types(&type_items)
+            .await?;
         tracing::info!(
             total = type_items.len(),
             types_inserted,

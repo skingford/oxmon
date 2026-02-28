@@ -234,7 +234,11 @@ impl NotificationChannel for WeixinChannel {
             response.api_error_code = result.error_code.clone();
             recipient_results.push(RecipientResult {
                 recipient: url.to_string(),
-                status: if result.error.is_none() { "success".to_string() } else { "failed".to_string() },
+                status: if result.error.is_none() {
+                    "success".to_string()
+                } else {
+                    "failed".to_string()
+                },
                 error: result.error.as_ref().map(|e| e.to_string()),
             });
         }

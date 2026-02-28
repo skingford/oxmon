@@ -50,9 +50,22 @@ impl CertReportRenderer {
             .filter(|d| d.severity == "warning")
             .count();
 
-        let (title, date_label, total_label, alert_label, critical_label, warning_label,
-             domain_label, days_label, expiry_label, severity_label, issuer_label,
-             section_title, footer_desc, generated_label) = if locale == "zh-CN" {
+        let (
+            title,
+            date_label,
+            total_label,
+            alert_label,
+            critical_label,
+            warning_label,
+            domain_label,
+            days_label,
+            expiry_label,
+            severity_label,
+            issuer_label,
+            section_title,
+            footer_desc,
+            generated_label,
+        ) = if locale == "zh-CN" {
             (
                 "证书告警报告",
                 "报告日期",
@@ -163,7 +176,8 @@ impl CertReportRenderer {
         sorted.sort_by(|a, b| {
             let a_pri = if a.severity == "critical" { 0 } else { 1 };
             let b_pri = if b.severity == "critical" { 0 } else { 1 };
-            a_pri.cmp(&b_pri)
+            a_pri
+                .cmp(&b_pri)
                 .then(a.days_until_expiry.cmp(&b.days_until_expiry))
         });
 
@@ -172,16 +186,21 @@ impl CertReportRenderer {
             let (badge_class, badge_text) = match item.severity.as_str() {
                 "critical" => (
                     "is-danger",
-                    if locale == "zh-CN" { "严重" } else { "Critical" },
+                    if locale == "zh-CN" {
+                        "严重"
+                    } else {
+                        "Critical"
+                    },
                 ),
                 "warning" => (
                     "is-warn",
-                    if locale == "zh-CN" { "警告" } else { "Warning" },
+                    if locale == "zh-CN" {
+                        "警告"
+                    } else {
+                        "Warning"
+                    },
                 ),
-                _ => (
-                    "is-info",
-                    if locale == "zh-CN" { "提示" } else { "Info" },
-                ),
+                _ => ("is-info", if locale == "zh-CN" { "提示" } else { "Info" }),
             };
 
             let days_display = if item.days_until_expiry < 0 {
@@ -253,8 +272,18 @@ impl CertReportRenderer {
             .filter(|d| d.severity == "warning")
             .count();
 
-        let (title, date_label, total_label, alert_label, critical_label, warning_label,
-             domain_label, days_label, expiry_label, expired_tag) = if locale == "zh-CN" {
+        let (
+            title,
+            date_label,
+            total_label,
+            alert_label,
+            critical_label,
+            warning_label,
+            domain_label,
+            days_label,
+            expiry_label,
+            expired_tag,
+        ) = if locale == "zh-CN" {
             (
                 "🔒 证书告警报告",
                 "报告日期",
@@ -304,7 +333,8 @@ impl CertReportRenderer {
         sorted.sort_by(|a, b| {
             let a_pri = if a.severity == "critical" { 0 } else { 1 };
             let b_pri = if b.severity == "critical" { 0 } else { 1 };
-            a_pri.cmp(&b_pri)
+            a_pri
+                .cmp(&b_pri)
                 .then(a.days_until_expiry.cmp(&b.days_until_expiry))
         });
 
@@ -359,7 +389,8 @@ impl CertReportRenderer {
         sorted.sort_by(|a, b| {
             let a_pri = if a.severity == "critical" { 0 } else { 1 };
             let b_pri = if b.severity == "critical" { 0 } else { 1 };
-            a_pri.cmp(&b_pri)
+            a_pri
+                .cmp(&b_pri)
                 .then(a.days_until_expiry.cmp(&b.days_until_expiry))
         });
 

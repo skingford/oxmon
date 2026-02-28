@@ -33,4 +33,3 @@ END
 WHERE
     auto_renew_flag IS NOT NULL;
 "#;
-

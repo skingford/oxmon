@@ -5,7 +5,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use rand::Rng;
+use rand::RngExt;
 use std::fmt::Write;
 use std::time::Instant;
 
@@ -26,7 +26,7 @@ impl std::ops::Deref for TraceId {
 
 /// Generate a 16-character hex trace ID (8 random bytes).
 fn generate_trace_id() -> String {
-    let bytes: [u8; 8] = rand::thread_rng().gen();
+    let bytes: [u8; 8] = rand::rng().random();
     let mut s = String::with_capacity(16);
     for b in bytes {
         let _ = write!(s, "{b:02x}");

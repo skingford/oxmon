@@ -315,8 +315,12 @@ async fn list_agents(
     let filter = oxmon_storage::AgentListFilter {
         agent_id_contains: params.agent_id_contains.clone(),
         status_eq: params.status_eq.clone(),
-        last_seen_gte: params.last_seen_gte.and_then(|v| chrono::DateTime::from_timestamp(v as i64, 0)),
-        last_seen_lte: params.last_seen_lte.and_then(|v| chrono::DateTime::from_timestamp(v as i64, 0)),
+        last_seen_gte: params
+            .last_seen_gte
+            .and_then(|v| chrono::DateTime::from_timestamp(v as i64, 0)),
+        last_seen_lte: params
+            .last_seen_lte
+            .and_then(|v| chrono::DateTime::from_timestamp(v as i64, 0)),
     };
 
     // 获取总数
@@ -1162,8 +1166,10 @@ async fn metric_sources(
         if has_keyword {
             agent_filter.agent_id_contains = Some(keyword.to_string());
         }
-        agent_filter.last_seen_gte = last_seen_gte_ts.and_then(|v| chrono::DateTime::from_timestamp(v, 0));
-        agent_filter.last_seen_lte = last_seen_lte_ts.and_then(|v| chrono::DateTime::from_timestamp(v, 0));
+        agent_filter.last_seen_gte =
+            last_seen_gte_ts.and_then(|v| chrono::DateTime::from_timestamp(v, 0));
+        agent_filter.last_seen_lte =
+            last_seen_lte_ts.and_then(|v| chrono::DateTime::from_timestamp(v, 0));
 
         let agents = match state
             .cert_store
@@ -1212,14 +1218,18 @@ async fn metric_sources(
     }
 
     if include_cloud {
-        let cloud_rows = match state.cert_store.list_cloud_instances(
-            params.provider_eq.as_deref(),
-            params.region_eq.as_deref(),
-            status_filter.as_deref(),
-            if has_keyword { Some(keyword) } else { None },
-            10000,
-            0,
-        ).await {
+        let cloud_rows = match state
+            .cert_store
+            .list_cloud_instances(
+                params.provider_eq.as_deref(),
+                params.region_eq.as_deref(),
+                status_filter.as_deref(),
+                if has_keyword { Some(keyword) } else { None },
+                10000,
+                0,
+            )
+            .await
+        {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(error = %e, "Failed to list cloud instances for metric sources");

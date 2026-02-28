@@ -22,7 +22,7 @@ use oxmon_storage::CertStore;
 use rsa::{Oaep, RsaPublicKey};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use sha2::Sha256;
+use rsa::sha2::Sha256;
 use std::fmt::Display;
 use std::sync::{Arc, Mutex, OnceLock};
 use tempfile::TempDir;
@@ -209,8 +209,8 @@ pub fn encrypt_password(public_key: &RsaPublicKey, password: &str) -> String {
         "password": password,
         "timestamp": Utc::now().timestamp(),
     });
-    let padding = Oaep::new::<Sha256>();
-    let mut rng = rand::thread_rng();
+    let padding = Oaep::<Sha256>::new();
+    let mut rng = rand::rng();
     let ciphertext = must_ok(
         public_key.encrypt(&mut rng, padding, payload.to_string().as_bytes()),
         "RSA encryption should succeed",

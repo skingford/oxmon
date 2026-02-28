@@ -51,10 +51,7 @@ fn model_to_dict_type(m: dictionary_type::Model) -> DictionaryType {
 impl CertStore {
     // ---- system_dictionaries CRUD ----
 
-    pub async fn insert_dictionary(
-        &self,
-        req: &CreateDictionaryRequest,
-    ) -> Result<DictionaryItem> {
+    pub async fn insert_dictionary(&self, req: &CreateDictionaryRequest) -> Result<DictionaryItem> {
         let id = oxmon_common::id::next_id();
         let now = Utc::now().fixed_offset();
         let sort_order = req.sort_order.unwrap_or(0);
@@ -122,8 +119,7 @@ impl CertStore {
         if dict_types.is_empty() {
             return Ok(vec![]);
         }
-        let mut q = DictEntity::find()
-            .filter(DictCol::DictType.is_in(dict_types.to_vec()));
+        let mut q = DictEntity::find().filter(DictCol::DictType.is_in(dict_types.to_vec()));
         if enabled_only {
             q = q.filter(DictCol::Enabled.eq(true));
         }
@@ -178,7 +174,10 @@ impl CertStore {
              WHERE 1=1",
         );
         if let Some(v) = dict_type_contains {
-            let escaped = v.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            let escaped = v
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
             sql.push_str(&format!(" AND sd.dict_type LIKE '%{escaped}%' ESCAPE '\\'"));
         }
         sql.push_str(&format!(
@@ -193,7 +192,6 @@ impl CertStore {
             .await?;
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
-
             let dict_type: String = row.try_get("", "dict_type")?;
             let count: i64 = row.try_get("", "cnt")?;
             let label: Option<String> = row.try_get("", "dict_type_label")?;
@@ -271,8 +269,7 @@ impl CertStore {
         if dict_types.is_empty() {
             return Ok(0);
         }
-        let mut q = DictEntity::find()
-            .filter(DictCol::DictType.is_in(dict_types.to_vec()));
+        let mut q = DictEntity::find().filter(DictCol::DictType.is_in(dict_types.to_vec()));
         if enabled_only {
             q = q.filter(DictCol::Enabled.eq(true));
         }
@@ -292,25 +289,20 @@ impl CertStore {
         key_contains: Option<&str>,
         label_contains: Option<&str>,
     ) -> Result<u64> {
-        self.count_dictionaries_by_types(
-            &[dict_type],
-            enabled_only,
-            key_contains,
-            label_contains,
-        )
-        .await
+        self.count_dictionaries_by_types(&[dict_type], enabled_only, key_contains, label_contains)
+            .await
     }
 
-    pub async fn count_all_dict_types(
-        &self,
-        dict_type_contains: Option<&str>,
-    ) -> Result<u64> {
+    pub async fn count_all_dict_types(&self, dict_type_contains: Option<&str>) -> Result<u64> {
         use sea_orm::{ConnectionTrait, Statement};
         let mut sql = String::from(
             "SELECT COUNT(DISTINCT dict_type) AS cnt FROM system_dictionaries WHERE 1=1",
         );
         if let Some(v) = dict_type_contains {
-            let escaped = v.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            let escaped = v
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
             sql.push_str(&format!(" AND dict_type LIKE '%{escaped}%' ESCAPE '\\'"));
         }
         let rows = self
@@ -321,7 +313,6 @@ impl CertStore {
             ))
             .await?;
         if let Some(row) = rows.into_iter().next() {
-
             let cnt: i64 = row.try_get("", "cnt")?;
             Ok(cnt as u64)
         } else {
@@ -567,7 +558,10 @@ impl CertStore {
     }
 
     pub async fn ensure_dictionary_type(&self, dict_type: &str) -> Result<()> {
-        let exists = DtEntity::find_by_id(dict_type).one(self.db()).await?.is_some();
+        let exists = DtEntity::find_by_id(dict_type)
+            .one(self.db())
+            .await?
+            .is_some();
         if !exists {
             let now = Utc::now().fixed_offset();
             let am = dictionary_type::ActiveModel {

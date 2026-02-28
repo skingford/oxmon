@@ -102,8 +102,7 @@ pub struct CloudAccountSummary {
 }
 
 fn model_to_account(m: cloud_account::Model) -> CloudAccountRow {
-    let regions: Vec<String> =
-        serde_json::from_str(&m.regions).unwrap_or_default();
+    let regions: Vec<String> = serde_json::from_str(&m.regions).unwrap_or_default();
     CloudAccountRow {
         id: m.id,
         config_key: m.config_key,
@@ -130,7 +129,9 @@ fn model_to_instance(m: cloud_instance::Model) -> CloudInstanceRow {
         .expired_time
         .as_deref()
         .and_then(|s| s.parse::<i64>().ok());
-    let auto_renew_flag = m.auto_renew_flag.map(|b| if b { "1".to_string() } else { "0".to_string() });
+    let auto_renew_flag = m
+        .auto_renew_flag
+        .map(|b| if b { "1".to_string() } else { "0".to_string() });
     CloudInstanceRow {
         id: m.id,
         instance_id: m.instance_id,
@@ -340,16 +341,14 @@ impl CertStore {
         };
         StateEntity::insert(am)
             .on_conflict(
-                OnConflict::column(
-                    crate::entities::cloud_collection_state::Column::ConfigKey,
-                )
-                .update_columns([
-                    crate::entities::cloud_collection_state::Column::LastCollectedAt,
-                    crate::entities::cloud_collection_state::Column::LastInstanceCount,
-                    crate::entities::cloud_collection_state::Column::LastError,
-                    crate::entities::cloud_collection_state::Column::UpdatedAt,
-                ])
-                .to_owned(),
+                OnConflict::column(crate::entities::cloud_collection_state::Column::ConfigKey)
+                    .update_columns([
+                        crate::entities::cloud_collection_state::Column::LastCollectedAt,
+                        crate::entities::cloud_collection_state::Column::LastInstanceCount,
+                        crate::entities::cloud_collection_state::Column::LastError,
+                        crate::entities::cloud_collection_state::Column::UpdatedAt,
+                    ])
+                    .to_owned(),
             )
             .exec(self.db())
             .await?;
@@ -372,13 +371,22 @@ impl CertStore {
             }
         }
         fn opt_i32(v: Option<i32>) -> String {
-            match v { Some(n) => n.to_string(), None => "NULL".to_string() }
+            match v {
+                Some(n) => n.to_string(),
+                None => "NULL".to_string(),
+            }
         }
         fn opt_f64(v: Option<f64>) -> String {
-            match v { Some(n) => n.to_string(), None => "NULL".to_string() }
+            match v {
+                Some(n) => n.to_string(),
+                None => "NULL".to_string(),
+            }
         }
         fn opt_i64_as_str(v: Option<i64>) -> String {
-            match v { Some(n) => format!("'{n}'"), None => "NULL".to_string() }
+            match v {
+                Some(n) => format!("'{n}'"),
+                None => "NULL".to_string(),
+            }
         }
         fn opt_bool_str(s: &Option<String>) -> String {
             match s.as_deref() {
@@ -583,7 +591,6 @@ impl CertStore {
             ))
             .await?;
         if let Some(row) = rows.into_iter().next() {
-
             let total: i64 = row.try_get("", "total")?;
             let running: i64 = row.try_get("", "running")?;
             let stopped: i64 = row.try_get("", "stopped")?;
@@ -603,10 +610,7 @@ impl CertStore {
         }
     }
 
-    pub async fn get_cloud_instance_by_id(
-        &self,
-        id: &str,
-    ) -> Result<Option<CloudInstanceRow>> {
+    pub async fn get_cloud_instance_by_id(&self, id: &str) -> Result<Option<CloudInstanceRow>> {
         let model = InstEntity::find_by_id(id).one(self.db()).await?;
         Ok(model.map(model_to_instance))
     }

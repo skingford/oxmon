@@ -110,7 +110,9 @@ impl CertCheckScheduler {
                     Ok(collector) => {
                         match collector.collect(&domain.domain, domain.port as u16).await {
                             Ok(details) => {
-                                if let Err(e) = cert_store.upsert_certificate_details(&details).await {
+                                if let Err(e) =
+                                    cert_store.upsert_certificate_details(&details).await
+                                {
                                     tracing::error!(domain = %domain.domain, error = %e, "Failed to store certificate details");
                                 } else {
                                     tracing::debug!(domain = %domain.domain, "Certificate details stored");
@@ -127,7 +129,10 @@ impl CertCheckScheduler {
                 }
 
                 // 更新最后检查时间
-                if let Err(e) = cert_store.update_last_checked_at(&domain.id, Utc::now()).await {
+                if let Err(e) = cert_store
+                    .update_last_checked_at(&domain.id, Utc::now())
+                    .await
+                {
                     tracing::error!(domain = %domain.domain, error = %e, "Failed to update last_checked_at");
                 }
 
@@ -250,8 +255,9 @@ async fn evaluate_alerts_for_cert(
     notifier: &Arc<NotificationManager>,
     check_result: &oxmon_common::types::CertCheckResult,
 ) -> Option<CertAlertDetail> {
-    let locale =
-        cert_store.get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE).await;
+    let locale = cert_store
+        .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
+        .await;
 
     let mut engine = alert_engine
         .lock()

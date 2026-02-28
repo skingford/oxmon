@@ -561,10 +561,7 @@ impl CertStore {
         Ok(q.count(self.db()).await?)
     }
 
-    pub async fn get_notification_log_by_id(
-        &self,
-        id: &str,
-    ) -> Result<Option<NotificationLogRow>> {
+    pub async fn get_notification_log_by_id(&self, id: &str) -> Result<Option<NotificationLogRow>> {
         let model = LogEntity::find_by_id(id).one(self.db()).await?;
         Ok(model.map(model_to_log))
     }

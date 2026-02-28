@@ -80,7 +80,10 @@ impl CertStore {
         Ok(Entity::find_by_id(id).one(self.db()).await?.map(to_row))
     }
 
-    pub async fn get_system_config_by_key(&self, config_key: &str) -> Result<Option<SystemConfigRow>> {
+    pub async fn get_system_config_by_key(
+        &self,
+        config_key: &str,
+    ) -> Result<Option<SystemConfigRow>> {
         Ok(Entity::find()
             .filter(Column::ConfigKey.eq(config_key))
             .one(self.db())
@@ -173,7 +176,8 @@ impl CertStore {
     }
 
     fn parse_json_string(json: &str) -> Option<String> {
-        serde_json::from_str::<String>(json).ok()
+        serde_json::from_str::<String>(json)
+            .ok()
             .or_else(|| Some(json.trim_matches('"').to_owned()))
     }
 

@@ -247,7 +247,6 @@ impl CertStore {
             .query_all_raw(Statement::from_string(DbBackend::Sqlite, sql))
             .await?;
         if let Some(row) = rows.into_iter().next() {
-
             let notified_i: i32 = row.try_get("", "notified")?;
             let created_at_str: String = row.try_get("", "created_at")?;
             let updated_at_str: String = row.try_get("", "updated_at")?;

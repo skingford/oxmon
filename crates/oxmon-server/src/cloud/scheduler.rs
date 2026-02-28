@@ -192,8 +192,9 @@ impl CloudCheckScheduler {
                 Some(serde_json::to_string(&instance.tags).unwrap_or_default())
             };
 
-            if let Err(e) = self.cert_store.upsert_cloud_instance(
-                &oxmon_storage::CloudInstanceRow {
+            if let Err(e) = self
+                .cert_store
+                .upsert_cloud_instance(&oxmon_storage::CloudInstanceRow {
                     id: String::new(), // ID将由 upsert_cloud_instance 内部生成
                     instance_id: instance.instance_id.clone(),
                     instance_name: Some(instance.instance_name.clone()),
@@ -233,9 +234,8 @@ impl CloudCheckScheduler {
                     project_id: instance.project_id.clone(),
                     resource_group_id: instance.resource_group_id.clone(),
                     auto_renew_flag: instance.auto_renew_flag.clone(),
-                },
-            )
-            .await
+                })
+                .await
             {
                 tracing::error!(
                     instance_id = instance.instance_id,

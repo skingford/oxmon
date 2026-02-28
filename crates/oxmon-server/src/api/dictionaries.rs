@@ -81,7 +81,11 @@ async fn list_dict_types(
     let offset = PaginationParams::resolve_offset(params.offset);
     let dict_type_contains = params.dict_type_contains.as_deref();
 
-    let total = match state.cert_store.count_all_dict_types(dict_type_contains).await {
+    let total = match state
+        .cert_store
+        .count_all_dict_types(dict_type_contains)
+        .await
+    {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count dictionary types");
@@ -149,12 +153,16 @@ async fn list_by_types_all(
     let key_contains = query.key_contains.as_deref();
     let label_contains = query.label_contains.as_deref();
 
-    let total = match state.cert_store.count_dictionaries_by_types(
-        &dict_types,
-        query.enabled_only,
-        key_contains,
-        label_contains,
-    ).await {
+    let total = match state
+        .cert_store
+        .count_dictionaries_by_types(
+            &dict_types,
+            query.enabled_only,
+            key_contains,
+            label_contains,
+        )
+        .await
+    {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count dictionaries by types");
@@ -168,14 +176,18 @@ async fn list_by_types_all(
         }
     };
 
-    match state.cert_store.list_dictionaries_by_types(
-        &dict_types,
-        query.enabled_only,
-        key_contains,
-        label_contains,
-        limit,
-        offset,
-    ).await {
+    match state
+        .cert_store
+        .list_dictionaries_by_types(
+            &dict_types,
+            query.enabled_only,
+            key_contains,
+            label_contains,
+            limit,
+            offset,
+        )
+        .await
+    {
         Ok(items) => {
             success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
         }
@@ -251,7 +263,11 @@ async fn create_dictionary(
     Json(req): Json<CreateDictionaryRequest>,
 ) -> impl IntoResponse {
     // Auto-ensure dictionary type exists
-    if let Err(e) = state.cert_store.ensure_dictionary_type(&req.dict_type).await {
+    if let Err(e) = state
+        .cert_store
+        .ensure_dictionary_type(&req.dict_type)
+        .await
+    {
         tracing::warn!(error = %e, dict_type = %req.dict_type, "Failed to auto-ensure dictionary type");
     }
     match state.cert_store.insert_dictionary(&req).await {
@@ -458,7 +474,11 @@ async fn update_dict_type(
     Path(dict_type): Path<String>,
     Json(req): Json<UpdateDictionaryTypeRequest>,
 ) -> impl IntoResponse {
-    match state.cert_store.update_dictionary_type(&dict_type, &req).await {
+    match state
+        .cert_store
+        .update_dictionary_type(&dict_type, &req)
+        .await
+    {
         Ok(Some(item)) => success_id_response(StatusCode::OK, &trace_id, item.dict_type),
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,

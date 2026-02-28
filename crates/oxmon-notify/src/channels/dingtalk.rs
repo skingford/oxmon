@@ -341,7 +341,8 @@ impl NotificationChannel for DingTalkChannel {
         });
 
         let payload_json = serde_json::to_string(&payload).unwrap_or_default();
-        let request_body = crate::utils::truncate_string(&payload_json, crate::utils::MAX_BODY_LENGTH);
+        let request_body =
+            crate::utils::truncate_string(&payload_json, crate::utils::MAX_BODY_LENGTH);
         let mut response = SendResponse {
             request_body: Some(request_body),
             ..Default::default()
@@ -359,7 +360,11 @@ impl NotificationChannel for DingTalkChannel {
             response.api_error_code = result.error_code.clone();
             recipient_results.push(RecipientResult {
                 recipient: self.webhook_url.clone(),
-                status: if result.error.is_none() { "success".to_string() } else { "failed".to_string() },
+                status: if result.error.is_none() {
+                    "success".to_string()
+                } else {
+                    "failed".to_string()
+                },
                 error: result.error.as_ref().map(|e| e.to_string()),
             });
             if let Some(err) = result.error {
@@ -377,7 +382,11 @@ impl NotificationChannel for DingTalkChannel {
                 response.api_error_code = result.error_code.clone();
                 recipient_results.push(RecipientResult {
                     recipient: webhook.clone(),
-                    status: if result.error.is_none() { "success".to_string() } else { "failed".to_string() },
+                    status: if result.error.is_none() {
+                        "success".to_string()
+                    } else {
+                        "failed".to_string()
+                    },
                     error: result.error.as_ref().map(|e| e.to_string()),
                 });
             }

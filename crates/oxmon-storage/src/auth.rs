@@ -1,19 +1,18 @@
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
-use rand::Rng;
+use rand::RngExt;
 use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey, LineEnding};
 use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
-use sha2::Sha256;
+use rsa::sha2::Sha256;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 /// 生成一个 32 字节的加密安全随机 token
 pub fn generate_token() -> String {
-    let mut rng = rand::thread_rng();
-    let token_bytes: [u8; 32] = rng.gen();
+    let token_bytes: [u8; 32] = rand::rng().random();
     general_purpose::STANDARD.encode(token_bytes)
 }
 
@@ -154,7 +153,7 @@ impl PasswordEncryptor {
             RsaPrivateKey::from_pkcs8_pem(&pem)
                 .map_err(|e| anyhow::anyhow!("Failed to parse login private key: {e}"))?
         } else {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             let key = RsaPrivateKey::new(&mut rng, 2048)
                 .map_err(|e| anyhow::anyhow!("Failed to generate RSA key: {e}"))?;
             let pem = key
@@ -198,7 +197,7 @@ impl PasswordEncryptor {
             .decode(encrypted_base64)
             .map_err(|e| anyhow::anyhow!("Invalid base64: {e}"))?;
 
-        let padding = Oaep::new::<Sha256>();
+        let padding = Oaep::<Sha256>::new();
         let plaintext = self
             .private_key
             .decrypt(padding, &ciphertext)
@@ -296,8 +295,8 @@ mod tests {
             "password": password,
             "timestamp": timestamp,
         });
-        let padding = Oaep::new::<Sha256>();
-        let mut rng = rand::thread_rng();
+        let padding = Oaep::<Sha256>::new();
+        let mut rng = rand::rng();
         let ciphertext = public_key
             .encrypt(&mut rng, padding, payload.to_string().as_bytes())
             .expect("encryption should succeed");

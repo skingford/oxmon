@@ -9,7 +9,9 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use oxmon_common::types::UpdateNotificationChannelRequest;
-use oxmon_storage::{NotificationChannelRow, NotificationLogFilter, SilenceWindowFilter, SilenceWindowRow};
+use oxmon_storage::{
+    NotificationChannelRow, NotificationLogFilter, SilenceWindowFilter, SilenceWindowRow,
+};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -644,11 +646,19 @@ async fn update_channel(
         recipients: req.recipients,
     };
 
-    match state.cert_store.update_notification_channel(&id, &update).await {
+    match state
+        .cert_store
+        .update_notification_channel(&id, &update)
+        .await
+    {
         Ok(Some(_ch)) => {
             // 如果提供了 recipients，同时更新收件人列表
             if let Some(recipients) = recipients_to_update {
-                if let Err(e) = state.cert_store.set_channel_recipients(&id, &recipients).await {
+                if let Err(e) = state
+                    .cert_store
+                    .set_channel_recipients(&id, &recipients)
+                    .await
+                {
                     tracing::warn!(
                         channel_id = %id,
                         error = %e,
@@ -787,7 +797,9 @@ async fn list_silence_windows(
     match state
         .cert_store
         .list_silence_windows(
-            &SilenceWindowFilter { recurrence_eq: recurrence.map(|s| s.to_string()) },
+            &SilenceWindowFilter {
+                recurrence_eq: recurrence.map(|s| s.to_string()),
+            },
             limit,
             offset,
         )
@@ -1036,10 +1048,7 @@ async fn update_silence_window(
         }
     }
 
-    let recurrence_ref: Option<Option<&str>> = req
-        .recurrence
-        .as_ref()
-        .map(|r| r.as_deref());
+    let recurrence_ref: Option<Option<&str>> = req.recurrence.as_ref().map(|r| r.as_deref());
     match state
         .cert_store
         .update_silence_window(
@@ -1412,7 +1421,11 @@ async fn notification_log_summary(
         status: Some("success".to_string()),
         ..base_filter
     };
-    let success = match state.cert_store.count_notification_logs(&success_filter).await {
+    let success = match state
+        .cert_store
+        .count_notification_logs(&success_filter)
+        .await
+    {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count success notification logs");

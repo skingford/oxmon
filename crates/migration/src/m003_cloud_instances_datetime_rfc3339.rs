@@ -57,4 +57,3 @@ WHERE
     OR (typeof(last_seen_at) = 'text' AND trim(last_seen_at) GLOB '-[0-9][0-9]*')
     OR (typeof(last_seen_at) = 'text' AND trim(last_seen_at) GLOB '[0-9][0-9]*');
 "#;
-

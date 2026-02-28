@@ -208,8 +208,13 @@ impl NotificationChannel for EmailChannel {
         recipients: &[String],
     ) -> Option<Result<SendResponse>> {
         Some(
-            self.send_html(subject, html_content.to_string(), plain_content.to_string(), recipients)
-                .await,
+            self.send_html(
+                subject,
+                html_content.to_string(),
+                plain_content.to_string(),
+                recipients,
+            )
+            .await,
         )
     }
 

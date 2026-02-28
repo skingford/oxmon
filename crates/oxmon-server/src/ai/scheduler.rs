@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use oxmon_ai::{AIAnalyzer, AnalysisInput, HistoryMetric, MetricSnapshot, ZhipuProvider};
 use oxmon_notify::manager::NotificationManager;
 use oxmon_notify::report_template::{ReportParams, ReportRenderer};
-use oxmon_storage::CertStore;
 use oxmon_storage::engine::SqliteStorageEngine;
+use oxmon_storage::CertStore;
 use oxmon_storage::StorageEngine;
 use std::sync::Arc;
 use std::time::Duration;
@@ -101,8 +101,9 @@ impl AIReportScheduler {
             };
 
             // 检查是否应该生成报告（支持定时和间隔两种模式）
-            let should_collect =
-                self.should_collect(&account.config_key, interval_secs, &schedule_time).await?;
+            let should_collect = self
+                .should_collect(&account.config_key, interval_secs, &schedule_time)
+                .await?;
 
             if should_collect {
                 tracing::info!(
@@ -194,10 +195,7 @@ impl AIReportScheduler {
         Ok((hour, minute))
     }
 
-    async fn generate_report(
-        &self,
-        account: &oxmon_storage::AIAccountRow,
-    ) -> Result<()> {
+    async fn generate_report(&self, account: &oxmon_storage::AIAccountRow) -> Result<()> {
         tracing::info!(
             account_id = %account.id,
             provider = %account.provider,
@@ -325,10 +323,7 @@ impl AIReportScheduler {
         Ok(())
     }
 
-    fn build_analyzer(
-        &self,
-        account: &oxmon_storage::AIAccountRow,
-    ) -> Result<Box<dyn AIAnalyzer>> {
+    fn build_analyzer(&self, account: &oxmon_storage::AIAccountRow) -> Result<Box<dyn AIAnalyzer>> {
         let provider = &account.provider;
 
         tracing::debug!(
@@ -564,8 +559,9 @@ impl AIReportScheduler {
         report_id: &str,
     ) -> Result<()> {
         // 1. 检查是否启用通知发送
-        let send_notification =
-            cert_store.get_runtime_setting_bool("ai_report_send_notification", true).await;
+        let send_notification = cert_store
+            .get_runtime_setting_bool("ai_report_send_notification", true)
+            .await;
 
         if !send_notification {
             tracing::info!(
@@ -582,7 +578,9 @@ impl AIReportScheduler {
             .ok_or_else(|| anyhow::anyhow!("Report not found"))?;
 
         // 3. 获取系统语言
-        let locale = cert_store.get_runtime_setting_string("language", "zh-CN").await;
+        let locale = cert_store
+            .get_runtime_setting_string("language", "zh-CN")
+            .await;
 
         tracing::info!(
             report_id = %report_id,

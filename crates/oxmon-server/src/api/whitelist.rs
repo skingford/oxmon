@@ -138,15 +138,20 @@ async fn add_agent(
     };
 
     // 初始化 agent 到 agents 表（包含 collection_interval_secs）
-    if let Err(resp) = state.cert_store.upsert_agent(&req.agent_id).await.map_err(|e| {
-        tracing::error!(error = %e, "Failed to initialize agent");
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &trace_id,
-            "internal_error",
-            "Database error",
-        )
-    }) {
+    if let Err(resp) = state
+        .cert_store
+        .upsert_agent(&req.agent_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to initialize agent");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        })
+    {
         return resp;
     }
 
@@ -562,23 +567,22 @@ async fn delete_agent(
     };
 
     // 从白名单中删除
-    let deleted_from_whitelist =
-        match state
-            .cert_store
-            .delete_agent_from_whitelist(&id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "Failed to delete agent");
-                error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &trace_id,
-                    "internal_error",
-                    "Database error",
-                )
-            }) {
-            Ok(v) => v,
-            Err(resp) => return resp,
-        };
+    let deleted_from_whitelist = match state
+        .cert_store
+        .delete_agent_from_whitelist(&id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to delete agent");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
 
     // 从内存注册表中删除
     let deleted_from_registry = if let Some(entry) = &entry {

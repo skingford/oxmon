@@ -409,7 +409,10 @@ impl DatabaseConfig {
                 let port = self.port.unwrap_or(5432);
                 let user = self.username.as_deref().unwrap_or("postgres");
                 let pass = self.password.as_deref().unwrap_or("");
-                format!("postgres://{}:{}@{}:{}/{}", user, pass, host, port, self.name)
+                format!(
+                    "postgres://{}:{}@{}:{}/{}",
+                    user, pass, host, port, self.name
+                )
             }
             "mysql" => {
                 let host = self.host.as_deref().unwrap_or("localhost");

@@ -94,7 +94,11 @@ pub async fn jwt_auth_middleware(
 
     match validate_token(&state.jwt_secret, token) {
         Ok(claims) => {
-            let user = match state.cert_store.get_user_by_username(&claims.username).await {
+            let user = match state
+                .cert_store
+                .get_user_by_username(&claims.username)
+                .await
+            {
                 Ok(Some(user)) => user,
                 Ok(None) => {
                     return auth_error(&trace_id, "unauthorized", "invalid token");
@@ -330,7 +334,11 @@ pub async fn change_password(
         );
     }
 
-    let user = match state.cert_store.get_user_by_username(&claims.username).await {
+    let user = match state
+        .cert_store
+        .get_user_by_username(&claims.username)
+        .await
+    {
         Ok(Some(user)) => user,
         Ok(None) => {
             return error_response(

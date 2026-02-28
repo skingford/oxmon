@@ -140,12 +140,7 @@ async fn list_system_configs(
 
     match state
         .cert_store
-        .list_system_configs(
-            params.config_type.as_deref(),
-            params.enabled,
-            limit,
-            offset,
-        )
+        .list_system_configs(params.config_type.as_deref(), params.enabled, limit, offset)
         .await
     {
         Ok(rows) => {

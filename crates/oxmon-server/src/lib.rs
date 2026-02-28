@@ -1,10 +1,12 @@
 pub mod ai;
+pub mod ai_seed;
 pub mod api;
 pub mod app;
 pub mod auth;
 pub mod cert;
 pub mod channel_seed;
 pub mod cloud;
+pub mod cloud_seed;
 pub mod config;
 pub mod dictionary_seed;
 pub mod grpc;

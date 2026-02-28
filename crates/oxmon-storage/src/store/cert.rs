@@ -12,9 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::entities::cert_check_result::{self, Column as CheckCol, Entity as CheckEntity};
 use crate::entities::cert_domain::{self, Column as DomainCol, Entity as DomainEntity};
-use crate::entities::certificate_detail::{
-    self, Column as DetailCol, Entity as DetailEntity,
-};
+use crate::entities::certificate_detail::{self, Column as DetailCol, Entity as DetailEntity};
 use crate::store::CertStore;
 
 /// 证书健康摘要
@@ -95,8 +93,7 @@ fn model_to_check_result(m: cert_check_result::Model) -> CertCheckResult {
 }
 
 fn model_to_details(m: certificate_detail::Model) -> CertificateDetails {
-    let ip_addresses: Vec<String> =
-        serde_json::from_str(&m.ip_addresses).unwrap_or_default();
+    let ip_addresses: Vec<String> = serde_json::from_str(&m.ip_addresses).unwrap_or_default();
     let subject_alt_names: Vec<String> = m
         .subject_alt_names
         .as_deref()
@@ -253,11 +250,7 @@ impl CertStore {
         Ok(rows.into_iter().map(model_to_domain).collect())
     }
 
-    pub async fn count_domains(
-        &self,
-        enabled: Option<bool>,
-        search: Option<&str>,
-    ) -> Result<u64> {
+    pub async fn count_domains(&self, enabled: Option<bool>, search: Option<&str>) -> Result<u64> {
         let mut q = DomainEntity::find();
         if let Some(en) = enabled {
             q = q.filter(DomainCol::Enabled.eq(en));
@@ -307,8 +300,8 @@ impl CertStore {
         default_interval_secs: i64,
         limit: usize,
     ) -> Result<Vec<CertDomain>> {
-        use sea_orm::Statement;
         use sea_orm::ConnectionTrait;
+        use sea_orm::Statement;
         let sql = format!(
             "SELECT id, domain, port, enabled, check_interval_secs, note, last_checked_at, created_at, updated_at
              FROM cert_domains
@@ -331,7 +324,6 @@ impl CertStore {
             .await?;
         let mut result = Vec::with_capacity(rows.len());
         for row in rows {
-
             let id: String = row.try_get("", "id")?;
             let domain: String = row.try_get("", "domain")?;
             let port: i32 = row.try_get("", "port")?;
@@ -359,11 +351,7 @@ impl CertStore {
         Ok(result)
     }
 
-    pub async fn update_last_checked_at(
-        &self,
-        domain_id: &str,
-        ts: DateTime<Utc>,
-    ) -> Result<()> {
+    pub async fn update_last_checked_at(&self, domain_id: &str, ts: DateTime<Utc>) -> Result<()> {
         let model = DomainEntity::find_by_id(domain_id).one(self.db()).await?;
         if let Some(m) = model {
             let mut am: cert_domain::ActiveModel = m.into();
@@ -456,7 +444,8 @@ impl CertStore {
         for v in &bind_vals {
             stmt = Statement::from_string(
                 sea_orm::DatabaseBackend::Sqlite,
-                stmt.sql.replacen("$1", &format!("'{}'", v.replace('\'', "''")), 1),
+                stmt.sql
+                    .replacen("$1", &format!("'{}'", v.replace('\'', "''")), 1),
             );
         }
 
@@ -484,7 +473,6 @@ impl CertStore {
             ))
             .await?;
         if let Some(row) = rows.into_iter().next() {
-
             let count: i64 = row.try_get("", "cnt")?;
             Ok(count as u64)
         } else {
@@ -492,10 +480,7 @@ impl CertStore {
         }
     }
 
-    pub async fn query_result_by_domain(
-        &self,
-        domain: &str,
-    ) -> Result<Option<CertCheckResult>> {
+    pub async fn query_result_by_domain(&self, domain: &str) -> Result<Option<CertCheckResult>> {
         let rows = CheckEntity::find()
             .filter(CheckCol::Domain.eq(domain))
             .order_by(CheckCol::CheckedAt, Order::Desc)
@@ -559,7 +544,6 @@ impl CertStore {
         let mut expiring_soon: u64 = 0;
 
         for row in rows {
-
             let is_valid: bool = row.try_get("", "is_valid")?;
             let days: Option<i32> = row.try_get("", "days_until_expiry")?;
             if is_valid {
@@ -597,7 +581,6 @@ impl CertStore {
             ))
             .await?;
         if let Some(row) = rows.into_iter().next() {
-
             let total: i64 = row.try_get("", "total")?;
             let enabled: i64 = row.try_get("", "enabled_count")?;
             let disabled: i64 = row.try_get("", "disabled_count")?;
@@ -615,7 +598,10 @@ impl CertStore {
         }
     }
 
-    pub async fn cert_status_summary(&self, filter: &CertStatusFilter) -> Result<CertStatusSummary> {
+    pub async fn cert_status_summary(
+        &self,
+        filter: &CertStatusFilter,
+    ) -> Result<CertStatusSummary> {
         use sea_orm::{ConnectionTrait, Statement};
         let raw_sql = build_status_summary_sql(filter);
         let rows = self
@@ -626,7 +612,6 @@ impl CertStore {
             ))
             .await?;
         if let Some(row) = rows.into_iter().next() {
-
             let total: i64 = row.try_get("", "total")?;
             let healthy: i64 = row.try_get("", "healthy_count")?;
             let failed: i64 = row.try_get("", "failed_count")?;
@@ -652,11 +637,26 @@ impl CertStore {
 
         let ip_json = serde_json::to_string(&details.ip_addresses)?;
         let san_json = serde_json::to_string(&details.subject_alt_names)?;
-        let key_usage_json = details.key_usage.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
-        let eku_json = details.extended_key_usage.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
-        let ocsp_json = details.ocsp_urls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
-        let crl_json = details.crl_urls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
-        let ca_issuer_json = details.ca_issuer_urls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
+        let key_usage_json = details
+            .key_usage
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
+        let eku_json = details
+            .extended_key_usage
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
+        let ocsp_json = details
+            .ocsp_urls
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
+        let crl_json = details
+            .crl_urls
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
+        let ca_issuer_json = details
+            .ca_issuer_urls
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
         let now = Utc::now().fixed_offset();
 
         if let Some(m) = existing {
@@ -738,7 +738,8 @@ impl CertStore {
         let domain_exists = DomainEntity::find()
             .filter(DomainCol::Domain.eq(details.domain.as_str()))
             .count(self.db())
-            .await? > 0;
+            .await?
+            > 0;
         if !domain_exists {
             let id = oxmon_common::id::next_id();
             let am = cert_domain::ActiveModel {
@@ -821,9 +822,7 @@ impl CertStore {
 
     // ---- missing domain sync ----
 
-    pub async fn sync_missing_monitored_domains_from_certificate_details(
-        &self,
-    ) -> Result<u64> {
+    pub async fn sync_missing_monitored_domains_from_certificate_details(&self) -> Result<u64> {
         use sea_orm::{ConnectionTrait, Statement};
         let sql = "SELECT DISTINCT c.domain
              FROM certificate_details c
@@ -839,7 +838,6 @@ impl CertStore {
         let now = Utc::now().fixed_offset();
         let mut inserted = 0u64;
         for row in rows {
-
             let domain: String = row.try_get("", "domain")?;
             let id = oxmon_common::id::next_id();
             let am = cert_domain::ActiveModel {
@@ -860,9 +858,7 @@ impl CertStore {
         Ok(inserted)
     }
 
-    pub async fn count_missing_monitored_domains_from_certificate_details(
-        &self,
-    ) -> Result<u64> {
+    pub async fn count_missing_monitored_domains_from_certificate_details(&self) -> Result<u64> {
         use sea_orm::{ConnectionTrait, Statement};
         let sql = "SELECT COUNT(DISTINCT c.domain) AS cnt
              FROM certificate_details c
@@ -876,7 +872,6 @@ impl CertStore {
             ))
             .await?;
         if let Some(row) = rows.into_iter().next() {
-
             let cnt: i64 = row.try_get("", "cnt")?;
             Ok(cnt as u64)
         } else {
@@ -906,7 +901,6 @@ impl CertStore {
             .await?;
         let mut result = Vec::with_capacity(rows.len());
         for row in rows {
-
             let domain: String = row.try_get("", "domain")?;
             result.push(domain);
         }
@@ -933,7 +927,6 @@ impl CertStore {
 
         let mut missing_domains = Vec::new();
         for row in rows {
-
             let domain: String = row.try_get("", "domain")?;
             missing_domains.push(domain);
         }
@@ -1031,7 +1024,9 @@ fn build_raw_latest_sql(filter: &CertStatusFilter, limit: usize, offset: usize) 
     if let Some(v) = filter.days_until_expiry_lte {
         sql.push_str(&format!(" AND r.days_until_expiry <= {v}"));
     }
-    sql.push_str(&format!(" ORDER BY r.domain ASC LIMIT {limit} OFFSET {offset}"));
+    sql.push_str(&format!(
+        " ORDER BY r.domain ASC LIMIT {limit} OFFSET {offset}"
+    ));
     sql
 }
 
@@ -1060,9 +1055,7 @@ fn build_raw_latest_count_sql(filter: &CertStatusFilter) -> String {
     sql
 }
 
-fn parse_check_result_rows(
-    rows: Vec<sea_orm::QueryResult>,
-) -> Result<Vec<CertCheckResult>> {
+fn parse_check_result_rows(rows: Vec<sea_orm::QueryResult>) -> Result<Vec<CertCheckResult>> {
     let mut result = Vec::with_capacity(rows.len());
     for row in rows {
         let id: String = row.try_get("", "id")?;
@@ -1080,17 +1073,16 @@ fn parse_check_result_rows(
         let san_list_str: Option<String> = row.try_get("", "san_list")?;
         let resolved_ips_str: Option<String> = row.try_get("", "resolved_ips")?;
         let error: Option<String> = row.try_get("", "error")?;
-        let checked_at: chrono::DateTime<chrono::FixedOffset> =
-            row.try_get("", "checked_at")?;
-        let created_at: chrono::DateTime<chrono::FixedOffset> =
-            row.try_get("", "created_at")?;
-        let updated_at: chrono::DateTime<chrono::FixedOffset> =
-            row.try_get("", "updated_at")?;
+        let checked_at: chrono::DateTime<chrono::FixedOffset> = row.try_get("", "checked_at")?;
+        let created_at: chrono::DateTime<chrono::FixedOffset> = row.try_get("", "created_at")?;
+        let updated_at: chrono::DateTime<chrono::FixedOffset> = row.try_get("", "updated_at")?;
 
-        let san_list: Option<Vec<String>> =
-            san_list_str.as_deref().and_then(|s| serde_json::from_str(s).ok());
-        let resolved_ips: Option<Vec<String>> =
-            resolved_ips_str.as_deref().and_then(|s| serde_json::from_str(s).ok());
+        let san_list: Option<Vec<String>> = san_list_str
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok());
+        let resolved_ips: Option<Vec<String>> = resolved_ips_str
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok());
 
         result.push(CertCheckResult {
             id,

@@ -104,4 +104,3 @@ CREATE INDEX IF NOT EXISTS idx_cloud_instances_account_key ON cloud_instances(ac
 COMMIT;
 PRAGMA foreign_keys=ON;
 "#;
-

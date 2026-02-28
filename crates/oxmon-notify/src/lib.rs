@@ -76,7 +76,13 @@ pub trait NotificationChannel: Send + Sync {
         plain_content: &str,
         recipients: &[String],
     ) -> Option<Result<SendResponse>> {
-        let _ = (subject, html_content, markdown_content, plain_content, recipients);
+        let _ = (
+            subject,
+            html_content,
+            markdown_content,
+            plain_content,
+            recipients,
+        );
         None
     }
 

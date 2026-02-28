@@ -12,10 +12,7 @@ impl MigrationName for Migration {
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // 按依赖顺序建表
-        manager
-            .get_connection()
-            .execute_unprepared(UP_SQL)
-            .await?;
+        manager.get_connection().execute_unprepared(UP_SQL).await?;
         Ok(())
     }
 

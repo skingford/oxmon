@@ -159,7 +159,11 @@ impl CertStore {
         Ok(res.rows_affected > 0)
     }
 
-    pub async fn set_alert_rule_enabled(&self, id: &str, enabled: bool) -> Result<Option<AlertRuleRow>> {
+    pub async fn set_alert_rule_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<Option<AlertRuleRow>> {
         let model = Entity::find_by_id(id).one(self.db()).await?;
         if let Some(m) = model {
             let now = Utc::now().fixed_offset();

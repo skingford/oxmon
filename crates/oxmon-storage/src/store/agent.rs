@@ -7,9 +7,7 @@ use sea_orm::{
 };
 
 use crate::entities::agent::{self, Column as AgentCol, Entity as AgentEntity};
-use crate::entities::agent_whitelist::{
-    self, Column as WhitelistCol, Entity as WhitelistEntity,
-};
+use crate::entities::agent_whitelist::{self, Column as WhitelistCol, Entity as WhitelistEntity};
 use crate::store::CertStore;
 
 /// 白名单列表过滤器
@@ -103,10 +101,7 @@ impl CertStore {
     }
 
     /// 返回 (encrypted_token, token_hash)
-    pub async fn get_agent_auth(
-        &self,
-        agent_id: &str,
-    ) -> Result<Option<(Option<String>, String)>> {
+    pub async fn get_agent_auth(&self, agent_id: &str) -> Result<Option<(Option<String>, String)>> {
         let model = WhitelistEntity::find()
             .filter(WhitelistCol::AgentId.eq(agent_id))
             .one(self.db())
@@ -318,11 +313,7 @@ impl CertStore {
         Ok(res.rows_affected > 0)
     }
 
-    pub async fn list_agents_from_db(
-        &self,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<AgentInfo>> {
+    pub async fn list_agents_from_db(&self, limit: usize, offset: usize) -> Result<Vec<AgentInfo>> {
         let rows = AgentEntity::find()
             .order_by(AgentCol::LastSeen, Order::Desc)
             .limit(limit as u64)
@@ -361,10 +352,7 @@ impl CertStore {
         Ok(AgentEntity::find().count(self.db()).await?)
     }
 
-    pub async fn count_agents_from_db_with_filter(
-        &self,
-        filter: &AgentListFilter,
-    ) -> Result<u64> {
+    pub async fn count_agents_from_db_with_filter(&self, filter: &AgentListFilter) -> Result<u64> {
         let mut q = AgentEntity::find();
         if let Some(ref s) = filter.agent_id_contains {
             q = q.filter(AgentCol::AgentId.contains(s.as_str()));
@@ -380,7 +368,10 @@ impl CertStore {
         Ok(model.and_then(|m| m.collection_interval_secs.map(|v| v as u64)))
     }
 
-    pub async fn get_agent_by_agent_id(&self, agent_id: &str) -> Result<Option<AgentWhitelistEntry>> {
+    pub async fn get_agent_by_agent_id(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<AgentWhitelistEntry>> {
         // 在 agent_whitelist 中查（agent_id 字段相同）
         let model = WhitelistEntity::find()
             .filter(WhitelistCol::AgentId.eq(agent_id))

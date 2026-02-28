@@ -4,8 +4,8 @@ use oxmon_alert::engine::AlertEngine;
 use oxmon_common::types::AgentInfo;
 use oxmon_notify::manager::NotificationManager;
 use oxmon_storage::auth::PasswordEncryptor;
-use oxmon_storage::CertStore;
 use oxmon_storage::engine::SqliteStorageEngine;
+use oxmon_storage::CertStore;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
