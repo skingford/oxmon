@@ -6,7 +6,7 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
-use oxmon_storage::cert_store::{SystemConfigRow, SystemConfigUpdate};
+use oxmon_storage::SystemConfigRow;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -46,6 +46,7 @@ struct CreateSystemConfigRequest {
 /// 更新系统配置请求
 #[derive(Deserialize, ToSchema)]
 struct UpdateSystemConfigRequest {
+    #[allow(dead_code)]
     display_name: Option<String>,
     description: Option<Option<String>>,
     config_json: Option<String>,
@@ -92,6 +93,7 @@ struct ListSystemConfigParams {
     config_type: Option<String>,
     /// 按配置标识精确匹配（如 language、notification_aggregation_window）
     #[param(required = false)]
+    #[allow(dead_code)]
     config_key: Option<String>,
     /// 按启用状态过滤
     #[param(required = false)]
@@ -118,11 +120,11 @@ async fn list_system_configs(
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
 
-    let total = match state.cert_store.count_system_configs(
-        params.config_type.as_deref(),
-        params.config_key.as_deref(),
-        params.enabled,
-    ) {
+    let total = match state
+        .cert_store
+        .count_system_configs(params.config_type.as_deref(), params.enabled)
+        .await
+    {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count system configs");
@@ -136,13 +138,16 @@ async fn list_system_configs(
         }
     };
 
-    match state.cert_store.list_system_configs(
-        params.config_type.as_deref(),
-        params.config_key.as_deref(),
-        params.enabled,
-        limit,
-        offset,
-    ) {
+    match state
+        .cert_store
+        .list_system_configs(
+            params.config_type.as_deref(),
+            params.enabled,
+            limit,
+            offset,
+        )
+        .await
+    {
         Ok(rows) => {
             let resp: Vec<SystemConfigResponse> = rows.into_iter().map(row_to_response).collect();
             success_paginated_response(StatusCode::OK, &trace_id, resp, total, limit, offset)
@@ -178,7 +183,7 @@ async fn get_system_config(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.get_system_config_by_id(&id) {
+    match state.cert_store.get_system_config_by_id(&id).await {
         Ok(Some(row)) => success_response(StatusCode::OK, &trace_id, row_to_response(row)),
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
@@ -269,7 +274,7 @@ async fn create_system_config(
         updated_at: chrono::Utc::now(),
     };
 
-    match state.cert_store.insert_system_config(&row) {
+    match state.cert_store.insert_system_config(&row).await {
         Ok(inserted) => {
             crate::api::success_id_response(StatusCode::CREATED, &trace_id, inserted.id)
         }
@@ -317,14 +322,16 @@ async fn update_system_config(
     Path(id): Path<String>,
     Json(req): Json<UpdateSystemConfigRequest>,
 ) -> impl IntoResponse {
-    let update = SystemConfigUpdate {
-        display_name: req.display_name,
-        description: req.description,
-        config_json: req.config_json,
-        enabled: req.enabled,
-    };
-
-    match state.cert_store.update_system_config(&id, &update) {
+    match state
+        .cert_store
+        .update_system_config(
+            &id,
+            req.description.flatten().as_deref(),
+            req.enabled,
+            req.config_json.as_deref(),
+        )
+        .await
+    {
         Ok(Some(row)) => {
             // 触发通知渠道热重载（可能有渠道引用此系统配置）
             if let Err(e) = state.notifier.reload().await {
@@ -371,7 +378,7 @@ async fn delete_system_config(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.delete_system_config(&id) {
+    match state.cert_store.delete_system_config(&id).await {
         Ok(true) => crate::api::success_id_response(StatusCode::OK, &trace_id, id),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,

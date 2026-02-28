@@ -51,6 +51,7 @@ impl DingTalkChannel {
         }
     }
 
+    #[allow(clippy::expect_used)] // HMAC::new_from_slice never fails for any key size
     pub fn sign_url(&self, base_url: &str) -> String {
         let Some(secret) = &self.secret else {
             return base_url.to_string();

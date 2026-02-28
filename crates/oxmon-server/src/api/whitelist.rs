@@ -16,7 +16,7 @@ use oxmon_common::types::{
     UpdateAgentRequest,
 };
 use oxmon_storage::auth::{generate_token, hash_token};
-use oxmon_storage::cert_store::AgentWhitelistFilter;
+use oxmon_storage::AgentWhitelistFilter;
 use serde::Deserialize;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
@@ -72,6 +72,7 @@ async fn add_agent(
     let exists = state
         .cert_store
         .get_agent_token_hash(&req.agent_id)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to check agent existence");
             error_response(
@@ -122,6 +123,7 @@ async fn add_agent(
             &token_hash,
             req.description.as_deref(),
         )
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to add agent to whitelist");
             error_response(
@@ -136,7 +138,7 @@ async fn add_agent(
     };
 
     // 初始化 agent 到 agents 表（包含 collection_interval_secs）
-    if let Err(resp) = state.cert_store.upsert_agent(&req.agent_id).map_err(|e| {
+    if let Err(resp) = state.cert_store.upsert_agent(&req.agent_id).await.map_err(|e| {
         tracing::error!(error = %e, "Failed to initialize agent");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -157,6 +159,7 @@ async fn add_agent(
             Some(req.collection_interval_secs),
             Some(req.description.as_deref()),
         )
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to update agent config");
             error_response(
@@ -214,6 +217,7 @@ async fn list_whitelist_agents(
     let total = match state
         .cert_store
         .count_agents_with_filter(&filter)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to count agents");
             error_response(
@@ -230,6 +234,7 @@ async fn list_whitelist_agents(
     let agents = match state
         .cert_store
         .list_agents_with_filter(&filter, limit, offset)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to list agents");
             error_response(
@@ -294,7 +299,7 @@ async fn get_whitelist_agent(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let entry = match state.cert_store.get_agent_by_id(&id).map_err(|e| {
+    let entry = match state.cert_store.get_agent_by_id(&id).await.map_err(|e| {
         tracing::error!(error = %e, "Failed to get agent");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -365,7 +370,7 @@ async fn update_agent(
     Json(req): Json<UpdateAgentRequest>,
 ) -> impl IntoResponse {
     // 获取白名单条目以获取 agent_id
-    let entry = match state.cert_store.get_agent_by_id(&id).map_err(|e| {
+    let entry = match state.cert_store.get_agent_by_id(&id).await.map_err(|e| {
         tracing::error!(error = %e, "Failed to query agent");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -390,6 +395,7 @@ async fn update_agent(
     if let Err(resp) = state
         .cert_store
         .update_agent_whitelist(&id, req.description.as_deref().map(Some))
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to update agent whitelist");
             error_response(
@@ -411,6 +417,7 @@ async fn update_agent(
             req.collection_interval_secs.map(Some),
             req.description.as_deref().map(Some),
         )
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to update agent config");
             error_response(
@@ -452,7 +459,7 @@ async fn regenerate_token(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     // 检查 agent 是否存在
-    let entry = match state.cert_store.get_agent_by_id(&id).map_err(|e| {
+    let entry = match state.cert_store.get_agent_by_id(&id).await.map_err(|e| {
         tracing::error!(error = %e, "Failed to check agent existence");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -492,6 +499,7 @@ async fn regenerate_token(
     if let Err(resp) = state
         .cert_store
         .update_agent_token_hash(&id, &token, &token_hash)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to update agent token");
             error_response(
@@ -540,7 +548,7 @@ async fn delete_agent(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     // 先查询获取 agent_id 用于从内存注册表中删除
-    let entry = match state.cert_store.get_agent_by_id(&id).map_err(|e| {
+    let entry = match state.cert_store.get_agent_by_id(&id).await.map_err(|e| {
         tracing::error!(error = %e, "Failed to query agent");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -558,6 +566,7 @@ async fn delete_agent(
         match state
             .cert_store
             .delete_agent_from_whitelist(&id)
+            .await
             .map_err(|e| {
                 tracing::error!(error = %e, "Failed to delete agent");
                 error_response(

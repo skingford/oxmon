@@ -238,6 +238,7 @@ impl PartitionManager {
                         migrate_partition(&conn);
                         conns.insert(date_str.to_string(), conn);
                     }
+                    #[allow(clippy::unwrap_used)] // SAFETY: inserted in the block above
                     let conn = conns.get(date_str).unwrap();
                     let updated = conn.execute(
                         "UPDATE alert_events SET status = ?1, updated_at = ?2 WHERE id = ?3",

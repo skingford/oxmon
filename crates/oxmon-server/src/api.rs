@@ -312,17 +312,18 @@ async fn list_agents(
     let offset = PaginationParams::resolve_offset(params.offset);
 
     // 构建过滤条件
-    let filter = oxmon_storage::cert_store::AgentListFilter {
+    let filter = oxmon_storage::AgentListFilter {
         agent_id_contains: params.agent_id_contains.clone(),
         status_eq: params.status_eq.clone(),
-        last_seen_gte: params.last_seen_gte.map(|v| v as i64),
-        last_seen_lte: params.last_seen_lte.map(|v| v as i64),
+        last_seen_gte: params.last_seen_gte.and_then(|v| chrono::DateTime::from_timestamp(v as i64, 0)),
+        last_seen_lte: params.last_seen_lte.and_then(|v| chrono::DateTime::from_timestamp(v as i64, 0)),
     };
 
     // 获取总数
     let total = match state
         .cert_store
         .count_agents_from_db_with_filter(&filter)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to count agents");
             error_response(
@@ -340,6 +341,7 @@ async fn list_agents(
     let agents = match state
         .cert_store
         .list_agents_from_db_with_filter(&filter, limit, offset)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to list agents from database");
             error_response(
@@ -357,6 +359,7 @@ async fn list_agents(
     let whitelist_map = state
         .cert_store
         .get_whitelist_created_at_map()
+        .await
         .unwrap_or_default();
 
     let items: Vec<AgentResponse> = agents
@@ -415,6 +418,7 @@ async fn get_agent(
     let agent_entry = match state
         .cert_store
         .get_agent_by_id_or_agent_id(&id)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to query agent");
             error_response(
@@ -440,6 +444,7 @@ async fn get_agent(
     let whitelist_entry = state
         .cert_store
         .get_agent_by_agent_id(&agent_entry.agent_id)
+        .await
         .ok()
         .flatten();
 
@@ -502,6 +507,7 @@ async fn update_agent_info(
     let agent_entry = match state
         .cert_store
         .get_agent_by_id_or_agent_id(&id)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to query agent");
             error_response(
@@ -531,6 +537,7 @@ async fn update_agent_info(
             req.collection_interval_secs.map(Some),
             req.description.as_deref().map(Some),
         )
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to update agent config");
             error_response(
@@ -548,10 +555,12 @@ async fn update_agent_info(
     if let Ok(Some(whitelist_entry)) = state
         .cert_store
         .get_agent_by_agent_id(&agent_entry.agent_id)
+        .await
     {
         if let Err(e) = state
             .cert_store
             .update_agent_whitelist(&whitelist_entry.id, req.description.as_deref().map(Some))
+            .await
         {
             tracing::warn!(error = %e, agent_id = %agent_entry.agent_id, "Failed to sync whitelist description");
         }
@@ -588,6 +597,7 @@ async fn delete_agent_record(
     let agent_entry = match state
         .cert_store
         .get_agent_by_id_or_agent_id(&id)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to query agent");
             error_response(
@@ -613,10 +623,12 @@ async fn delete_agent_record(
     if let Ok(Some(whitelist_entry)) = state
         .cert_store
         .get_agent_by_agent_id(&agent_entry.agent_id)
+        .await
     {
         if let Err(e) = state
             .cert_store
             .delete_agent_from_whitelist(&whitelist_entry.id)
+            .await
         {
             tracing::warn!(error = %e, agent_id = %agent_entry.agent_id, "Failed to delete agent from whitelist");
         }
@@ -626,6 +638,7 @@ async fn delete_agent_record(
     if let Err(resp) = state
         .cert_store
         .delete_agent_from_db(&agent_entry.id)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to delete agent from database");
             error_response(
@@ -689,6 +702,7 @@ async fn agent_latest(
     let agent_entry = match state
         .cert_store
         .get_agent_by_id_or_agent_id(&id)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to query agent");
             error_response(
@@ -1144,16 +1158,17 @@ async fn metric_sources(
     let mut items: Vec<MetricSourceItemResponse> = Vec::new();
 
     if include_agent {
-        let mut agent_filter = oxmon_storage::cert_store::AgentListFilter::default();
+        let mut agent_filter = oxmon_storage::AgentListFilter::default();
         if has_keyword {
             agent_filter.agent_id_contains = Some(keyword.to_string());
         }
-        agent_filter.last_seen_gte = last_seen_gte_ts;
-        agent_filter.last_seen_lte = last_seen_lte_ts;
+        agent_filter.last_seen_gte = last_seen_gte_ts.and_then(|v| chrono::DateTime::from_timestamp(v, 0));
+        agent_filter.last_seen_lte = last_seen_lte_ts.and_then(|v| chrono::DateTime::from_timestamp(v, 0));
 
         let agents = match state
             .cert_store
             .list_agents_from_db_with_filter(&agent_filter, 10000, 0)
+            .await
         {
             Ok(v) => v,
             Err(e) => {
@@ -1204,7 +1219,7 @@ async fn metric_sources(
             if has_keyword { Some(keyword) } else { None },
             10000,
             0,
-        ) {
+        ).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(error = %e, "Failed to list cloud instances for metric sources");

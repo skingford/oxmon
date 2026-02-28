@@ -4,7 +4,7 @@ use oxmon_alert::engine::AlertEngine;
 use oxmon_common::proto::metric_service_server::MetricServiceServer;
 use oxmon_notify::manager::NotificationManager;
 use oxmon_notify::plugin::ChannelRegistry;
-use oxmon_storage::cert_store::{AlertRuleRow, CertStore};
+use oxmon_storage::{AlertRuleRow, CertStore};
 use oxmon_storage::engine::SqliteStorageEngine;
 use oxmon_storage::StorageEngine;
 use std::net::SocketAddr;
@@ -27,6 +27,7 @@ use oxmon_server::rule_seed;
 use oxmon_server::runtime_seed;
 use oxmon_server::state::{AgentRegistry, AppState};
 
+#[allow(clippy::print_stderr)]
 fn print_usage() {
     eprintln!("Usage:");
     eprintln!("  oxmon-server [config.toml]                                     Start the server");
@@ -40,7 +41,7 @@ fn print_usage() {
 async fn main() -> Result<()> {
     rustls::crypto::ring::default_provider()
         .install_default()
-        .expect("Failed to install default CryptoProvider");
+        .map_err(|e| anyhow::anyhow!("Failed to install default CryptoProvider: {e:?}"))?;
 
     oxmon_common::id::init(1, 1);
 
@@ -60,7 +61,7 @@ async fn main() -> Result<()> {
                 print_usage();
                 anyhow::anyhow!("init-channels requires <seed.json> argument")
             })?;
-            run_init_channels(config_path, seed_path)
+            run_init_channels(config_path, seed_path).await
         }
         Some("init-rules") => {
             let config_path = args.get(2).ok_or_else(|| {
@@ -71,7 +72,7 @@ async fn main() -> Result<()> {
                 print_usage();
                 anyhow::anyhow!("init-rules requires <seed.json> argument")
             })?;
-            run_init_rules(config_path, seed_path)
+            run_init_rules(config_path, seed_path).await
         }
         Some("init-dictionaries") => {
             let config_path = args.get(2).ok_or_else(|| {
@@ -84,7 +85,7 @@ async fn main() -> Result<()> {
                 print_usage();
                 anyhow::anyhow!("init-dictionaries requires <seed.json> argument")
             })?;
-            run_init_dictionaries(config_path, seed_path)
+            run_init_dictionaries(config_path, seed_path).await
         }
         Some("init-configs") => {
             let config_path = args.get(2).ok_or_else(|| {
@@ -95,7 +96,7 @@ async fn main() -> Result<()> {
                 print_usage();
                 anyhow::anyhow!("init-configs requires <seed.json> argument")
             })?;
-            run_init_configs(config_path, seed_path)
+            run_init_configs(config_path, seed_path).await
         }
         Some("--help" | "-h") => {
             print_usage();
@@ -112,11 +113,11 @@ async fn main() -> Result<()> {
 }
 
 /// Initialize notification channels and silence windows from a JSON seed file.
-fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
-    use oxmon_storage::cert_store::{NotificationChannelRow, SilenceWindowRow};
+async fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
+    use oxmon_storage::{NotificationChannelFilter, NotificationChannelRow, SilenceWindowRow};
 
     let config = config::ServerConfig::load(config_path)?;
-    let cert_store = CertStore::new(Path::new(&config.data_dir))?;
+    let cert_store = CertStore::new(Path::new(&config.data_dir)).await?;
 
     let seed_content = std::fs::read_to_string(seed_path)
         .map_err(|e| anyhow::anyhow!("Failed to read seed file '{}': {}", seed_path, e))?;
@@ -128,7 +129,18 @@ fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
     let mut recipients_set = 0u32;
 
     // List existing channel names for dedup
-    let existing = cert_store.list_notification_channels(None, None, None, None, 10000, 0)?;
+    let existing = cert_store
+        .list_notification_channels(
+            &NotificationChannelFilter {
+                name_contains: None,
+                channel_type_eq: None,
+                enabled_eq: None,
+                min_severity_eq: None,
+            },
+            10000,
+            0,
+        )
+        .await?;
     let existing_names: std::collections::HashSet<String> =
         existing.iter().map(|ch| ch.name.clone()).collect();
 
@@ -151,13 +163,13 @@ fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
             updated_at: Utc::now(),
         };
 
-        match cert_store.insert_notification_channel(&row) {
+        match cert_store.insert_notification_channel(&row).await {
             Ok(inserted) => {
                 tracing::info!(name = %ch.name, id = %inserted.id, "Channel created");
                 channels_created += 1;
 
                 if !ch.recipients.is_empty() {
-                    match cert_store.set_channel_recipients(&inserted.id, &ch.recipients) {
+                    match cert_store.set_channel_recipients(&inserted.id, &ch.recipients).await {
                         Ok(recs) => {
                             recipients_set += recs.len() as u32;
                             tracing::info!(
@@ -192,7 +204,7 @@ fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
-        match cert_store.insert_silence_window(&row) {
+        match cert_store.insert_silence_window(&row).await {
             Ok(_) => {
                 windows_created += 1;
                 tracing::info!(
@@ -218,9 +230,9 @@ fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
 }
 
 /// Initialize alert rules from a JSON seed file.
-fn run_init_rules(config_path: &str, seed_path: &str) -> Result<()> {
+async fn run_init_rules(config_path: &str, seed_path: &str) -> Result<()> {
     let config = config::ServerConfig::load(config_path)?;
-    let cert_store = CertStore::new(Path::new(&config.data_dir))?;
+    let cert_store = CertStore::new(Path::new(&config.data_dir)).await?;
 
     let seed_content = std::fs::read_to_string(seed_path)
         .map_err(|e| anyhow::anyhow!("Failed to read seed file '{}': {}", seed_path, e))?;
@@ -228,7 +240,7 @@ fn run_init_rules(config_path: &str, seed_path: &str) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to parse seed file '{}': {}", seed_path, e))?;
 
     // List existing rule names for dedup
-    let existing = cert_store.list_alert_rules(None, None, None, None, None, 10000, 0)?;
+    let existing = cert_store.list_alert_rules(None, None, 10000, 0).await?;
     let existing_names: std::collections::HashSet<String> =
         existing.iter().map(|r| r.name.clone()).collect();
 
@@ -251,13 +263,13 @@ fn run_init_rules(config_path: &str, seed_path: &str) -> Result<()> {
             severity: r.severity.clone(),
             enabled: r.enabled,
             config_json: r.config.to_string(),
-            silence_secs: r.silence_secs,
+            silence_secs: r.silence_secs as i64,
             source: "seed".to_string(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
 
-        match cert_store.insert_alert_rule(&row) {
+        match cert_store.insert_alert_rule(&row).await {
             Ok(inserted) => {
                 tracing::info!(name = %r.name, id = %inserted.id, "Alert rule created");
                 created += 1;
@@ -273,20 +285,20 @@ fn run_init_rules(config_path: &str, seed_path: &str) -> Result<()> {
 }
 
 /// Initialize dictionaries from a JSON seed file.
-fn run_init_dictionaries(config_path: &str, seed_path: &str) -> Result<()> {
+async fn run_init_dictionaries(config_path: &str, seed_path: &str) -> Result<()> {
     let config = config::ServerConfig::load(config_path)?;
-    let _cert_store = CertStore::new(Path::new(&config.data_dir))?;
-    oxmon_server::dictionary_seed::init_from_seed_file(&_cert_store, seed_path)?;
+    let cert_store = CertStore::new(Path::new(&config.data_dir)).await?;
+    oxmon_server::dictionary_seed::init_from_seed_file(&cert_store, seed_path).await?;
     Ok(())
 }
 
 /// Initialize system configs from a JSON seed file.
 /// If a config already exists, it will be updated with the seed data.
-fn run_init_configs(config_path: &str, seed_path: &str) -> Result<()> {
-    use oxmon_storage::cert_store::SystemConfigRow;
+async fn run_init_configs(config_path: &str, seed_path: &str) -> Result<()> {
+    use oxmon_storage::SystemConfigRow;
 
     let config = config::ServerConfig::load(config_path)?;
-    let cert_store = CertStore::new(Path::new(&config.data_dir))?;
+    let cert_store = CertStore::new(Path::new(&config.data_dir)).await?;
 
     let seed_content = std::fs::read_to_string(seed_path)
         .map_err(|e| anyhow::anyhow!("Failed to read seed file '{}': {}", seed_path, e))?;
@@ -294,7 +306,7 @@ fn run_init_configs(config_path: &str, seed_path: &str) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to parse seed file '{}': {}", seed_path, e))?;
 
     // List existing configs by key
-    let existing = cert_store.list_system_configs(None, None, None, 10000, 0)?;
+    let existing = cert_store.list_system_configs(None, None, 10000, 0).await?;
     let mut existing_map: std::collections::HashMap<String, SystemConfigRow> = existing
         .into_iter()
         .map(|c| (c.config_key.clone(), c))
@@ -306,14 +318,16 @@ fn run_init_configs(config_path: &str, seed_path: &str) -> Result<()> {
     for sc in &seed.configs {
         if let Some(existing_row) = existing_map.remove(&sc.config_key) {
             // Update existing config
-            let update = oxmon_storage::cert_store::SystemConfigUpdate {
-                display_name: Some(sc.display_name.clone()),
-                description: Some(sc.description.clone()),
-                config_json: Some(sc.config.to_string()),
-                enabled: Some(sc.enabled),
-            };
-
-            match cert_store.update_system_config(&existing_row.id, &update) {
+            let config_json_str = sc.config.to_string();
+            match cert_store
+                .update_system_config(
+                    &existing_row.id,
+                    sc.description.as_deref(),
+                    Some(sc.enabled),
+                    Some(config_json_str.as_str()),
+                )
+                .await
+            {
                 Ok(_) => {
                     tracing::info!(
                         config_key = %sc.config_key,
@@ -345,7 +359,7 @@ fn run_init_configs(config_path: &str, seed_path: &str) -> Result<()> {
                 updated_at: Utc::now(),
             };
 
-            match cert_store.insert_system_config(&row) {
+            match cert_store.insert_system_config(&row).await {
                 Ok(inserted) => {
                     tracing::info!(
                         config_key = %sc.config_key,
@@ -382,37 +396,37 @@ async fn run_server(config_path: &str) -> Result<()> {
 
     // Build components
     let storage = Arc::new(SqliteStorageEngine::new(Path::new(&config.data_dir))?);
-    let cert_store = Arc::new(CertStore::new(Path::new(&config.data_dir))?);
+    let cert_store = Arc::new(CertStore::new(Path::new(&config.data_dir)).await?);
     let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(
         config.agent_collection_interval_secs,
-        cert_store.clone(),
     )));
 
     // Seed default alert rules (only when DB has none)
-    if let Err(e) = rule_seed::init_default_rules(&cert_store) {
+    if let Err(e) = rule_seed::init_default_rules(&cert_store).await {
         tracing::error!(error = %e, "Failed to initialize default alert rules");
     }
 
     // Load alert engine from DB
     let alert_engine = Arc::new(Mutex::new(AlertEngine::new(vec![])));
-    if let Err(e) = rule_builder::reload_alert_engine(&cert_store, &alert_engine) {
+    if let Err(e) = rule_builder::reload_alert_engine(&cert_store, &alert_engine).await {
         tracing::error!(error = %e, "Failed to load alert rules from DB");
     }
 
     // Seed default notification channels (only when DB has none, all disabled)
-    if let Err(e) = channel_seed::init_default_channels(&cert_store) {
+    if let Err(e) = channel_seed::init_default_channels(&cert_store).await {
         tracing::error!(error = %e, "Failed to initialize default notification channels");
     }
 
     // Seed default runtime settings (notification aggregation window, log retention days)
-    if let Err(e) = runtime_seed::init_default_runtime_settings(&cert_store) {
+    if let Err(e) = runtime_seed::init_default_runtime_settings(&cert_store).await {
         tracing::error!(error = %e, "Failed to initialize default runtime settings");
     }
 
     // Build notification manager backed by DB
     let registry = ChannelRegistry::default();
-    let aggregation_window_secs =
-        cert_store.get_runtime_setting_u64("notification_aggregation_window", 60);
+    let aggregation_window_secs = cert_store
+        .get_runtime_setting_u64("notification_aggregation_window", 60)
+        .await;
     let notifier = Arc::new(NotificationManager::new(
         registry,
         cert_store.clone(),
@@ -436,15 +450,14 @@ async fn run_server(config_path: &str) -> Result<()> {
 
     // Initialize password encryptor (RSA key pair for login/change-password)
     let password_encryptor = Arc::new(
-        oxmon_storage::auth::PasswordEncryptor::load_or_create(Path::new(&config.data_dir))
-            .expect("Failed to initialize password encryptor"),
+        oxmon_storage::auth::PasswordEncryptor::load_or_create(Path::new(&config.data_dir))?,
     );
 
     // Default admin account: create if users table is empty
-    match cert_store.count_users() {
+    match cert_store.count_users().await {
         Ok(0) => {
             let password_hash = oxmon_storage::auth::hash_token(&config.auth.default_password)?;
-            match cert_store.create_user(&config.auth.default_username, &password_hash) {
+            match cert_store.create_user(&config.auth.default_username, &password_hash).await {
                 Ok(_) => {
                     tracing::info!(
                         username = %config.auth.default_username,
@@ -468,13 +481,16 @@ async fn run_server(config_path: &str) -> Result<()> {
     }
 
     // Initialize default system dictionaries (one-time, only when table is empty)
-    if let Err(e) = oxmon_server::dictionary_seed::init_default_dictionaries(&cert_store) {
+    if let Err(e) = oxmon_server::dictionary_seed::init_default_dictionaries(&cert_store).await {
         tracing::error!(error = %e, "Failed to initialize default system dictionaries");
     }
 
     // One-time self-heal on startup: backfill monitored domains from existing certificate details.
     if config.cert_check.auto_backfill_domains_on_startup {
-        match cert_store.sync_missing_monitored_domains_from_certificate_details() {
+        match cert_store
+            .sync_missing_monitored_domains_from_certificate_details()
+            .await
+        {
             Ok(inserted) => {
                 tracing::info!(
                     inserted,
@@ -541,9 +557,13 @@ async fn run_server(config_path: &str) -> Result<()> {
                 _ => {}
             }
             // Read log_retention_days from DB each time to allow dynamic updates
-            let log_retention_days =
-                cleanup_cert_store.get_runtime_setting_u32("notification_log_retention", 30);
-            match cleanup_cert_store.cleanup_notification_logs(log_retention_days) {
+            let log_retention_days = cleanup_cert_store
+                .get_runtime_setting_u32("notification_log_retention", 30)
+                .await;
+            match cleanup_cert_store
+                .cleanup_notification_logs(log_retention_days)
+                .await
+            {
                 Ok(removed) if removed > 0 => {
                     tracing::info!(removed, "Cleaned up expired notification logs")
                 }

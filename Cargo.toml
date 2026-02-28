@@ -9,6 +9,7 @@ members = [
     "crates/oxmon-ai",
     "crates/oxmon-agent",
     "crates/oxmon-server",
+    "crates/migration",
 ]
 resolver = "2"
 
@@ -43,7 +44,9 @@ axum = "0.8"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 
 # Database
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+sea-orm = { version = "=2.0.0-rc.32", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+sea-orm-migration = { version = "=2.0.0-rc.32", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 
 # System info
 sysinfo = "0.38"
@@ -109,6 +112,7 @@ oxmon-alert = { path = "crates/oxmon-alert" }
 oxmon-notify = { path = "crates/oxmon-notify" }
 oxmon-cloud = { path = "crates/oxmon-cloud" }
 oxmon-ai = { path = "crates/oxmon-ai" }
+migration = { path = "crates/migration" }
 
 [workspace.lints.rust]
 future-incompatible = "warn"

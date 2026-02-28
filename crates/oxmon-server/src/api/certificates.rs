@@ -104,6 +104,7 @@ async fn get_certificate(
     let details = match state
         .cert_store
         .get_certificate_details_by_id(&id)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get certificate details");
             error_response(
@@ -167,6 +168,7 @@ async fn list_certificates(
         match state
             .cert_store
             .sync_missing_monitored_domains_from_certificate_details()
+            .await
         {
             Ok(inserted) => {
                 if inserted > 0 {
@@ -204,7 +206,7 @@ async fn list_certificates(
     let limit = PaginationParams::resolve_limit(query.limit);
     let offset = PaginationParams::resolve_offset(query.offset);
 
-    let total = match state.cert_store.count_certificate_details(&filter) {
+    let total = match state.cert_store.count_certificate_details(&filter).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count certificates");
@@ -220,6 +222,7 @@ async fn list_certificates(
     let certificates = match state
         .cert_store
         .list_certificate_details(&filter, limit, offset)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to list certificates");
             error_response(
@@ -283,6 +286,7 @@ async fn get_certificate_chain(
     let details = match state
         .cert_store
         .get_certificate_details_by_id(&id)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to get certificate details");
             error_response(
@@ -332,7 +336,7 @@ async fn cert_summary(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    match state.cert_store.cert_summary() {
+    match state.cert_store.cert_summary().await {
         Ok(summary) => success_response(StatusCode::OK, &trace_id, summary),
         Err(e) => {
             tracing::error!(error = %e, "Failed to query cert summary");

@@ -94,7 +94,7 @@ pub async fn jwt_auth_middleware(
 
     match validate_token(&state.jwt_secret, token) {
         Ok(claims) => {
-            let user = match state.cert_store.get_user_by_username(&claims.username) {
+            let user = match state.cert_store.get_user_by_username(&claims.username).await {
                 Ok(Some(user)) => user,
                 Ok(None) => {
                     return auth_error(&trace_id, "unauthorized", "invalid token");
@@ -196,7 +196,7 @@ pub async fn login(
         }
     };
 
-    let user = match state.cert_store.get_user_by_username(&req.username) {
+    let user = match state.cert_store.get_user_by_username(&req.username).await {
         Ok(Some(u)) => u,
         Ok(None) => {
             return error_response(
@@ -330,7 +330,7 @@ pub async fn change_password(
         );
     }
 
-    let user = match state.cert_store.get_user_by_username(&claims.username) {
+    let user = match state.cert_store.get_user_by_username(&claims.username).await {
         Ok(Some(user)) => user,
         Ok(None) => {
             return error_response(
@@ -379,6 +379,7 @@ pub async fn change_password(
     match state
         .cert_store
         .update_user_password_hash(&user.id, &new_password_hash)
+        .await
     {
         Ok(true) => success_empty_response(
             StatusCode::OK,

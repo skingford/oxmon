@@ -4,7 +4,7 @@ use oxmon_alert::engine::AlertEngine;
 use oxmon_common::types::MetricDataPoint;
 use oxmon_notify::cert_report_template::CertAlertDetail;
 use oxmon_notify::manager::NotificationManager;
-use oxmon_storage::cert_store::CertStore;
+use oxmon_storage::CertStore;
 use oxmon_storage::StorageEngine;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -26,6 +26,7 @@ pub struct CertCheckScheduler {
 }
 
 impl CertCheckScheduler {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cert_store: Arc<CertStore>,
         storage: Arc<dyn StorageEngine>,
@@ -68,7 +69,8 @@ impl CertCheckScheduler {
     async fn check_due_domains(&self) -> Result<()> {
         let domains = self
             .cert_store
-            .query_domains_due_for_check(self.default_interval_secs)?;
+            .query_domains_due_for_check(self.default_interval_secs as i64, 100)
+            .await?;
 
         if domains.is_empty() {
             return Ok(());
@@ -99,7 +101,7 @@ impl CertCheckScheduler {
                     check_certificate(&domain.domain, domain.port, &domain.id, timeout).await;
 
                 // 写入详细检查结果
-                if let Err(e) = cert_store.insert_check_result(&result) {
+                if let Err(e) = cert_store.insert_check_result(&result).await {
                     tracing::error!(domain = %domain.domain, error = %e, "Failed to store check result");
                 }
 
@@ -108,7 +110,7 @@ impl CertCheckScheduler {
                     Ok(collector) => {
                         match collector.collect(&domain.domain, domain.port as u16).await {
                             Ok(details) => {
-                                if let Err(e) = cert_store.upsert_certificate_details(&details) {
+                                if let Err(e) = cert_store.upsert_certificate_details(&details).await {
                                     tracing::error!(domain = %domain.domain, error = %e, "Failed to store certificate details");
                                 } else {
                                     tracing::debug!(domain = %domain.domain, "Certificate details stored");
@@ -125,7 +127,7 @@ impl CertCheckScheduler {
                 }
 
                 // 更新最后检查时间
-                if let Err(e) = cert_store.update_last_checked_at(&domain.id, Utc::now()) {
+                if let Err(e) = cert_store.update_last_checked_at(&domain.id, Utc::now()).await {
                     tracing::error!(domain = %domain.domain, error = %e, "Failed to update last_checked_at");
                 }
 
@@ -216,7 +218,8 @@ impl CertCheckScheduler {
             let report_date = Utc::now().format("%Y-%m-%d").to_string();
             let locale = self
                 .cert_store
-                .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
+                .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
+                .await;
 
             tracing::info!(
                 alert_count = alert_items.len(),
@@ -248,7 +251,7 @@ async fn evaluate_alerts_for_cert(
     check_result: &oxmon_common::types::CertCheckResult,
 ) -> Option<CertAlertDetail> {
     let locale =
-        cert_store.get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
+        cert_store.get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE).await;
 
     let mut engine = alert_engine
         .lock()

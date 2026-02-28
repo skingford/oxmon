@@ -180,7 +180,9 @@ impl AlertEngine {
                 };
 
                 if should_recover {
-                    let state = self.active_alerts.remove(&key).unwrap();
+                    let Some(state) = self.active_alerts.remove(&key) else {
+                        continue;
+                    };
                     self.last_fired.remove(&key);
 
                     let recovery_message = {

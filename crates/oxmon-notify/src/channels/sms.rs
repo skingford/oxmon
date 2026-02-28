@@ -225,6 +225,7 @@ impl SmsChannel {
     }
 
     /// Compute Aliyun POP v1 HMAC-SHA1 signature.
+    #[allow(clippy::expect_used)] // HMAC::new_from_slice never fails for any key size
     pub(crate) fn aliyun_sign(params: &[(String, String)], access_key_secret: &str) -> String {
         let mut sorted = params.to_vec();
         sorted.sort_by(|a, b| a.0.cmp(&b.0));
@@ -403,6 +404,7 @@ impl SmsChannel {
         Self::hex_encode(&hasher.finalize())
     }
 
+    #[allow(clippy::expect_used)] // HMAC::new_from_slice never fails for any key size
     fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
         type HmacSha256 = Hmac<Sha256>;
         let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");

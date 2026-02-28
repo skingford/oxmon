@@ -1,4 +1,4 @@
-use oxmon_storage::cert_store::CertStore;
+use oxmon_storage::CertStore;
 use std::sync::Arc;
 
 /// gRPC 认证配置

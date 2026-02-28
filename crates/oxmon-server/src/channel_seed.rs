@@ -1,5 +1,5 @@
 use chrono::Utc;
-use oxmon_storage::cert_store::{CertStore, NotificationChannelRow};
+use oxmon_storage::{CertStore, NotificationChannelFilter, NotificationChannelRow};
 
 /// Default notification channel definitions for first-time startup.
 /// All channels are created with `enabled = false` so the user must
@@ -60,8 +60,19 @@ const DEFAULT_CHANNELS: &[ChannelDef] = &[
 ///
 /// All channels are created with `enabled = false` and empty `config_json` so
 /// the user must configure and enable them before they take effect.
-pub fn init_default_channels(cert_store: &CertStore) -> anyhow::Result<usize> {
-    let existing = cert_store.list_notification_channels(None, None, None, None, 1, 0)?;
+pub async fn init_default_channels(cert_store: &CertStore) -> anyhow::Result<usize> {
+    let existing = cert_store
+        .list_notification_channels(
+            &NotificationChannelFilter {
+                name_contains: None,
+                channel_type_eq: None,
+                enabled_eq: None,
+                min_severity_eq: None,
+            },
+            1,
+            0,
+        )
+        .await?;
     if !existing.is_empty() {
         tracing::debug!("Notification channels already exist, skipping seed initialization");
         return Ok(0);
@@ -82,7 +93,7 @@ pub fn init_default_channels(cert_store: &CertStore) -> anyhow::Result<usize> {
             created_at: now,
             updated_at: now,
         };
-        match cert_store.insert_notification_channel(&row) {
+        match cert_store.insert_notification_channel(&row).await {
             Ok(_) => {
                 inserted += 1;
                 tracing::info!(

@@ -6,7 +6,7 @@ use oxmon_alert::rules::threshold::{CompareOp, ThresholdRule};
 use oxmon_alert::rules::trend_prediction::TrendPredictionRule;
 use oxmon_alert::AlertRule;
 use oxmon_common::types::Severity;
-use oxmon_storage::cert_store::{AlertRuleRow, CertStore};
+use oxmon_storage::{AlertRuleRow, CertStore};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
@@ -100,7 +100,7 @@ pub fn build_rule_from_row(row: &AlertRuleRow) -> Result<Box<dyn AlertRule>> {
                 operator: op,
                 value: cfg.value,
                 duration_secs: cfg.duration_secs,
-                silence_secs: row.silence_secs,
+                silence_secs: row.silence_secs as u64,
             }))
         }
         "rate_of_change" => {
@@ -114,7 +114,7 @@ pub fn build_rule_from_row(row: &AlertRuleRow) -> Result<Box<dyn AlertRule>> {
                 severity,
                 rate_threshold: cfg.rate_threshold,
                 window_secs: cfg.window_secs,
-                silence_secs: row.silence_secs,
+                silence_secs: row.silence_secs as u64,
             }))
         }
         "trend_prediction" => {
@@ -129,7 +129,7 @@ pub fn build_rule_from_row(row: &AlertRuleRow) -> Result<Box<dyn AlertRule>> {
                 predict_threshold: cfg.predict_threshold,
                 horizon_secs: cfg.horizon_secs,
                 min_data_points: cfg.min_data_points,
-                silence_secs: row.silence_secs,
+                silence_secs: row.silence_secs as u64,
             }))
         }
         "cert_expiration" => {
@@ -143,7 +143,7 @@ pub fn build_rule_from_row(row: &AlertRuleRow) -> Result<Box<dyn AlertRule>> {
                 row.name.clone(),
                 cfg.warning_days,
                 cfg.critical_days,
-                row.silence_secs,
+                row.silence_secs as u64,
             )))
         }
         "cloud_scale" => {
@@ -158,7 +158,7 @@ pub fn build_rule_from_row(row: &AlertRuleRow) -> Result<Box<dyn AlertRule>> {
                 high_threshold: cfg.high_threshold,
                 low_threshold: cfg.low_threshold,
                 duration_secs: cfg.duration_secs,
-                silence_secs: row.silence_secs,
+                silence_secs: row.silence_secs as u64,
             }))
         }
         other => Err(anyhow::anyhow!("unknown rule type: {other}")),
@@ -188,11 +188,11 @@ pub fn build_rules_from_rows(rows: &[AlertRuleRow]) -> Vec<Box<dyn AlertRule>> {
 // ---- Engine reload ----
 
 /// Reload alert engine rules from database. Returns the number of loaded rules.
-pub fn reload_alert_engine(
+pub async fn reload_alert_engine(
     cert_store: &CertStore,
     alert_engine: &Mutex<AlertEngine>,
 ) -> Result<usize> {
-    let rows = cert_store.list_enabled_alert_rules()?;
+    let rows = cert_store.list_enabled_alert_rules().await?;
     let rules = build_rules_from_rows(&rows);
     let count = rules.len();
 

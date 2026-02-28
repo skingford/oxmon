@@ -6,7 +6,7 @@ use oxmon_cloud::{build_provider, CloudAccountConfig, CloudMetrics};
 use oxmon_common::id::next_id;
 use oxmon_common::types::{MetricBatch, MetricDataPoint};
 use oxmon_notify::manager::NotificationManager;
-use oxmon_storage::cert_store::CertStore;
+use oxmon_storage::CertStore;
 use oxmon_storage::StorageEngine;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -66,6 +66,7 @@ impl CloudCheckScheduler {
         let accounts = self
             .cert_store
             .list_cloud_accounts(None, Some(true), 1000, 0)
+            .await
             .context("Failed to load cloud accounts")?;
 
         if accounts.is_empty() {
@@ -88,7 +89,8 @@ impl CloudCheckScheduler {
             // Check last collection time from cloud_collection_state table
             let state = self
                 .cert_store
-                .get_cloud_collection_state(&account.config_key)?;
+                .get_cloud_collection_state(&account.config_key)
+                .await?;
 
             let is_due = if let Some(state) = state {
                 let elapsed = now - state.last_collected_at;
@@ -191,7 +193,7 @@ impl CloudCheckScheduler {
             };
 
             if let Err(e) = self.cert_store.upsert_cloud_instance(
-                &oxmon_storage::cert_store::CloudInstanceRow {
+                &oxmon_storage::CloudInstanceRow {
                     id: String::new(), // ID将由 upsert_cloud_instance 内部生成
                     instance_id: instance.instance_id.clone(),
                     instance_name: Some(instance.instance_name.clone()),
@@ -232,7 +234,9 @@ impl CloudCheckScheduler {
                     resource_group_id: instance.resource_group_id.clone(),
                     auto_renew_flag: instance.auto_renew_flag.clone(),
                 },
-            ) {
+            )
+            .await
+            {
                 tracing::error!(
                     instance_id = instance.instance_id,
                     error = %e,
@@ -295,12 +299,16 @@ impl CloudCheckScheduler {
 
         // Update collection state for each account
         for (config_key, _provider_type, _account_name, _account_config) in &due_accounts {
-            if let Err(e) = self.cert_store.upsert_cloud_collection_state(
-                config_key,
-                now,
-                batch.data_points.len() as i32,
-                None,
-            ) {
+            if let Err(e) = self
+                .cert_store
+                .upsert_cloud_collection_state(
+                    config_key,
+                    now,
+                    batch.data_points.len() as i32,
+                    None,
+                )
+                .await
+            {
                 tracing::error!(
                     config_key = config_key,
                     error = %e,
@@ -464,7 +472,8 @@ impl CloudCheckScheduler {
     async fn evaluate_alerts(&self, data_points: &[MetricDataPoint]) {
         let locale = self
             .cert_store
-            .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
+            .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
+            .await;
 
         let mut engine = self
             .alert_engine

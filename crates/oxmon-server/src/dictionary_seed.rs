@@ -1,6 +1,6 @@
 use chrono::Utc;
 use oxmon_common::types::{DictionaryItem, DictionaryType};
-use oxmon_storage::cert_store::CertStore;
+use oxmon_storage::CertStore;
 
 /// Build the default dictionary seed items (all marked as `is_system = true`).
 pub fn default_seed_items() -> Vec<DictionaryItem> {
@@ -714,10 +714,12 @@ fn make_system_item(
 /// - Dictionary items (is_system=true): upsert all, disable stale items no longer in seed
 ///
 /// This ensures code-level changes to system dictionaries are always reflected in the DB.
-pub fn init_default_dictionaries(cert_store: &CertStore) -> anyhow::Result<usize> {
+pub async fn init_default_dictionaries(cert_store: &CertStore) -> anyhow::Result<usize> {
     // 1. Sync dictionary types
     let type_items = default_type_seed_items();
-    let (types_inserted, types_updated) = cert_store.upsert_system_dictionary_types(&type_items)?;
+    let (types_inserted, types_updated) = cert_store
+        .upsert_system_dictionary_types(&type_items)
+        .await?;
     if types_inserted > 0 || types_updated > 0 {
         tracing::info!(
             types_inserted,
@@ -728,7 +730,7 @@ pub fn init_default_dictionaries(cert_store: &CertStore) -> anyhow::Result<usize
 
     // 2. Sync system dictionary items
     let items = default_seed_items();
-    let (items_inserted, items_updated) = cert_store.upsert_system_dictionaries(&items)?;
+    let (items_inserted, items_updated) = cert_store.upsert_system_dictionaries(&items).await?;
     if items_inserted > 0 || items_updated > 0 {
         tracing::info!(
             items_inserted,
@@ -742,14 +744,18 @@ pub fn init_default_dictionaries(cert_store: &CertStore) -> anyhow::Result<usize
         .iter()
         .map(|i| (i.dict_type.clone(), i.dict_key.clone()))
         .collect();
-    let disabled = cert_store.disable_stale_system_dictionaries(&active_keys)?;
+    let disabled = cert_store
+        .disable_stale_system_dictionaries(&active_keys)
+        .await?;
     if disabled > 0 {
         tracing::info!(disabled, "Disabled stale system dictionary items");
     }
 
     // 4. Delete dictionary types that no longer exist in seed data
     let active_types: Vec<String> = type_items.iter().map(|t| t.dict_type.clone()).collect();
-    let types_deleted = cert_store.delete_stale_dictionary_types(&active_types)?;
+    let types_deleted = cert_store
+        .delete_stale_dictionary_types(&active_types)
+        .await?;
     if types_deleted > 0 {
         tracing::info!(types_deleted, "Deleted stale dictionary types");
     }
@@ -759,7 +765,7 @@ pub fn init_default_dictionaries(cert_store: &CertStore) -> anyhow::Result<usize
 
 /// Initialize dictionaries from a JSON seed file.
 /// Uses INSERT OR IGNORE to skip duplicates.
-pub fn init_from_seed_file(cert_store: &CertStore, seed_path: &str) -> anyhow::Result<usize> {
+pub async fn init_from_seed_file(cert_store: &CertStore, seed_path: &str) -> anyhow::Result<usize> {
     let seed_content = std::fs::read_to_string(seed_path)
         .map_err(|e| anyhow::anyhow!("Failed to read seed file '{}': {}", seed_path, e))?;
     let seed: crate::config::DictionariesSeedFile = serde_json::from_str(&seed_content)
@@ -780,7 +786,7 @@ pub fn init_from_seed_file(cert_store: &CertStore, seed_path: &str) -> anyhow::R
                 updated_at: now,
             })
             .collect();
-        let types_inserted = cert_store.batch_insert_dictionary_types(&type_items)?;
+        let types_inserted = cert_store.batch_insert_dictionary_types(&type_items).await?;
         tracing::info!(
             total = type_items.len(),
             types_inserted,
@@ -807,7 +813,7 @@ pub fn init_from_seed_file(cert_store: &CertStore, seed_path: &str) -> anyhow::R
         })
         .collect();
 
-    let inserted = cert_store.batch_insert_dictionaries(&items)?;
+    let inserted = cert_store.batch_insert_dictionaries(&items).await?;
     tracing::info!(
         total = items.len(),
         inserted,

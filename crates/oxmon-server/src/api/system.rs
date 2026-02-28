@@ -47,10 +47,27 @@ async fn get_system_config(
     let config = &state.config;
     let notification_aggregation_window_secs = state
         .cert_store
-        .get_runtime_setting_u64("notification_aggregation_window", 60);
+        .get_runtime_setting_u64("notification_aggregation_window", 60)
+        .await;
     let language = state
         .cert_store
-        .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
+        .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
+        .await;
+    let alert_rules_count = state
+        .cert_store
+        .count_alert_rules(None, None)
+        .await
+        .unwrap_or(0) as usize;
+    let notification_channels_count = state
+        .cert_store
+        .count_notification_channels(&oxmon_storage::NotificationChannelFilter {
+            name_contains: None,
+            channel_type_eq: None,
+            enabled_eq: None,
+            min_severity_eq: None,
+        })
+        .await
+        .unwrap_or(0) as usize;
     success_response(
         StatusCode::OK,
         &trace_id,
@@ -65,14 +82,8 @@ async fn get_system_config(
             cert_check_tick_secs: config.cert_check.tick_secs,
             cert_check_max_concurrent: config.cert_check.max_concurrent,
             notification_aggregation_window_secs,
-            alert_rules_count: state
-                .cert_store
-                .count_alert_rules(None, None, None, None, None)
-                .unwrap_or(0) as usize,
-            notification_channels_count: state
-                .cert_store
-                .count_notification_channels(None, None, None, None)
-                .unwrap_or(0) as usize,
+            alert_rules_count,
+            notification_channels_count,
             language,
         },
     )
@@ -226,11 +237,13 @@ async fn trigger_cert_domains_backfill(
         match state
             .cert_store
             .count_missing_monitored_domains_from_certificate_details()
+            .await
         {
             Ok(inserted) => {
                 let preview = state
                     .cert_store
                     .preview_missing_monitored_domains_from_certificate_details(preview_limit)
+                    .await
                     .unwrap_or_else(|e| {
                         tracing::error!(
                             error = %e,
@@ -246,6 +259,7 @@ async fn trigger_cert_domains_backfill(
         state
             .cert_store
             .sync_missing_monitored_domains_from_certificate_details_with_preview(preview_limit)
+            .await
     };
 
     match result {

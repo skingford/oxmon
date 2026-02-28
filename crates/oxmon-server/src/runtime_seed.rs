@@ -1,5 +1,5 @@
 use chrono::Utc;
-use oxmon_storage::cert_store::{CertStore, SystemConfigRow};
+use oxmon_storage::{CertStore, SystemConfigRow};
 
 /// Default runtime settings definitions for first-time startup.
 struct RuntimeSettingDef {
@@ -56,13 +56,14 @@ const DEFAULT_RUNTIME_SETTINGS: &[RuntimeSettingDef] = &[
 
 /// Initialize default runtime settings in the database (only when they don't exist).
 /// This runs on first-time server startup before the notification manager is created.
-pub fn init_default_runtime_settings(cert_store: &CertStore) -> anyhow::Result<usize> {
+pub async fn init_default_runtime_settings(cert_store: &CertStore) -> anyhow::Result<usize> {
     let mut inserted_count = 0;
 
     for def in DEFAULT_RUNTIME_SETTINGS {
         // Check if setting already exists
         if cert_store
-            .get_system_config_by_key(def.config_key)?
+            .get_system_config_by_key(def.config_key)
+            .await?
             .is_some()
         {
             tracing::debug!(
@@ -97,7 +98,7 @@ pub fn init_default_runtime_settings(cert_store: &CertStore) -> anyhow::Result<u
             RuntimeValue::Bool(v) => v.to_string(),
         };
 
-        match cert_store.insert_system_config(&row) {
+        match cert_store.insert_system_config(&row).await {
             Ok(_) => {
                 tracing::info!(
                     config_key = def.config_key,

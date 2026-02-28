@@ -81,7 +81,7 @@ async fn list_dict_types(
     let offset = PaginationParams::resolve_offset(params.offset);
     let dict_type_contains = params.dict_type_contains.as_deref();
 
-    let total = match state.cert_store.count_all_dict_types(dict_type_contains) {
+    let total = match state.cert_store.count_all_dict_types(dict_type_contains).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count dictionary types");
@@ -98,6 +98,7 @@ async fn list_dict_types(
     match state
         .cert_store
         .list_all_dict_types(dict_type_contains, limit, offset)
+        .await
     {
         Ok(types) => {
             success_paginated_response(StatusCode::OK, &trace_id, types, total, limit, offset)
@@ -153,7 +154,7 @@ async fn list_by_types_all(
         query.enabled_only,
         key_contains,
         label_contains,
-    ) {
+    ).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count dictionaries by types");
@@ -174,7 +175,7 @@ async fn list_by_types_all(
         label_contains,
         limit,
         offset,
-    ) {
+    ).await {
         Ok(items) => {
             success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
         }
@@ -209,7 +210,7 @@ async fn get_dictionary(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.get_dictionary_by_id(&id) {
+    match state.cert_store.get_dictionary_by_id(&id).await {
         Ok(Some(item)) => success_response(StatusCode::OK, &trace_id, item),
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
@@ -250,10 +251,10 @@ async fn create_dictionary(
     Json(req): Json<CreateDictionaryRequest>,
 ) -> impl IntoResponse {
     // Auto-ensure dictionary type exists
-    if let Err(e) = state.cert_store.ensure_dictionary_type(&req.dict_type) {
+    if let Err(e) = state.cert_store.ensure_dictionary_type(&req.dict_type).await {
         tracing::warn!(error = %e, dict_type = %req.dict_type, "Failed to auto-ensure dictionary type");
     }
-    match state.cert_store.insert_dictionary(&req) {
+    match state.cert_store.insert_dictionary(&req).await {
         Ok(item) => success_id_response(StatusCode::CREATED, &trace_id, item.id),
         Err(e) => {
             let msg = e.to_string();
@@ -299,7 +300,7 @@ async fn update_dictionary(
     Path(id): Path<String>,
     Json(req): Json<UpdateDictionaryRequest>,
 ) -> impl IntoResponse {
-    match state.cert_store.update_dictionary(&id, &req) {
+    match state.cert_store.update_dictionary(&id, &req).await {
         Ok(Some(item)) => success_id_response(StatusCode::OK, &trace_id, item.id),
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
@@ -341,7 +342,7 @@ async fn delete_dictionary(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     // Check if item exists first
-    match state.cert_store.get_dictionary_by_id(&id) {
+    match state.cert_store.get_dictionary_by_id(&id).await {
         Ok(Some(item)) => {
             if item.is_system {
                 return error_response(
@@ -352,7 +353,7 @@ async fn delete_dictionary(
                 )
                 .into_response();
             }
-            match state.cert_store.delete_dictionary(&id) {
+            match state.cert_store.delete_dictionary(&id).await {
                 Ok(true) => success_id_response(StatusCode::OK, &trace_id, id),
                 Ok(false) => error_response(
                     StatusCode::NOT_FOUND,
@@ -411,7 +412,7 @@ async fn create_dict_type(
     State(state): State<AppState>,
     Json(req): Json<CreateDictionaryTypeRequest>,
 ) -> impl IntoResponse {
-    match state.cert_store.insert_dictionary_type(&req) {
+    match state.cert_store.insert_dictionary_type(&req).await {
         Ok(item) => success_id_response(StatusCode::CREATED, &trace_id, item.dict_type),
         Err(e) => {
             let msg = e.to_string();
@@ -457,7 +458,7 @@ async fn update_dict_type(
     Path(dict_type): Path<String>,
     Json(req): Json<UpdateDictionaryTypeRequest>,
 ) -> impl IntoResponse {
-    match state.cert_store.update_dictionary_type(&dict_type, &req) {
+    match state.cert_store.update_dictionary_type(&dict_type, &req).await {
         Ok(Some(item)) => success_id_response(StatusCode::OK, &trace_id, item.dict_type),
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
@@ -497,7 +498,7 @@ async fn delete_dict_type(
     State(state): State<AppState>,
     Path(dict_type): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.delete_dictionary_type(&dict_type) {
+    match state.cert_store.delete_dictionary_type(&dict_type).await {
         Ok(true) => success_id_response(StatusCode::OK, &trace_id, dict_type),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,

@@ -929,7 +929,7 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
 
     // Insert test logs directly via cert_store
     let now = chrono::Utc::now();
-    let log1 = oxmon_storage::cert_store::NotificationLogRow {
+    let log1 = oxmon_storage::NotificationLogRow {
         id: oxmon_common::id::next_id(),
         alert_event_id: "evt-1".to_string(),
         rule_id: "rule-1".to_string(),
@@ -952,9 +952,9 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
         api_message_id: None,
         api_error_code: None,
     };
-    ctx.state.cert_store.insert_notification_log(&log1).unwrap();
+    ctx.state.cert_store.insert_notification_log(&log1).await.unwrap();
 
-    let log2 = oxmon_storage::cert_store::NotificationLogRow {
+    let log2 = oxmon_storage::NotificationLogRow {
         id: oxmon_common::id::next_id(),
         alert_event_id: "evt-2".to_string(),
         rule_id: "rule-1".to_string(),
@@ -979,7 +979,7 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
         api_message_id: None,
         api_error_code: None,
     };
-    ctx.state.cert_store.insert_notification_log(&log2).unwrap();
+    ctx.state.cert_store.insert_notification_log(&log2).await.unwrap();
 
     // Query all
     let (status, body, _) =
@@ -1082,7 +1082,7 @@ async fn notification_channel_config_get_by_id_should_work() {
     let token = login_and_get_token(&ctx.app).await;
 
     let now = chrono::Utc::now();
-    let row = oxmon_storage::cert_store::NotificationChannelRow {
+    let row = oxmon_storage::NotificationChannelRow {
         id: oxmon_common::id::next_id(),
         name: "Email Channel".to_string(),
         channel_type: "email".to_string(),
@@ -1097,6 +1097,7 @@ async fn notification_channel_config_get_by_id_should_work() {
         .state
         .cert_store
         .insert_notification_channel(&row)
+        .await
         .expect("insert notification channel should succeed");
 
     let (status, body, _) = request_no_body(
@@ -1202,7 +1203,7 @@ async fn dashboard_overview_should_include_cloud_resource_summary() {
     let now = chrono::Utc::now();
     ctx.state
         .cert_store
-        .insert_system_config(&oxmon_storage::cert_store::SystemConfigRow {
+        .insert_system_config(&oxmon_storage::SystemConfigRow {
             id: oxmon_common::id::next_id(),
             config_key: "cloud_tencent_dashboard".to_string(),
             config_type: "cloud_account".to_string(),
@@ -1215,12 +1216,13 @@ async fn dashboard_overview_should_include_cloud_resource_summary() {
             created_at: now,
             updated_at: now,
         })
+        .await
         .expect("insert cloud account should succeed");
 
     let now_ts = now.timestamp();
     ctx.state
         .cert_store
-        .upsert_cloud_instance(&oxmon_storage::cert_store::CloudInstanceRow {
+        .upsert_cloud_instance(&oxmon_storage::CloudInstanceRow {
             id: String::new(),
             instance_id: "ins-dashboard-1".to_string(),
             instance_name: Some("Dashboard-1".to_string()),
@@ -1261,10 +1263,11 @@ async fn dashboard_overview_should_include_cloud_resource_summary() {
             resource_group_id: None,
             auto_renew_flag: None,
         })
+        .await
         .expect("upsert cloud instance should succeed");
     ctx.state
         .cert_store
-        .upsert_cloud_instance(&oxmon_storage::cert_store::CloudInstanceRow {
+        .upsert_cloud_instance(&oxmon_storage::CloudInstanceRow {
             id: String::new(),
             instance_id: "ins-dashboard-2".to_string(),
             instance_name: Some("Dashboard-2".to_string()),
@@ -1305,6 +1308,7 @@ async fn dashboard_overview_should_include_cloud_resource_summary() {
             resource_group_id: None,
             auto_renew_flag: None,
         })
+        .await
         .expect("upsert cloud instance should succeed");
 
     let (status, body, _) =
@@ -1327,7 +1331,7 @@ async fn dashboard_overview_should_count_unknown_cloud_instance_statuses() {
     let now = chrono::Utc::now();
     ctx.state
         .cert_store
-        .insert_system_config(&oxmon_storage::cert_store::SystemConfigRow {
+        .insert_system_config(&oxmon_storage::SystemConfigRow {
             id: oxmon_common::id::next_id(),
             config_key: "cloud_tencent_unknown_status".to_string(),
             config_type: "cloud_account".to_string(),
@@ -1340,6 +1344,7 @@ async fn dashboard_overview_should_count_unknown_cloud_instance_statuses() {
             created_at: now,
             updated_at: now,
         })
+        .await
         .expect("insert cloud account should succeed");
 
     let now_ts = now.timestamp();
@@ -1350,7 +1355,7 @@ async fn dashboard_overview_should_count_unknown_cloud_instance_statuses() {
     ] {
         ctx.state
             .cert_store
-            .upsert_cloud_instance(&oxmon_storage::cert_store::CloudInstanceRow {
+            .upsert_cloud_instance(&oxmon_storage::CloudInstanceRow {
                 id: String::new(),
                 instance_id: instance_id.to_string(),
                 instance_name: Some(instance_id.to_string()),
@@ -1391,6 +1396,7 @@ async fn dashboard_overview_should_count_unknown_cloud_instance_statuses() {
                 resource_group_id: None,
                 auto_renew_flag: None,
             })
+            .await
             .expect("upsert cloud instance should succeed");
     }
 
@@ -1448,6 +1454,7 @@ async fn system_certs_backfill_domains_should_backfill_from_certificate_details(
             cipher_suite: None,
             chain_depth: None,
         })
+        .await
         .expect("upsert certificate details should succeed");
 
     // Remove auto-backfilled domain to simulate legacy orphan data, then use manual endpoint.
@@ -1455,12 +1462,14 @@ async fn system_certs_backfill_domains_should_backfill_from_certificate_details(
         .state
         .cert_store
         .get_domain_by_name(domain)
+        .await
         .expect("query domain should succeed")
         .expect("domain should exist after upsert");
     let deleted = ctx
         .state
         .cert_store
         .delete_domain(&existing.id)
+        .await
         .expect("delete domain should succeed");
     assert!(deleted);
 
@@ -1524,17 +1533,20 @@ async fn system_certs_backfill_domains_dry_run_should_preview_without_writing() 
             cipher_suite: None,
             chain_depth: None,
         })
+        .await
         .expect("upsert certificate details should succeed");
 
     let existing = ctx
         .state
         .cert_store
         .get_domain_by_name(domain)
+        .await
         .expect("query domain should succeed")
         .expect("domain should exist after upsert");
     ctx.state
         .cert_store
         .delete_domain(&existing.id)
+        .await
         .expect("delete domain should succeed");
 
     let (status, body, _) = request_no_body(
@@ -1556,6 +1568,7 @@ async fn system_certs_backfill_domains_dry_run_should_preview_without_writing() 
         .state
         .cert_store
         .get_domain_by_name(domain)
+        .await
         .expect("query domain should succeed")
         .is_none());
 }

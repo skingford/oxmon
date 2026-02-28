@@ -65,7 +65,7 @@ async fn create_domain(
     }
 
     // Check for duplicate
-    match state.cert_store.get_domain_by_name(&req.domain) {
+    match state.cert_store.get_domain_by_name(&req.domain).await {
         Ok(Some(_)) => {
             return common_error_response(
                 StatusCode::CONFLICT,
@@ -88,7 +88,7 @@ async fn create_domain(
         _ => {}
     }
 
-    match state.cert_store.insert_domain(&req) {
+    match state.cert_store.insert_domain(&req).await {
         Ok(domain) => success_id_response(StatusCode::CREATED, &trace_id, domain.id),
         Err(e) => {
             tracing::error!(error = %e, "Storage operation failed");
@@ -155,7 +155,7 @@ async fn create_domains_batch(
         }
     }
 
-    match state.cert_store.insert_domains_batch(&req.domains) {
+    match state.cert_store.insert_domains_batch(&req.domains).await {
         Ok(domains) => {
             let ids: Vec<crate::api::IdResponse> = domains
                 .into_iter()
@@ -239,6 +239,7 @@ async fn list_domains(
     let total = match state
         .cert_store
         .count_domains(params.enabled_eq, params.domain_contains.as_deref())
+        .await
     {
         Ok(c) => c,
         Err(e) => {
@@ -253,12 +254,16 @@ async fn list_domains(
         }
     };
 
-    match state.cert_store.query_domains(
-        params.enabled_eq,
-        params.domain_contains.as_deref(),
-        limit,
-        offset,
-    ) {
+    match state
+        .cert_store
+        .query_domains(
+            params.enabled_eq,
+            params.domain_contains.as_deref(),
+            limit,
+            offset,
+        )
+        .await
+    {
         Ok(domains) => {
             success_paginated_response(StatusCode::OK, &trace_id, domains, total, limit, offset)
         }
@@ -290,7 +295,7 @@ async fn cert_domains_summary(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    match state.cert_store.cert_domain_summary() {
+    match state.cert_store.cert_domain_summary().await {
         Ok(summary) => success_response(StatusCode::OK, &trace_id, summary),
         Err(e) => {
             tracing::error!(error = %e, "Failed to query cert domain summary");
@@ -374,7 +379,7 @@ async fn get_domain(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.get_domain_by_id(&id) {
+    match state.cert_store.get_domain_by_id(&id).await {
         Ok(Some(domain)) => success_response(StatusCode::OK, &trace_id, domain),
         Ok(None) => common_error_response(
             StatusCode::NOT_FOUND,
@@ -432,13 +437,7 @@ async fn update_domain(
         }
     }
 
-    match state.cert_store.update_domain(
-        &id,
-        req.port,
-        req.enabled,
-        req.check_interval_secs,
-        req.note,
-    ) {
+    match state.cert_store.update_domain(&id, &req).await {
         Ok(Some(domain)) => success_id_response(StatusCode::OK, &trace_id, domain.id),
         Ok(None) => common_error_response(
             StatusCode::NOT_FOUND,
@@ -481,7 +480,7 @@ async fn delete_domain(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.delete_domain(&id) {
+    match state.cert_store.delete_domain(&id).await {
         Ok(true) => success_id_response(StatusCode::OK, &trace_id, id),
         Ok(false) => common_error_response(
             StatusCode::NOT_FOUND,
@@ -523,13 +522,16 @@ async fn cert_status_all(
 ) -> impl IntoResponse {
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
-    let domain_contains = params.domain_contains.as_deref();
-    let is_valid = params.is_valid_eq;
-    let days_lte = params.days_until_expiry_lte;
+    let cert_status_filter = oxmon_storage::CertStatusFilter {
+        domain_contains: params.domain_contains.clone(),
+        is_valid: params.is_valid_eq,
+        days_until_expiry_lte: params.days_until_expiry_lte,
+    };
 
     let total = match state
         .cert_store
-        .count_latest_results(domain_contains, is_valid, days_lte)
+        .count_latest_results(&cert_status_filter)
+        .await
     {
         Ok(c) => c,
         Err(e) => {
@@ -546,7 +548,8 @@ async fn cert_status_all(
 
     match state
         .cert_store
-        .query_latest_results(domain_contains, is_valid, days_lte, limit, offset)
+        .query_latest_results(&cert_status_filter, limit, offset)
+        .await
     {
         Ok(results) => {
             success_paginated_response(StatusCode::OK, &trace_id, results, total, limit, offset)
@@ -581,13 +584,14 @@ async fn cert_status_summary(
     State(state): State<AppState>,
     Query(params): Query<CertStatusSummaryParams>,
 ) -> impl IntoResponse {
-    let domain_contains = params.domain_contains.as_deref();
-    let is_valid = params.is_valid_eq;
-    let days_lte = params.days_until_expiry_lte;
-
     match state
         .cert_store
-        .cert_status_summary(domain_contains, is_valid, days_lte)
+        .cert_status_summary(&oxmon_storage::CertStatusFilter {
+            domain_contains: params.domain_contains.clone(),
+            is_valid: params.is_valid_eq,
+            days_until_expiry_lte: params.days_until_expiry_lte,
+        })
+        .await
     {
         Ok(summary) => success_response(StatusCode::OK, &trace_id, summary),
         Err(e) => {
@@ -624,7 +628,7 @@ async fn cert_status_by_domain(
     State(state): State<AppState>,
     Path(domain): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.get_domain_by_name(&domain) {
+    match state.cert_store.get_domain_by_name(&domain).await {
         Ok(None) => {
             return common_error_response(
                 StatusCode::NOT_FOUND,
@@ -647,7 +651,7 @@ async fn cert_status_by_domain(
         _ => {}
     }
 
-    match state.cert_store.query_result_by_domain(&domain) {
+    match state.cert_store.query_result_by_domain(&domain).await {
         Ok(Some(result)) => success_response(StatusCode::OK, &trace_id, result),
         Ok(None) => common_error_response(
             StatusCode::NOT_FOUND,
@@ -690,7 +694,7 @@ async fn check_single_domain(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let domain = match state.cert_store.get_domain_by_id(&id) {
+    let domain = match state.cert_store.get_domain_by_id(&id).await {
         Ok(Some(d)) => d,
         Ok(None) => {
             return common_error_response(
@@ -746,7 +750,7 @@ async fn check_all_domains(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    let domains = match state.cert_store.query_domains(Some(true), None, 10000, 0) {
+    let domains = match state.cert_store.query_domains(Some(true), None, 10000, 0).await {
         Ok(d) => d,
         Err(e) => {
             tracing::error!(error = %e, "Query failed");
@@ -797,16 +801,17 @@ async fn store_check_result(
     port: i32,
     result: &oxmon_common::types::CertCheckResult,
 ) -> anyhow::Result<()> {
-    state.cert_store.insert_check_result(result)?;
+    state.cert_store.insert_check_result(result).await?;
     state
         .cert_store
-        .update_last_checked_at(domain_id, Utc::now())?;
+        .update_last_checked_at(domain_id, Utc::now())
+        .await?;
 
     // Sync certificate details
     match CertificateCollector::new(state.connect_timeout_secs).await {
         Ok(collector) => match collector.collect(domain_name, port as u16).await {
             Ok(details) => {
-                if let Err(e) = state.cert_store.upsert_certificate_details(&details) {
+                if let Err(e) = state.cert_store.upsert_certificate_details(&details).await {
                     tracing::error!(domain = %domain_name, error = %e, "Failed to store certificate details");
                 }
             }
@@ -904,7 +909,7 @@ async fn cert_check_history(
     Query(params): Query<CertHistoryParams>,
 ) -> impl IntoResponse {
     // Verify domain exists
-    match state.cert_store.get_domain_by_id(&id) {
+    match state.cert_store.get_domain_by_id(&id).await {
         Ok(None) => {
             return common_error_response(
                 StatusCode::NOT_FOUND,
@@ -931,7 +936,7 @@ async fn cert_check_history(
     let offset = PaginationParams::resolve_offset(params.offset);
 
     // 获取总数
-    let total = match state.cert_store.count_check_results_by_domain_id(&id) {
+    let total = match state.cert_store.count_check_results_by_domain_id(&id).await {
         Ok(count) => count,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count cert check history");
@@ -948,6 +953,7 @@ async fn cert_check_history(
     match state
         .cert_store
         .query_check_results_by_domain_id(&id, limit, offset)
+        .await
     {
         Ok(results) => {
             success_paginated_response(StatusCode::OK, &trace_id, results, total, limit, offset)

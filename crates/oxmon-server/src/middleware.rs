@@ -104,7 +104,7 @@ mod tests {
     use oxmon_alert::engine::AlertEngine;
     use oxmon_notify::manager::NotificationManager;
     use oxmon_notify::plugin::ChannelRegistry;
-    use oxmon_storage::cert_store::CertStore;
+    use oxmon_storage::CertStore;
     use oxmon_storage::engine::SqliteStorageEngine;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
@@ -113,14 +113,19 @@ mod tests {
     fn build_mock_state(app_id_config: AppIdConfig) -> (AppState, TempDir) {
         let temp_dir = tempfile::tempdir().unwrap();
         let storage = Arc::new(SqliteStorageEngine::new(temp_dir.path()).unwrap());
-        let cert_store = Arc::new(CertStore::new(temp_dir.path()).unwrap());
+        let cert_store = Arc::new(
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(CertStore::new(temp_dir.path()))
+                .unwrap(),
+        );
         let alert_engine = Arc::new(Mutex::new(AlertEngine::new(vec![])));
         let notifier = Arc::new(NotificationManager::new(
             ChannelRegistry::default(),
             cert_store.clone(),
             0,
         ));
-        let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(10, cert_store.clone())));
+        let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(10)));
 
         let config = ServerConfig {
             grpc_port: 9090,

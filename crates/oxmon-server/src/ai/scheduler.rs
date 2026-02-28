@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use oxmon_ai::{AIAnalyzer, AnalysisInput, HistoryMetric, MetricSnapshot, ZhipuProvider};
 use oxmon_notify::manager::NotificationManager;
 use oxmon_notify::report_template::{ReportParams, ReportRenderer};
-use oxmon_storage::cert_store::CertStore;
+use oxmon_storage::CertStore;
 use oxmon_storage::engine::SqliteStorageEngine;
 use oxmon_storage::StorageEngine;
 use std::sync::Arc;
@@ -59,7 +59,8 @@ impl AIReportScheduler {
         // 1. 检查是否启用定时发送
         let schedule_enabled = self
             .cert_store
-            .get_runtime_setting_bool("ai_report_schedule_enabled", true);
+            .get_runtime_setting_bool("ai_report_schedule_enabled", true)
+            .await;
 
         if !schedule_enabled {
             tracing::debug!("AI report schedule is disabled");
@@ -70,6 +71,7 @@ impl AIReportScheduler {
         let accounts = self
             .cert_store
             .list_ai_accounts(None, Some(true), 1000, 0)
+            .await
             .context("Failed to load AI accounts")?;
 
         if accounts.is_empty() {
@@ -79,7 +81,8 @@ impl AIReportScheduler {
         // 3. 获取配置的发送时间
         let schedule_time = self
             .cert_store
-            .get_runtime_setting_string("ai_report_schedule_time", "08:00");
+            .get_runtime_setting_string("ai_report_schedule_time", "08:00")
+            .await;
 
         // 4. 检查每个账号是否到期需要生成报告
         for account in accounts {
@@ -99,7 +102,7 @@ impl AIReportScheduler {
 
             // 检查是否应该生成报告（支持定时和间隔两种模式）
             let should_collect =
-                self.should_collect(&account.config_key, interval_secs, &schedule_time)?;
+                self.should_collect(&account.config_key, interval_secs, &schedule_time).await?;
 
             if should_collect {
                 tracing::info!(
@@ -121,7 +124,7 @@ impl AIReportScheduler {
         Ok(())
     }
 
-    fn should_collect(
+    async fn should_collect(
         &self,
         config_key: &str,
         interval_secs: i64,
@@ -130,16 +133,15 @@ impl AIReportScheduler {
         // 查询该账号最近一次生成报告的时间
         let last_report = self
             .cert_store
-            .get_latest_ai_report_by_account(config_key)?;
+            .get_latest_ai_report_by_account(config_key)
+            .await?;
 
         let now = chrono::Utc::now();
 
         // 如果从未生成过，立即生成
-        if last_report.is_none() {
+        let Some(last_report) = last_report else {
             return Ok(true);
-        }
-
-        let last_report = last_report.unwrap();
+        };
         let last_report_date = last_report.created_at.date_naive();
         let today = now.date_naive();
 
@@ -194,7 +196,7 @@ impl AIReportScheduler {
 
     async fn generate_report(
         &self,
-        account: &oxmon_storage::cert_store::AIAccountRow,
+        account: &oxmon_storage::AIAccountRow,
     ) -> Result<()> {
         tracing::info!(
             account_id = %account.id,
@@ -225,7 +227,8 @@ impl AIReportScheduler {
         // 4. 获取系统语言
         let locale = self
             .cert_store
-            .get_runtime_setting_string("language", "zh-CN");
+            .get_runtime_setting_string("language", "zh-CN")
+            .await;
 
         // 5. 构建分析输入
         let report_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
@@ -301,7 +304,7 @@ impl AIReportScheduler {
             raw_metrics_json: serde_json::to_string(&current_metrics)?,
         };
 
-        let report_id = self.cert_store.save_ai_report(&report_request)?;
+        let report_id = self.cert_store.save_ai_report(&report_request).await?;
 
         tracing::info!(
             report_id = %report_id,
@@ -324,7 +327,7 @@ impl AIReportScheduler {
 
     fn build_analyzer(
         &self,
-        account: &oxmon_storage::cert_store::AIAccountRow,
+        account: &oxmon_storage::AIAccountRow,
     ) -> Result<Box<dyn AIAnalyzer>> {
         let provider = &account.provider;
 
@@ -377,7 +380,7 @@ impl AIReportScheduler {
         // 查询所有 Agent 最新的 CPU/内存/磁盘指标
         // 优先使用本地agents，其次使用云实例
 
-        let agents = self.cert_store.list_agents(1000, 0)?;
+        let agents = self.cert_store.list_agents(1000, 0).await?;
         let mut results = Vec::new();
 
         // 如果有本地agents，查询它们的指标
@@ -432,9 +435,10 @@ impl AIReportScheduler {
         // 注意：这里需要查询实际的metrics数据，但如果没有metrics，则从cloud API实时查询
 
         // 查询所有运行中的云实例（不过滤provider、region、status）
-        let instances =
-            self.cert_store
-                .list_cloud_instances(None, None, Some("Running"), None, 1000, 0)?;
+        let instances = self
+            .cert_store
+            .list_cloud_instances(None, None, Some("Running"), None, 1000, 0)
+            .await?;
 
         if instances.is_empty() {
             return Ok(Vec::new());
@@ -517,13 +521,14 @@ impl AIReportScheduler {
 
     async fn query_history_averages(&self) -> Result<Vec<HistoryAverage>> {
         // 查询历史 7 天的指标均值
-        let agents = self.cert_store.list_agents(1000, 0)?;
+        let agents = self.cert_store.list_agents(1000, 0).await?;
         let mut results = Vec::new();
 
         // 同时查询云实例
-        let cloud_instances =
-            self.cert_store
-                .list_cloud_instances(None, None, Some("Running"), None, 1000, 0)?;
+        let cloud_instances = self
+            .cert_store
+            .list_cloud_instances(None, None, Some("Running"), None, 1000, 0)
+            .await?;
 
         // 合并本地 agents 和云实例 IDs
         let mut all_agent_ids = Vec::new();
@@ -560,7 +565,7 @@ impl AIReportScheduler {
     ) -> Result<()> {
         // 1. 检查是否启用通知发送
         let send_notification =
-            cert_store.get_runtime_setting_bool("ai_report_send_notification", true);
+            cert_store.get_runtime_setting_bool("ai_report_send_notification", true).await;
 
         if !send_notification {
             tracing::info!(
@@ -572,11 +577,12 @@ impl AIReportScheduler {
 
         // 2. 加载报告
         let report = cert_store
-            .get_ai_report_by_id(report_id)?
+            .get_ai_report_by_id(report_id)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("Report not found"))?;
 
         // 3. 获取系统语言
-        let locale = cert_store.get_runtime_setting_string("language", "zh-CN");
+        let locale = cert_store.get_runtime_setting_string("language", "zh-CN").await;
 
         tracing::info!(
             report_id = %report_id,
@@ -635,7 +641,7 @@ impl AIReportScheduler {
         );
 
         // 7. 标记报告已通知
-        cert_store.mark_ai_report_notified(report_id)?;
+        cert_store.mark_ai_report_notified(report_id).await?;
 
         tracing::info!(
             report_id = %report_id,

@@ -48,6 +48,7 @@ impl MetricService for MetricServiceImpl {
                 .state
                 .cert_store
                 .get_agent_auth(&agent_id)
+                .await
                 .map_err(|e| {
                     tracing::error!(error = %e, "Failed to query agent whitelist");
                     Status::internal("Authentication error")
@@ -169,7 +170,7 @@ impl MetricService for MetricServiceImpl {
             .update_agent(&proto.agent_id);
 
         // Update agent in database
-        if let Err(e) = self.state.cert_store.upsert_agent(&proto.agent_id) {
+        if let Err(e) = self.state.cert_store.upsert_agent(&proto.agent_id).await {
             tracing::error!(error = %e, agent_id = %proto.agent_id, "Failed to upsert agent to database");
             // 不返回错误，因为指标已经成功写入
         }
@@ -179,7 +180,8 @@ impl MetricService for MetricServiceImpl {
             let locale = self
                 .state
                 .cert_store
-                .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
+                .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
+                .await;
             let mut engine = self
                 .state
                 .alert_engine

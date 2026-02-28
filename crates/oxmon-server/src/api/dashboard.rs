@@ -77,14 +77,16 @@ async fn dashboard_overview(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    let registry = state
-        .agent_registry
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let agents = registry.list_agents();
-    let active_agents = agents.iter().filter(|a| a.active).count();
-    let total_agents = agents.len();
-    drop(registry);
+    let (active_agents, total_agents) = {
+        let registry = state
+            .agent_registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let agents = registry.list_agents();
+        let active = agents.iter().filter(|a| a.active).count();
+        let total = agents.len();
+        (active, total)
+    };
 
     // Alert summary for last 24h
     let to = Utc::now();
@@ -98,7 +100,7 @@ async fn dashboard_overview(
     };
 
     // Cert summary
-    let cert_summary = match state.cert_store.cert_summary() {
+    let cert_summary = match state.cert_store.cert_summary().await {
         Ok(s) => CertSummary {
             total_domains: s.total_domains,
             valid: s.valid,
@@ -121,6 +123,7 @@ async fn dashboard_overview(
         let account_summary = state
             .cert_store
             .cloud_account_summary()
+            .await
             .map_err(|e| {
                 tracing::error!(error = %e, "Failed to aggregate cloud account summary for dashboard");
                 e
@@ -129,6 +132,7 @@ async fn dashboard_overview(
         let total_instances = state
             .cert_store
             .cloud_instance_status_summary()
+            .await
             .map_err(|e| {
                 tracing::error!(
                     error = %e,

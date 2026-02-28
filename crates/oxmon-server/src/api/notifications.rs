@@ -9,7 +9,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use oxmon_common::types::UpdateNotificationChannelRequest;
-use oxmon_storage::cert_store::{NotificationChannelRow, NotificationLogFilter, SilenceWindowRow};
+use oxmon_storage::{NotificationChannelRow, NotificationLogFilter, SilenceWindowFilter, SilenceWindowRow};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -42,10 +42,11 @@ fn validate_time_format(time: &str) -> bool {
     }
 }
 
-fn build_channel_overview(state: &AppState, ch: NotificationChannelRow) -> ChannelOverview {
+async fn build_channel_overview(state: &AppState, ch: NotificationChannelRow) -> ChannelOverview {
     let recipients = state
         .cert_store
         .list_recipients_by_channel(&ch.id)
+        .await
         .unwrap_or_default()
         .into_iter()
         .map(|r| r.value)
@@ -119,17 +120,18 @@ async fn list_channels(
 ) -> impl IntoResponse {
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
-    let name_contains = params.name_contains.as_deref();
-    let channel_type = params.channel_type_eq.as_deref();
-    let enabled = params.enabled_eq;
-    let min_severity = params.min_severity_eq.as_deref();
 
-    let total = match state.cert_store.count_notification_channels(
-        name_contains,
-        channel_type,
-        enabled,
-        min_severity,
-    ) {
+    let channel_filter = oxmon_storage::NotificationChannelFilter {
+        name_contains: params.name_contains.clone(),
+        channel_type_eq: params.channel_type_eq.clone(),
+        enabled_eq: params.enabled_eq,
+        min_severity_eq: params.min_severity_eq.clone(),
+    };
+    let total = match state
+        .cert_store
+        .count_notification_channels(&channel_filter)
+        .await
+    {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count notification channels");
@@ -143,18 +145,15 @@ async fn list_channels(
         }
     };
 
-    match state.cert_store.list_notification_channels(
-        name_contains,
-        channel_type,
-        enabled,
-        min_severity,
-        limit,
-        offset,
-    ) {
+    match state
+        .cert_store
+        .list_notification_channels(&channel_filter, limit, offset)
+        .await
+    {
         Ok(channels) => {
             let mut result = Vec::with_capacity(channels.len());
             for ch in channels {
-                result.push(build_channel_overview(&state, ch));
+                result.push(build_channel_overview(&state, ch).await);
             }
             success_paginated_response(StatusCode::OK, &trace_id, result, total, limit, offset)
         }
@@ -189,11 +188,11 @@ async fn get_channel_by_id(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.get_notification_channel_by_id(&id) {
+    match state.cert_store.get_notification_channel_by_id(&id).await {
         Ok(Some(ch)) => success_response(
             StatusCode::OK,
             &trace_id,
-            build_channel_overview(&state, ch),
+            build_channel_overview(&state, ch).await,
         ),
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
@@ -235,7 +234,7 @@ async fn test_channel(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let ch = match state.cert_store.get_notification_channel_by_id(&id) {
+    let ch = match state.cert_store.get_notification_channel_by_id(&id).await {
         Ok(Some(ch)) => ch,
         Ok(None) => {
             return error_response(
@@ -292,6 +291,7 @@ async fn test_channel(
     let recipients: Vec<String> = state
         .cert_store
         .list_recipients_by_channel(&ch.id)
+        .await
         .unwrap_or_default()
         .into_iter()
         .map(|r| r.value)
@@ -318,7 +318,8 @@ async fn test_channel(
 
     let locale = state
         .cert_store
-        .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
+        .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
+        .await;
     let start = tokio::time::Instant::now();
     let result = channel.send(&test_event, &recipients, &locale).await;
     let duration_ms = start.elapsed().as_millis() as i64;
@@ -342,7 +343,8 @@ async fn test_channel(
         &test_event,
         &ctx,
         &send_result,
-    );
+    )
+    .await;
 
     match result {
         Ok(_) => success_empty_response(StatusCode::OK, &trace_id, "Test notification sent"),
@@ -380,7 +382,16 @@ async fn test_cert_report(
     // 读取所有已启用域名的最新检查结果（上限 1000 条）
     let all_results = match state
         .cert_store
-        .query_latest_results(None, None, None, 1000, 0)
+        .query_latest_results(
+            &oxmon_storage::CertStatusFilter {
+                domain_contains: None,
+                is_valid: None,
+                days_until_expiry_lte: None,
+            },
+            1000,
+            0,
+        )
+        .await
     {
         Ok(r) => r,
         Err(e) => {
@@ -400,7 +411,7 @@ async fn test_cert_report(
     // 过滤出需要告警的域名：证书无效 或 30 天内到期
     let alert_items: Vec<CertAlertDetail> = all_results
         .into_iter()
-        .filter(|r| !r.is_valid || r.days_until_expiry.map_or(false, |d| d <= 30))
+        .filter(|r| !r.is_valid || r.days_until_expiry.is_some_and(|d| d <= 30))
         .map(|r| {
             let days = r.days_until_expiry.unwrap_or(i64::MIN);
             let severity = if !r.is_valid && r.days_until_expiry.is_none() {
@@ -435,7 +446,8 @@ async fn test_cert_report(
 
     let locale = state
         .cert_store
-        .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
+        .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
+        .await;
 
     tracing::info!(
         locale = %locale,
@@ -559,13 +571,14 @@ async fn create_channel(
     };
 
     let channel_id = row.id.clone();
-    match state.cert_store.insert_notification_channel(&row) {
+    match state.cert_store.insert_notification_channel(&row).await {
         Ok(_ch) => {
             // 写入收件人
             if !req.recipients.is_empty() {
                 let _ = state
                     .cert_store
-                    .set_channel_recipients(&channel_id, &req.recipients);
+                    .set_channel_recipients(&channel_id, &req.recipients)
+                    .await;
             }
             // 触发热重载
             if let Err(e) = state.notifier.reload().await {
@@ -622,7 +635,7 @@ async fn update_channel(
     let recipients_to_update = req.recipients.clone();
 
     // 转换为存储层的更新类型
-    let update = oxmon_storage::cert_store::NotificationChannelUpdate {
+    let update = oxmon_storage::NotificationChannelUpdate {
         name: req.name,
         description: req.description,
         min_severity: req.min_severity,
@@ -631,11 +644,11 @@ async fn update_channel(
         recipients: req.recipients,
     };
 
-    match state.cert_store.update_notification_channel(&id, &update) {
+    match state.cert_store.update_notification_channel(&id, &update).await {
         Ok(Some(_ch)) => {
             // 如果提供了 recipients，同时更新收件人列表
             if let Some(recipients) = recipients_to_update {
-                if let Err(e) = state.cert_store.set_channel_recipients(&id, &recipients) {
+                if let Err(e) = state.cert_store.set_channel_recipients(&id, &recipients).await {
                     tracing::warn!(
                         channel_id = %id,
                         error = %e,
@@ -689,7 +702,7 @@ async fn delete_channel(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.delete_notification_channel(&id) {
+    match state.cert_store.delete_notification_channel(&id).await {
         Ok(true) => {
             if let Err(e) = state.notifier.reload().await {
                 tracing::warn!(error = %e, "Failed to reload channels after delete");
@@ -757,7 +770,7 @@ async fn list_silence_windows(
     let offset = PaginationParams::resolve_offset(params.offset);
     let recurrence = params.recurrence_eq.as_deref();
 
-    let total = match state.cert_store.count_silence_windows(recurrence) {
+    let total = match state.cert_store.count_silence_windows(recurrence).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count silence windows");
@@ -773,7 +786,12 @@ async fn list_silence_windows(
 
     match state
         .cert_store
-        .list_silence_windows(recurrence, limit, offset)
+        .list_silence_windows(
+            &SilenceWindowFilter { recurrence_eq: recurrence.map(|s| s.to_string()) },
+            limit,
+            offset,
+        )
+        .await
     {
         Ok(windows) => {
             success_paginated_response(StatusCode::OK, &trace_id, windows, total, limit, offset)
@@ -868,7 +886,7 @@ async fn create_silence_window(
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };
-    match state.cert_store.insert_silence_window(&row) {
+    match state.cert_store.insert_silence_window(&row).await {
         Ok(sw) => crate::api::success_id_response(StatusCode::CREATED, &trace_id, sw.id),
         Err(e) => {
             tracing::error!(error = %e, "Failed to create silence window");
@@ -901,7 +919,7 @@ async fn get_silence_window(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.get_silence_window_by_id(&id) {
+    match state.cert_store.get_silence_window_by_id(&id).await {
         Ok(Some(window)) => success_response(StatusCode::OK, &trace_id, window),
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
@@ -1003,7 +1021,7 @@ async fn update_silence_window(
 
     // If only one time is provided, need to check against existing value
     if req.start_time.is_some() != req.end_time.is_some() {
-        if let Ok(Some(existing)) = state.cert_store.get_silence_window_by_id(&id) {
+        if let Ok(Some(existing)) = state.cert_store.get_silence_window_by_id(&id).await {
             let final_start = req.start_time.as_ref().unwrap_or(&existing.start_time);
             let final_end = req.end_time.as_ref().unwrap_or(&existing.end_time);
             if final_start >= final_end {
@@ -1018,9 +1036,19 @@ async fn update_silence_window(
         }
     }
 
+    let recurrence_ref: Option<Option<&str>> = req
+        .recurrence
+        .as_ref()
+        .map(|r| r.as_deref());
     match state
         .cert_store
-        .update_silence_window(&id, req.start_time, req.end_time, req.recurrence)
+        .update_silence_window(
+            &id,
+            req.start_time.as_deref(),
+            req.end_time.as_deref(),
+            recurrence_ref,
+        )
+        .await
     {
         Ok(Some(window)) => crate::api::success_id_response(StatusCode::OK, &trace_id, window.id),
         Ok(None) => error_response(
@@ -1061,7 +1089,7 @@ async fn delete_silence_window(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.delete_silence_window(&id) {
+    match state.cert_store.delete_silence_window(&id).await {
         Ok(true) => crate::api::success_id_response(StatusCode::OK, &trace_id, id),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
@@ -1186,7 +1214,7 @@ async fn list_notification_logs(
     let limit = PaginationParams::resolve_limit(query.limit);
     let offset = PaginationParams::resolve_offset(query.offset);
 
-    let total = match state.cert_store.count_notification_logs(&filter) {
+    let total = match state.cert_store.count_notification_logs(&filter).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count notification logs");
@@ -1203,6 +1231,7 @@ async fn list_notification_logs(
     match state
         .cert_store
         .list_notification_logs(&filter, limit, offset)
+        .await
     {
         Ok(rows) => {
             let items: Vec<NotificationLogItem> = rows
@@ -1264,7 +1293,7 @@ async fn get_notification_log(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.get_notification_log_by_id(&id) {
+    match state.cert_store.get_notification_log_by_id(&id).await {
         Ok(Some(r)) => {
             let item = NotificationLogItem {
                 id: r.id,
@@ -1365,7 +1394,7 @@ async fn notification_log_summary(
         end_time: query.end_time.map(|v| v as i64),
     };
 
-    let total = match state.cert_store.count_notification_logs(&base_filter) {
+    let total = match state.cert_store.count_notification_logs(&base_filter).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count notification logs");
@@ -1383,7 +1412,7 @@ async fn notification_log_summary(
         status: Some("success".to_string()),
         ..base_filter
     };
-    let success = match state.cert_store.count_notification_logs(&success_filter) {
+    let success = match state.cert_store.count_notification_logs(&success_filter).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count success notification logs");

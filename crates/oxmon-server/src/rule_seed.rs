@@ -1,5 +1,5 @@
 use chrono::Utc;
-use oxmon_storage::cert_store::{AlertRuleRow, CertStore};
+use oxmon_storage::{AlertRuleRow, CertStore};
 
 /// Default alert rule definitions for first-time startup.
 struct RuleDef {
@@ -9,7 +9,7 @@ struct RuleDef {
     agent_pattern: &'static str,
     severity: &'static str,
     config_json: &'static str,
-    silence_secs: u64,
+    silence_secs: i64,
 }
 
 const DEFAULT_RULES: &[RuleDef] = &[
@@ -161,8 +161,8 @@ const DEFAULT_RULES: &[RuleDef] = &[
 ///
 /// This runs after TOML migration so that TOML-migrated rules take priority.
 /// Only seeds when `count_alert_rules() == 0`.
-pub fn init_default_rules(cert_store: &CertStore) -> anyhow::Result<usize> {
-    let count = cert_store.count_alert_rules(None, None, None, None, None)?;
+pub async fn init_default_rules(cert_store: &CertStore) -> anyhow::Result<usize> {
+    let count = cert_store.count_alert_rules(None, None).await?;
     if count > 0 {
         tracing::debug!(
             existing = count,
@@ -189,7 +189,7 @@ pub fn init_default_rules(cert_store: &CertStore) -> anyhow::Result<usize> {
             created_at: now,
             updated_at: now,
         };
-        match cert_store.insert_alert_rule(&row) {
+        match cert_store.insert_alert_rule(&row).await {
             Ok(_) => {
                 inserted += 1;
                 tracing::info!(name = %def.name, rule_type = %def.rule_type, "Seeded alert rule");

@@ -161,6 +161,7 @@ async fn list_ai_accounts(
     let total = match state
         .cert_store
         .count_ai_accounts(query.provider.as_deref(), query.enabled)
+        .await
     {
         Ok(count) => count,
         Err(e) => {
@@ -175,12 +176,11 @@ async fn list_ai_accounts(
     };
 
     // 获取列表数据
-    let rows = match state.cert_store.list_ai_accounts(
-        query.provider.as_deref(),
-        query.enabled,
-        limit,
-        offset,
-    ) {
+    let rows = match state
+        .cert_store
+        .list_ai_accounts(query.provider.as_deref(), query.enabled, limit, offset)
+        .await
+    {
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!(error = %e, "Failed to list AI accounts");
@@ -253,7 +253,8 @@ async fn get_ai_account(
 ) -> Result<Json<AIAccountResponse>, AppError> {
     let row = state
         .cert_store
-        .get_ai_account_by_id(&id)?
+        .get_ai_account_by_id(&id)
+        .await?
         .ok_or(AppError::NotFound("AI account not found".into()))?;
 
     // 构建 config_json（脱敏处理）
@@ -341,7 +342,7 @@ async fn create_ai_account(
         Some(extra_fields.to_string())
     };
 
-    let row = oxmon_storage::cert_store::AIAccountRow {
+    let row = oxmon_storage::AIAccountRow {
         id: oxmon_common::id::next_id(),
         config_key: req.config_key,
         provider: req.provider,
@@ -356,7 +357,7 @@ async fn create_ai_account(
         updated_at: chrono::Utc::now(),
     };
 
-    let inserted = state.cert_store.insert_ai_account(&row)?;
+    let inserted = state.cert_store.insert_ai_account(&row).await?;
 
     // 构建响应配置（脱敏）
     let config = req.config;
@@ -399,7 +400,8 @@ async fn update_ai_account(
     // 验证账号存在
     state
         .cert_store
-        .get_ai_account_by_id(&id)?
+        .get_ai_account_by_id(&id)
+        .await?
         .ok_or(AppError::NotFound("AI account not found".into()))?;
 
     // 从 config JSON 中提取字段（如果提供）
@@ -442,20 +444,24 @@ async fn update_ai_account(
     };
 
     // 更新账号
-    state.cert_store.update_ai_account(
-        &id,
-        req.display_name,
-        req.description,
-        api_key,
-        api_secret,
-        model,
-        extra_config,
-        req.enabled,
-    )?;
+    state
+        .cert_store
+        .update_ai_account(
+            &id,
+            req.display_name,
+            req.description,
+            api_key,
+            api_secret,
+            model,
+            extra_config,
+            req.enabled,
+        )
+        .await?;
 
     let updated = state
         .cert_store
-        .get_ai_account_by_id(&id)?
+        .get_ai_account_by_id(&id)
+        .await?
         .ok_or(AppError::NotFound(
             "AI account not found after update".into(),
         ))?;
@@ -511,7 +517,7 @@ async fn delete_ai_account(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let deleted = state.cert_store.delete_ai_account(&id)?;
+    let deleted = state.cert_store.delete_ai_account(&id).await?;
     if deleted {
         Ok(StatusCode::NO_CONTENT)
     } else {
@@ -541,6 +547,7 @@ async fn list_ai_reports(
     let total = match state
         .cert_store
         .count_ai_reports(query.report_date.as_deref(), query.risk_level.as_deref())
+        .await
     {
         Ok(count) => count,
         Err(e) => {
@@ -555,12 +562,16 @@ async fn list_ai_reports(
     };
 
     // 获取列表数据（带过滤）
-    let rows = match state.cert_store.list_ai_reports(
-        query.report_date.as_deref(),
-        query.risk_level.as_deref(),
-        limit,
-        offset,
-    ) {
+    let rows = match state
+        .cert_store
+        .list_ai_reports(
+            query.report_date.as_deref(),
+            query.risk_level.as_deref(),
+            limit,
+            offset,
+        )
+        .await
+    {
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!(error = %e, "Failed to list AI reports");
@@ -610,7 +621,8 @@ async fn get_ai_report(
 ) -> Result<Json<AIReportRow>, AppError> {
     let report = state
         .cert_store
-        .get_ai_report_by_id(&id)?
+        .get_ai_report_by_id(&id)
+        .await?
         .ok_or(AppError::NotFound("Report not found".into()))?;
 
     Ok(Json(report))
@@ -635,7 +647,8 @@ async fn view_ai_report_html(
 ) -> Result<Html<String>, AppError> {
     let report = state
         .cert_store
-        .get_ai_report_by_id(&id)?
+        .get_ai_report_by_id(&id)
+        .await?
         .ok_or(AppError::NotFound("Report not found".into()))?;
 
     Ok(Html(report.html_content))

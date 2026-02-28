@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use oxmon_cloud::{build_provider, CloudAccountConfig};
-use oxmon_storage::cert_store::{CloudAccountRow, CloudInstanceRow};
+use oxmon_storage::{CloudAccountRow, CloudInstanceRow};
 use oxmon_storage::StorageEngine;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -473,7 +473,8 @@ async fn list_cloud_accounts(
 
     let total = match state
         .cert_store
-        .count_cloud_accounts(params.provider.clone(), params.enabled)
+        .count_cloud_accounts(params.provider.as_deref(), params.enabled)
+        .await
     {
         Ok(c) => c,
         Err(e) => {
@@ -490,7 +491,8 @@ async fn list_cloud_accounts(
 
     match state
         .cert_store
-        .list_cloud_accounts(params.provider, params.enabled, limit, offset)
+        .list_cloud_accounts(params.provider.as_deref(), params.enabled, limit, offset)
+        .await
     {
         Ok(rows) => {
             let resp: Vec<CloudAccountResponse> = rows
@@ -577,7 +579,7 @@ async fn create_cloud_account(
         updated_at: now,
     };
 
-    match state.cert_store.insert_cloud_account(&row) {
+    match state.cert_store.insert_cloud_account(&row).await {
         Ok(row) => {
             let resp = row_to_cloud_account_response(&state, row);
             success_response(StatusCode::CREATED, &trace_id, resp)
@@ -625,7 +627,7 @@ async fn get_cloud_account(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.get_cloud_account_by_id(&id) {
+    match state.cert_store.get_cloud_account_by_id(&id).await {
         Ok(row) => {
             let resp = row_to_cloud_account_response(&state, row);
             success_response(StatusCode::OK, &trace_id, resp)
@@ -676,7 +678,7 @@ async fn update_cloud_account(
     Json(req): Json<UpdateCloudAccountRequest>,
 ) -> impl IntoResponse {
     // Get existing account
-    let existing = match state.cert_store.get_cloud_account_by_id(&id) {
+    let existing = match state.cert_store.get_cloud_account_by_id(&id).await {
         Ok(row) => row,
         Err(e) => {
             let err_msg = e.to_string();
@@ -726,7 +728,7 @@ async fn update_cloud_account(
         updated_at: chrono::Utc::now(),
     };
 
-    match state.cert_store.update_cloud_account(&id, &updated) {
+    match state.cert_store.update_cloud_account(&id, &updated).await {
         Ok(row) => {
             let resp = row_to_cloud_account_response(&state, row);
             success_response(StatusCode::OK, &trace_id, resp)
@@ -763,7 +765,7 @@ async fn delete_cloud_account(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.cert_store.delete_cloud_account(&id) {
+    match state.cert_store.delete_cloud_account(&id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
@@ -804,7 +806,7 @@ async fn test_cloud_account_connection(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let row = match state.cert_store.get_cloud_account_by_id(&id) {
+    let row = match state.cert_store.get_cloud_account_by_id(&id).await {
         Ok(row) => row,
         Err(e) => {
             let err_msg = e.to_string();
@@ -881,7 +883,7 @@ async fn trigger_cloud_account_collection(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let row = match state.cert_store.get_cloud_account_by_id(&id) {
+    let row = match state.cert_store.get_cloud_account_by_id(&id).await {
         Ok(row) => row,
         Err(e) => {
             let err_msg = e.to_string();
@@ -1114,12 +1116,16 @@ async fn list_cloud_instances(
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
 
-    let total = match state.cert_store.count_cloud_instances(
-        params.provider.as_deref(),
-        params.region.as_deref(),
-        params.status.as_deref(),
-        params.search.as_deref(),
-    ) {
+    let total = match state
+        .cert_store
+        .count_cloud_instances(
+            params.provider.as_deref(),
+            params.region.as_deref(),
+            params.status.as_deref(),
+            params.search.as_deref(),
+        )
+        .await
+    {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count cloud instances");
@@ -1133,14 +1139,18 @@ async fn list_cloud_instances(
         }
     };
 
-    match state.cert_store.list_cloud_instances(
-        params.provider.as_deref(),
-        params.region.as_deref(),
-        params.status.as_deref(),
-        params.search.as_deref(),
-        limit,
-        offset,
-    ) {
+    match state
+        .cert_store
+        .list_cloud_instances(
+            params.provider.as_deref(),
+            params.region.as_deref(),
+            params.status.as_deref(),
+            params.search.as_deref(),
+            limit,
+            offset,
+        )
+        .await
+    {
         Ok(rows) => {
             let resp: Vec<CloudInstanceResponse> = rows
                 .into_iter()
@@ -1194,7 +1204,7 @@ async fn get_cloud_instance_detail(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     // 1. Load instance metadata from cloud_instances table
-    let instance = match state.cert_store.get_cloud_instance_by_id(&id) {
+    let instance = match state.cert_store.get_cloud_instance_by_id(&id).await {
         Ok(Some(row)) => row,
         Ok(None) => {
             return error_response(
@@ -1441,7 +1451,7 @@ async fn batch_create_cloud_accounts(
 
         let config_key = format!("cloud_{}_{}", req.provider, account_name.replace(' ', "_"));
         let now = chrono::Utc::now();
-        let row = oxmon_storage::cert_store::CloudAccountRow {
+        let row = oxmon_storage::CloudAccountRow {
             id: oxmon_common::id::next_id(),
             config_key,
             provider: req.provider.clone(),
@@ -1457,7 +1467,7 @@ async fn batch_create_cloud_accounts(
             updated_at: now,
         };
 
-        match state.cert_store.insert_cloud_account(&row) {
+        match state.cert_store.insert_cloud_account(&row).await {
             Ok(_) => created += 1,
             Err(e) => {
                 let err_msg = e.to_string();

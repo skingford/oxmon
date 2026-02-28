@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use oxmon_common::proto::metric_service_client::MetricServiceClient;

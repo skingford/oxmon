@@ -393,7 +393,7 @@ fn html_escape(s: &str) -> String {
 mod tests {
     use super::*;
 
-    fn make_params(locale: &'static str) -> (Vec<CertAlertDetail>, String) {
+    fn make_params(_locale: &'static str) -> (Vec<CertAlertDetail>, String) {
         let items = vec![
             CertAlertDetail {
                 domain: "api.example.com".to_string(),

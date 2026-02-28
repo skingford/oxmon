@@ -17,7 +17,7 @@ use oxmon_server::config::ServerConfig;
 use oxmon_server::grpc;
 use oxmon_server::state::{AgentRegistry, AppState};
 use oxmon_storage::auth::{hash_token, PasswordEncryptor};
-use oxmon_storage::cert_store::CertStore;
+use oxmon_storage::CertStore;
 use oxmon_storage::engine::SqliteStorageEngine;
 use rsa::{Oaep, RsaPublicKey};
 use serde::de::DeserializeOwned;
@@ -42,15 +42,21 @@ fn ensure_rustls_provider() {
 }
 
 pub fn build_test_context() -> Result<TestContext> {
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(build_test_context_async())
+}
+
+async fn build_test_context_async() -> Result<TestContext> {
     oxmon_common::id::init(1, 1);
     ensure_rustls_provider();
 
     let temp_dir = tempfile::tempdir()?;
     let storage = Arc::new(SqliteStorageEngine::new(temp_dir.path())?);
-    let cert_store = Arc::new(CertStore::new(temp_dir.path())?);
+    let cert_store = Arc::new(CertStore::new(temp_dir.path()).await?);
 
     let password_hash = hash_token("changeme")?;
-    let _ = cert_store.create_user("admin", &password_hash)?;
+    let _ = cert_store.create_user("admin", &password_hash).await?;
 
     let rules: Vec<Box<dyn oxmon_alert::AlertRule>> = vec![Box::new(ThresholdRule {
         id: "test-threshold".to_string(),
@@ -69,7 +75,7 @@ pub fn build_test_context() -> Result<TestContext> {
         cert_store.clone(),
         0,
     ));
-    let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(10, cert_store.clone())));
+    let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(10)));
 
     let config = ServerConfig {
         grpc_port: 9090,
@@ -360,12 +366,14 @@ pub async fn ensure_cert_domain_with_result(ctx: &TestContext, domain: &str) -> 
             check_interval_secs: Some(3600),
             note: Some("seed".to_string()),
         })
+        .await
         .expect("insert domain should succeed");
 
     let result = sample_cert_check_result(&created.id, domain);
     ctx.state
         .cert_store
         .insert_check_result(&result)
+        .await
         .expect("insert check result should succeed");
 
     let details = oxmon_common::types::CertificateDetails {
@@ -407,12 +415,14 @@ pub async fn ensure_cert_domain_with_result(ctx: &TestContext, domain: &str) -> 
     ctx.state
         .cert_store
         .upsert_certificate_details(&details)
+        .await
         .expect("upsert cert details should succeed");
 
     let details = ctx
         .state
         .cert_store
         .get_certificate_details(domain)
+        .await
         .expect("query cert details should succeed")
         .expect("cert details should exist");
 

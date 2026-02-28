@@ -3,13 +3,27 @@
 //! The default implementation ([`engine::SqliteStorageEngine`]) uses daily
 //! time-partitioned SQLite databases with WAL mode for concurrent reads.
 //! Certificate and agent-whitelist data are stored in a separate
-//! [`cert_store::CertStore`] database.
+//! [`store::CertStore`] database backed by SeaORM.
 
 pub mod auth;
-pub mod cert_store;
 pub mod engine;
+pub mod entities;
 pub mod error;
 pub mod partition;
+pub mod store;
+
+pub use store::CertStore;
+pub use store::{
+    AIAccountRow, AlertRuleFilter, AlertRuleRow, AlertRuleUpdate, CloudAccountRow,
+    CloudAccountSummary, CloudCollectionStateRow, CloudInstanceRow, CloudInstanceStatusSummary,
+    SystemConfigFilter, SystemConfigRow, SystemConfigUpdate,
+    ActiveAlertFilter, NotificationChannelFilter, NotificationChannelRow,
+    NotificationChannelUpdate, NotificationLogFilter, NotificationLogRow,
+    NotificationRecipientRow, SilenceWindowFilter, SilenceWindowRow,
+    AgentListFilter, AgentWhitelistFilter,
+    CertDomainSummary, CertHealthSummary, CertStatusFilter, CertStatusSummary,
+    DictTypeFilter,
+};
 
 #[cfg(test)]
 mod tests;

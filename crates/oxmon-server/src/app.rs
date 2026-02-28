@@ -54,6 +54,7 @@ impl utoipa::Modify for SecurityAddon {
     }
 }
 
+#[allow(clippy::expect_used)] // GovernorConfigBuilder::finish() with params always returns Some
 pub fn build_http_app(state: AppState) -> Router {
     let (public_router, public_spec) = api::public_routes().split_for_parts();
     let (login_router, login_spec) = api::auth_routes().split_for_parts();

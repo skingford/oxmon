@@ -4,7 +4,7 @@ use crate::utils::{redact_json_string, truncate_string, MAX_BODY_LENGTH};
 use crate::NotificationChannel;
 use chrono::{DateTime, Duration, NaiveTime, Utc};
 use oxmon_common::types::AlertEvent;
-use oxmon_storage::cert_store::{CertStore, NotificationChannelRow, NotificationLogRow};
+use oxmon_storage::{CertStore, NotificationChannelRow, NotificationLogRow, SilenceWindowFilter};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -154,7 +154,7 @@ impl NotificationManager {
     /// 从数据库重新加载所有已启用的通知渠道。
     /// 使用 build-then-swap 模式：先构建新实例表，再整体替换。
     pub async fn reload(&self) -> anyhow::Result<()> {
-        let channels_with_recipients = self.cert_store.list_enabled_channels_with_recipients()?;
+        let channels_with_recipients = self.cert_store.list_enabled_channels_with_recipients().await?;
 
         let mut new_instances = HashMap::new();
         for (row, recipients) in channels_with_recipients {
@@ -220,7 +220,7 @@ impl NotificationManager {
         let now = Utc::now();
 
         // Check silence windows from DB
-        if let Ok(windows) = self.cert_store.list_silence_windows(None, 100, 0) {
+        if let Ok(windows) = self.cert_store.list_silence_windows(&SilenceWindowFilter { recurrence_eq: None }, 100, 0).await {
             for sw in &windows {
                 if let (Ok(start), Ok(end)) = (
                     NaiveTime::parse_from_str(&sw.start_time, "%H:%M"),
@@ -316,7 +316,8 @@ impl NotificationManager {
     async fn send_to_channels(&self, event: &AlertEvent) {
         let locale = self
             .cert_store
-            .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
+            .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
+            .await;
         let instances = self.instances.read().await;
         for (channel_id, instance) in instances.iter() {
             if event.severity < instance.min_severity {
@@ -351,14 +352,14 @@ impl NotificationManager {
                 recipient_count: instance.recipients.len() as i32,
                 response,
             };
-            Self::record_send_log(&self.cert_store, event, &ctx, &send_result);
+            Self::record_send_log(&self.cert_store, event, &ctx, &send_result).await;
         }
     }
 
     /// 记录一条通知发送日志。
     /// 供内部 `send_to_channels` 及外部 API（如测试通知）统一调用。
     /// 写入失败仅 warn，不影响调用方逻辑。
-    pub fn record_send_log(
+    pub async fn record_send_log(
         cert_store: &CertStore,
         event: &AlertEvent,
         ctx: &SendLogContext<'_>,
@@ -424,7 +425,7 @@ impl NotificationManager {
             api_error_code,
         };
 
-        if let Err(e) = cert_store.insert_notification_log(&log) {
+        if let Err(e) = cert_store.insert_notification_log(&log).await {
             tracing::warn!(
                 channel_id = %ctx.channel_id,
                 error = %e,
@@ -455,7 +456,7 @@ impl NotificationManager {
         let now = Utc::now();
 
         // 检查静默窗口
-        if let Ok(windows) = self.cert_store.list_silence_windows(None, 100, 0) {
+        if let Ok(windows) = self.cert_store.list_silence_windows(&SilenceWindowFilter { recurrence_eq: None }, 100, 0).await {
             for sw in &windows {
                 if let (Ok(start), Ok(end)) = (
                     NaiveTime::parse_from_str(&sw.start_time, "%H:%M"),
@@ -588,7 +589,7 @@ impl NotificationManager {
                                 &fallback_event,
                                 &ctx,
                                 &Ok(()),
-                            );
+                            ).await;
                         }
                         Err(e) => {
                             tracing::error!(
@@ -610,7 +611,7 @@ impl NotificationManager {
                                 &fallback_event,
                                 &ctx,
                                 &Err(anyhow::anyhow!("{e}")),
-                            );
+                            ).await;
                         }
                     }
                     continue;
@@ -626,7 +627,7 @@ impl NotificationManager {
                 recipient_count: instance.recipients.len() as i32,
                 response,
             };
-            Self::record_send_log(&self.cert_store, &fallback_event, &ctx, &send_result);
+            Self::record_send_log(&self.cert_store, &fallback_event, &ctx, &send_result).await;
         }
 
         tracing::info!(
@@ -658,7 +659,8 @@ impl NotificationManager {
     pub async fn send_event_direct(&self, event: &AlertEvent) -> usize {
         let locale = self
             .cert_store
-            .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE);
+            .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
+            .await;
         let instances = self.instances.read().await;
         let mut success_count = 0;
 
@@ -698,7 +700,7 @@ impl NotificationManager {
                 recipient_count: instance.recipients.len() as i32,
                 response,
             };
-            Self::record_send_log(&self.cert_store, event, &ctx, &send_result);
+            Self::record_send_log(&self.cert_store, event, &ctx, &send_result).await;
         }
 
         success_count
