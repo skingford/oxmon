@@ -36,12 +36,13 @@ const DEFAULT_AI_ACCOUNTS: &[AIAccountDef] = &[
     },
 ];
 
-/// 初始化默认 AI 账号（GLM/Codex）。
+/// 初始化默认 AI 账号（GLM/Codex/Claude）。
 ///
 /// 行为：
 /// 1. 按 `config_key` 幂等创建/更新默认账号；
-/// 2. 默认账号敏感字段（api_key/api_secret）统一清空，且默认禁用；
-/// 3. 清理不在默认集合中的历史 `seed_ai_*` 账号。
+/// 2. 新增默认账号时敏感字段（api_key/api_secret）置空并默认禁用；
+/// 3. 已存在默认账号不会覆盖敏感字段，也不会强制改 enabled；
+/// 4. 清理不在默认集合中的历史 `seed_ai_*` 账号。
 pub async fn init_default_ai_accounts(cert_store: &CertStore) -> anyhow::Result<usize> {
     let mut synced = 0usize;
     let mut default_keys = HashSet::new();
@@ -58,11 +59,15 @@ pub async fn init_default_ai_accounts(cert_store: &CertStore) -> anyhow::Result<
                     &existing.id,
                     Some(def.display_name.to_string()),
                     Some(def.description.to_string()),
-                    Some(String::new()),
-                    Some(String::new()),
-                    Some(def.model.to_string()),
-                    Some("{}".to_string()),
-                    Some(false),
+                    None,
+                    None,
+                    if existing.model.is_none() {
+                        Some(def.model.to_string())
+                    } else {
+                        None
+                    },
+                    None,
+                    None,
                 )
                 .await?;
             if updated {
@@ -195,10 +200,10 @@ mod tests {
             .await?
             .context("seed_ai_glm should still exist")?;
         assert_eq!(glm_after.display_name, "默认 GLM 账号");
-        assert_eq!(glm_after.api_key, "");
-        assert_eq!(glm_after.api_secret.as_deref(), Some(""));
-        assert_eq!(glm_after.model.as_deref(), Some("glm-4"));
-        assert!(!glm_after.enabled);
+        assert_eq!(glm_after.api_key, "temp-api-key");
+        assert_eq!(glm_after.api_secret.as_deref(), Some("temp-secret"));
+        assert_eq!(glm_after.model.as_deref(), Some("glm-4-air"));
+        assert!(glm_after.enabled);
 
         let legacy = cert_store
             .get_ai_account_by_config_key("seed_ai_legacy")

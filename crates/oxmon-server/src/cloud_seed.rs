@@ -33,8 +33,9 @@ const DEFAULT_CLOUD_ACCOUNTS: &[CloudAccountDef] = &[
 ///
 /// 行为：
 /// 1. 按 `config_key` 幂等创建/更新默认账号；
-/// 2. 默认账号凭据字段（secret_id/secret_key/account_name）统一清空，且默认禁用；
-/// 3. 清理不在默认集合中的历史 `seed_cloud_*` 账号。
+/// 2. 新增默认账号时凭据字段（secret_id/secret_key/account_name）置空并默认禁用；
+/// 3. 已存在默认账号不会覆盖凭据字段，也不会强制改 enabled；
+/// 4. 清理不在默认集合中的历史 `seed_cloud_*` 账号。
 pub async fn init_default_cloud_accounts(
     cert_store: &CertStore,
     default_interval_secs: u64,
@@ -55,11 +56,30 @@ pub async fn init_default_cloud_accounts(
     for def in DEFAULT_CLOUD_ACCOUNTS {
         default_keys.insert(def.config_key);
 
+        if let Some(existing) = existing_by_key.get(def.config_key) {
+            let mut seed_row = existing.clone();
+            seed_row.provider = def.provider.to_string();
+            seed_row.display_name = def.display_name.to_string();
+            seed_row.description = Some(def.description.to_string());
+            if seed_row.regions.is_empty() {
+                seed_row.regions = def.regions.iter().map(|v| (*v).to_string()).collect();
+            }
+            if seed_row.collection_interval_secs <= 0 {
+                seed_row.collection_interval_secs = interval_secs;
+            }
+            cert_store
+                .update_cloud_account(&existing.id, &seed_row)
+                .await?;
+            synced += 1;
+            tracing::info!(
+                config_key = def.config_key,
+                "Updated default cloud account seed"
+            );
+            continue;
+        }
+
         let seed_row = CloudAccountRow {
-            id: existing_by_key
-                .get(def.config_key)
-                .map(|row| row.id.clone())
-                .unwrap_or_else(oxmon_common::id::next_id),
+            id: oxmon_common::id::next_id(),
             config_key: def.config_key.to_string(),
             provider: def.provider.to_string(),
             display_name: def.display_name.to_string(),
@@ -73,19 +93,6 @@ pub async fn init_default_cloud_accounts(
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
-
-        if let Some(existing) = existing_by_key.get(def.config_key) {
-            cert_store
-                .update_cloud_account(&existing.id, &seed_row)
-                .await?;
-            synced += 1;
-            tracing::info!(
-                config_key = def.config_key,
-                "Updated default cloud account seed"
-            );
-            continue;
-        }
-
         cert_store.insert_cloud_account(&seed_row).await?;
         synced += 1;
         tracing::info!(
@@ -185,11 +192,11 @@ mod tests {
             .get_cloud_account_by_config_key("seed_cloud_tencent")
             .await
             .context("seed_cloud_tencent should still exist")?;
-        assert_eq!(tencent_after.secret_id, "");
-        assert_eq!(tencent_after.secret_key, "");
-        assert_eq!(tencent_after.account_name, "");
-        assert_eq!(tencent_after.collection_interval_secs, 3600);
-        assert!(!tencent_after.enabled);
+        assert_eq!(tencent_after.secret_id, "temp-id");
+        assert_eq!(tencent_after.secret_key, "temp-key");
+        assert_eq!(tencent_after.account_name, "temp-account");
+        assert_eq!(tencent_after.collection_interval_secs, 7200);
+        assert!(tencent_after.enabled);
 
         let legacy = cert_store
             .get_cloud_account_by_config_key("seed_cloud_legacy")
