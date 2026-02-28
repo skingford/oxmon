@@ -1629,7 +1629,6 @@ dependencies = [
 name = "oxmon-alert"
 version = "0.1.5"
 dependencies = [
- "anyhow",
  "chrono",
  "glob-match",
  "oxmon-common",
@@ -1653,6 +1652,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "sha2",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-test",
  "tracing",

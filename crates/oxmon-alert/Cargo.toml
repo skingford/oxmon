@@ -9,7 +9,6 @@ workspace = true
 [dependencies]
 oxmon-common = { workspace = true }
 chrono = { workspace = true }
-anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 glob-match = { workspace = true }

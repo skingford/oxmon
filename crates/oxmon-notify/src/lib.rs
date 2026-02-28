@@ -7,6 +7,7 @@
 
 pub mod cert_report_template;
 pub mod channels;
+pub mod error;
 pub mod manager;
 pub mod plugin;
 pub mod report_template;

@@ -226,7 +226,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn test_generate_token() {
+    fn should_generate_unique_tokens_each_call() {
         let token1 = generate_token();
         let token2 = generate_token();
         assert_ne!(token1, token2);
@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn test_hash_and_verify() {
+    fn should_verify_token_against_its_hash_and_reject_wrong_token() {
         let token = generate_token();
         let hash = hash_token(&token).unwrap();
         assert!(verify_token(&token, &hash).unwrap());
@@ -242,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encrypt_decrypt() {
+    fn should_decrypt_to_original_text_after_token_encryption() {
         let dir = TempDir::new().unwrap();
         let enc = TokenEncryptor::load_or_create(dir.path()).unwrap();
 
@@ -258,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encryptor_key_persistence() {
+    fn should_decrypt_with_reloaded_key_when_key_is_persisted() {
         let dir = TempDir::new().unwrap();
 
         let enc1 = TokenEncryptor::load_or_create(dir.path()).unwrap();
@@ -272,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn test_wrong_key_fails() {
+    fn should_fail_decryption_when_using_different_token_key() {
         let dir1 = TempDir::new().unwrap();
         let dir2 = TempDir::new().unwrap();
 
@@ -305,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn test_password_encryptor_roundtrip() {
+    fn should_decrypt_password_to_original_after_rsa_roundtrip() {
         let dir = TempDir::new().unwrap();
         let enc = PasswordEncryptor::load_or_create(dir.path()).unwrap();
 
@@ -317,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn test_password_encryptor_key_persistence() {
+    fn should_use_same_rsa_key_pair_after_reload_from_disk() {
         let dir = TempDir::new().unwrap();
 
         let enc1 = PasswordEncryptor::load_or_create(dir.path()).unwrap();
@@ -332,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn test_password_encryptor_expired_timestamp() {
+    fn should_reject_password_when_timestamp_is_expired() {
         let dir = TempDir::new().unwrap();
         let enc = PasswordEncryptor::load_or_create(dir.path()).unwrap();
 
@@ -348,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn test_password_encryptor_wrong_key_fails() {
+    fn should_fail_password_decryption_when_using_different_rsa_key() {
         let dir1 = TempDir::new().unwrap();
         let dir2 = TempDir::new().unwrap();
 
@@ -362,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn test_password_encryptor_invalid_base64() {
+    fn should_return_error_when_ciphertext_is_invalid_base64() {
         let dir = TempDir::new().unwrap();
         let enc = PasswordEncryptor::load_or_create(dir.path()).unwrap();
 
@@ -370,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn test_password_encryptor_public_key_pem() {
+    fn should_return_valid_pem_encoded_public_key() {
         let dir = TempDir::new().unwrap();
         let enc = PasswordEncryptor::load_or_create(dir.path()).unwrap();
 

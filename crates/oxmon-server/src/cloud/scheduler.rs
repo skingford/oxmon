@@ -76,25 +76,14 @@ impl CloudCheckScheduler {
         let mut due_accounts = Vec::new();
 
         for account in accounts {
-            // Parse extra_config JSON to build CloudAccountConfig
-            let extra_config: serde_json::Value = account
-                .extra_config
-                .as_ref()
-                .and_then(|s| serde_json::from_str(s).ok())
-                .unwrap_or_else(|| serde_json::json!({}));
-
-            // Build full config JSON for CloudAccountConfig
-            let config_value = serde_json::json!({
-                "secret_id": account.secret_id,
-                "secret_key": account.secret_key,
-                "region": account.region.unwrap_or_else(|| "ap-shanghai".to_string()),
-                "collection_interval_secs": account.collection_interval_secs,
-                "base_url": extra_config.get("base_url"),
-                "timeout_secs": extra_config.get("timeout_secs"),
-            });
-
-            let account_config: CloudAccountConfig = serde_json::from_value(config_value)
-                .context("Failed to parse cloud account config")?;
+            let account_config = CloudAccountConfig {
+                secret_id: account.secret_id.clone(),
+                secret_key: account.secret_key.clone(),
+                regions: account.regions.clone(),
+                collection_interval_secs: account.collection_interval_secs as u64,
+                concurrency: 5,
+                instance_filter: Default::default(),
+            };
 
             // Check last collection time from cloud_collection_state table
             let state = self
@@ -110,19 +99,10 @@ impl CloudCheckScheduler {
             };
 
             if is_due {
-                // Provider type is stored directly in account.provider
-                let provider_type = &account.provider;
-
-                // Account name is the part after "cloud_{provider}_" (e.g., "myacct")
-                let account_name = account
-                    .config_key
-                    .strip_prefix(&format!("cloud_{}_", provider_type))
-                    .unwrap_or("default");
-
                 due_accounts.push((
                     account.config_key.clone(),
-                    provider_type.to_string(),
-                    account_name.to_string(),
+                    account.provider.clone(),
+                    account.account_name.clone(),
                     account_config,
                 ));
             }

@@ -293,10 +293,10 @@ CREATE TABLE IF NOT EXISTS cloud_accounts (
     provider TEXT NOT NULL,
     display_name TEXT NOT NULL,
     description TEXT,
+    account_name TEXT NOT NULL DEFAULT '',
     secret_id TEXT NOT NULL,
     secret_key TEXT NOT NULL,
-    region TEXT,
-    extra_config TEXT,
+    regions TEXT NOT NULL DEFAULT '[]',
     collection_interval_secs INTEGER NOT NULL DEFAULT 300,
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL,
@@ -498,6 +498,9 @@ impl CertStore {
 
         // 自动迁移云账号：如果 cloud_accounts 表为空且 system_configs 中有云账号数据
         Self::auto_migrate_cloud_accounts(&conn)?;
+
+        // 迁移 cloud_accounts 表结构：region/extra_config -> account_name/regions
+        Self::migrate_cloud_accounts_schema_v2(&conn)?;
 
         // 迁移 cert_domains：将 UUID 主键替换为雪花ID，同步更新 cert_check_results.domain_id
         Self::migrate_cert_domains_to_snowflake_id(&conn)?;
@@ -972,7 +975,7 @@ impl CertStore {
         conn.execute(
             "INSERT INTO cloud_accounts (
                 id, config_key, provider, display_name, description,
-                secret_id, secret_key, region, extra_config,
+                account_name, secret_id, secret_key, regions,
                 collection_interval_secs, enabled, created_at, updated_at
             )
             SELECT
@@ -981,13 +984,14 @@ impl CertStore {
                 provider,
                 display_name,
                 description,
+                display_name as account_name,
                 COALESCE(json_extract(config_json, '$.secret_id'), '') as secret_id,
                 COALESCE(json_extract(config_json, '$.secret_key'), '') as secret_key,
-                json_extract(config_json, '$.region') as region,
-                json_object(
-                    'base_url', json_extract(config_json, '$.base_url'),
-                    'timeout_secs', json_extract(config_json, '$.timeout_secs')
-                ) as extra_config,
+                CASE
+                    WHEN json_extract(config_json, '$.region') IS NOT NULL
+                    THEN json_array(json_extract(config_json, '$.region'))
+                    ELSE '[]'
+                END as regions,
                 COALESCE(json_extract(config_json, '$.collection_interval_secs'), 300) as collection_interval_secs,
                 enabled,
                 created_at,
@@ -1012,6 +1016,46 @@ impl CertStore {
         )?;
 
         tracing::info!("Cloud accounts auto-migration completed successfully");
+        Ok(())
+    }
+
+    /// 迁移 cloud_accounts 表结构 v2：
+    /// - 旧表有 `region TEXT` 和 `extra_config TEXT`，新表改为 `account_name TEXT` 和 `regions TEXT`（JSON 数组）
+    fn migrate_cloud_accounts_schema_v2(conn: &Connection) -> Result<()> {
+        // 检查是否已为新 schema（有 regions 列）
+        let has_regions = Self::table_has_column(conn, "cloud_accounts", "regions")?;
+        if has_regions {
+            return Ok(());
+        }
+
+        tracing::info!("Migrating cloud_accounts schema: region/extra_config -> account_name/regions");
+
+        // 添加新列
+        conn.execute_batch(
+            "ALTER TABLE cloud_accounts ADD COLUMN account_name TEXT NOT NULL DEFAULT '';
+             ALTER TABLE cloud_accounts ADD COLUMN regions TEXT NOT NULL DEFAULT '[]';",
+        )?;
+
+        // 从旧 region 列迁移到 regions JSON 数组（旧列可能存在也可能不存在）
+        let has_region = Self::table_has_column(conn, "cloud_accounts", "region")?;
+        if has_region {
+            conn.execute_batch(
+                "UPDATE cloud_accounts
+                 SET regions = CASE
+                     WHEN region IS NOT NULL AND region != '' THEN json_array(region)
+                     ELSE '[]'
+                 END,
+                 account_name = display_name
+                 WHERE regions = '[]';",
+            )?;
+        } else {
+            // 没有旧 region 列，account_name 用 display_name 填充
+            conn.execute_batch(
+                "UPDATE cloud_accounts SET account_name = display_name WHERE account_name = '';",
+            )?;
+        }
+
+        tracing::info!("cloud_accounts schema migration v2 completed");
         Ok(())
     }
 
@@ -3132,10 +3176,11 @@ impl CertStore {
 
     pub fn insert_cloud_account(&self, row: &CloudAccountRow) -> Result<CloudAccountRow> {
         let conn = self.lock_conn();
+        let regions_json = serde_json::to_string(&row.regions).unwrap_or_else(|_| "[]".to_string());
         conn.execute(
             "INSERT INTO cloud_accounts (
                 id, config_key, provider, display_name, description,
-                secret_id, secret_key, region, extra_config,
+                account_name, secret_id, secret_key, regions,
                 collection_interval_secs, enabled, created_at, updated_at
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             rusqlite::params![
@@ -3144,10 +3189,10 @@ impl CertStore {
                 row.provider,
                 row.display_name,
                 row.description,
+                row.account_name,
                 row.secret_id,
                 row.secret_key,
-                row.region,
-                row.extra_config,
+                regions_json,
                 row.collection_interval_secs,
                 if row.enabled { 1 } else { 0 },
                 row.created_at.timestamp(),
@@ -3162,7 +3207,7 @@ impl CertStore {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, config_key, provider, display_name, description,
-                    secret_id, secret_key, region, extra_config,
+                    account_name, secret_id, secret_key, regions,
                     collection_interval_secs, enabled, created_at, updated_at
              FROM cloud_accounts WHERE id = ?1",
         )?;
@@ -3181,7 +3226,7 @@ impl CertStore {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, config_key, provider, display_name, description,
-                    secret_id, secret_key, region, extra_config,
+                    account_name, secret_id, secret_key, regions,
                     collection_interval_secs, enabled, created_at, updated_at
              FROM cloud_accounts WHERE config_key = ?1",
         )?;
@@ -3207,7 +3252,7 @@ impl CertStore {
 
         let mut query = String::from(
             "SELECT id, config_key, provider, display_name, description,
-                    secret_id, secret_key, region, extra_config,
+                    account_name, secret_id, secret_key, regions,
                     collection_interval_secs, enabled, created_at, updated_at
              FROM cloud_accounts WHERE 1=1",
         );
@@ -3269,10 +3314,11 @@ impl CertStore {
 
     pub fn update_cloud_account(&self, id: &str, row: &CloudAccountRow) -> Result<CloudAccountRow> {
         let conn = self.lock_conn();
+        let regions_json = serde_json::to_string(&row.regions).unwrap_or_else(|_| "[]".to_string());
         conn.execute(
             "UPDATE cloud_accounts SET
                 config_key = ?2, provider = ?3, display_name = ?4, description = ?5,
-                secret_id = ?6, secret_key = ?7, region = ?8, extra_config = ?9,
+                account_name = ?6, secret_id = ?7, secret_key = ?8, regions = ?9,
                 collection_interval_secs = ?10, enabled = ?11, updated_at = ?12
              WHERE id = ?1",
             rusqlite::params![
@@ -3281,15 +3327,16 @@ impl CertStore {
                 row.provider,
                 row.display_name,
                 row.description,
+                row.account_name,
                 row.secret_id,
                 row.secret_key,
-                row.region,
-                row.extra_config,
+                regions_json,
                 row.collection_interval_secs,
                 if row.enabled { 1 } else { 0 },
                 row.updated_at.timestamp(),
             ],
         )?;
+        drop(conn);
         self.get_cloud_account_by_id(id)
     }
 
@@ -3306,16 +3353,19 @@ impl CertStore {
         let enabled_int: i32 = row.get(10)?;
         let created_at = Self::read_sqlite_datetime_utc(row, 11, "created_at")?;
         let updated_at = Self::read_sqlite_datetime_utc(row, 12, "updated_at")?;
+        let regions_json: String = row.get(8)?;
+        let regions: Vec<String> =
+            serde_json::from_str(&regions_json).unwrap_or_default();
         Ok(CloudAccountRow {
             id: row.get(0)?,
             config_key: row.get(1)?,
             provider: row.get(2)?,
             display_name: row.get(3)?,
             description: row.get(4)?,
-            secret_id: row.get(5)?,
-            secret_key: row.get(6)?,
-            region: row.get(7)?,
-            extra_config: row.get(8)?,
+            account_name: row.get(5)?,
+            secret_id: row.get(6)?,
+            secret_key: row.get(7)?,
+            regions,
             collection_interval_secs: row.get(9)?,
             enabled: enabled_int != 0,
             created_at,
@@ -3722,6 +3772,7 @@ impl CertStore {
         }
 
         if updates.is_empty() {
+            drop(conn);
             return self.get_silence_window_by_id(id);
         }
 
@@ -3737,6 +3788,7 @@ impl CertStore {
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
         let updated = conn.execute(&sql, param_refs.as_slice())?;
+        drop(conn);
 
         if updated > 0 {
             self.get_silence_window_by_id(id)
@@ -6241,10 +6293,12 @@ pub struct CloudAccountRow {
     pub provider: String,
     pub display_name: String,
     pub description: Option<String>,
+    /// 云账号名称（如"主账号"、"子账号1"）
+    pub account_name: String,
     pub secret_id: String,
     pub secret_key: String,
-    pub region: Option<String>,
-    pub extra_config: Option<String>,
+    /// 地域列表（如 ["ap-shanghai", "ap-guangzhou"]）
+    pub regions: Vec<String>,
     pub collection_interval_secs: i64,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
@@ -8100,10 +8154,10 @@ mod tests {
                     provider: provider.to_string(),
                     display_name: key.to_string(),
                     description: None,
+                    account_name: "主账号".to_string(),
                     secret_id: "test_id".to_string(),
                     secret_key: "test_key".to_string(),
-                    region: None,
-                    extra_config: None,
+                    regions: vec!["ap-shanghai".to_string()],
                     collection_interval_secs: 300,
                     enabled,
                     created_at: now,

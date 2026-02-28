@@ -120,3 +120,15 @@ redundant_clone = "deny"
 large_enum_variant = "deny"
 needless_collect = "warn"
 clone_on_copy = "deny"
+
+# 错误处理 - warn 以便渐进式修复，目标是迁移到 deny
+unwrap_used = "warn"
+expect_used = "warn"
+
+# 调试与输出 - 防止调试代码进入生产
+dbg_macro = "deny"
+print_stdout = "warn"
+print_stderr = "warn"
+
+# 代码完整性
+todo = "warn"

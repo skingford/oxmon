@@ -610,7 +610,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_hmac_sha256() {
+    fn should_compute_known_hmac_sha256_test_vector() {
         let key = b"key";
         let data = b"The quick brown fox jumps over the lazy dog";
         let result = hmac_sha256(key, data).unwrap();
@@ -623,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tc3_signature_components() {
+    fn should_generate_tc3_signature_with_required_components() {
         // Test TC3 signature generation with known inputs
         use crate::CloudAccountConfig;
 
@@ -661,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cloud_instance_from_tencent() {
+    fn should_hold_tencent_instance_metadata_correctly() {
         use std::collections::HashMap;
 
         // Test CloudInstance construction from Tencent CVM data
@@ -713,7 +713,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cloud_metrics_creation() {
+    fn should_store_all_metric_fields_when_constructed() {
         use chrono::Utc;
 
         // Test CloudMetrics structure

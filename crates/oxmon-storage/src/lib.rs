@@ -8,6 +8,7 @@
 pub mod auth;
 pub mod cert_store;
 pub mod engine;
+pub mod error;
 pub mod partition;
 
 #[cfg(test)]

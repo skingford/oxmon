@@ -21,10 +21,12 @@ struct CloudAccountResponse {
     provider: String,
     display_name: String,
     description: Option<String>,
+    /// 云账号名称（如"主账号"）
+    account_name: String,
     secret_id: String,
     secret_key: String,
-    region: Option<String>,
-    extra_config: Option<serde_json::Value>,
+    /// 地域列表（如 ["ap-shanghai", "ap-guangzhou"]）
+    regions: Vec<String>,
     collection_interval_secs: i64,
     enabled: bool,
     created_at: String,
@@ -42,14 +44,14 @@ struct CreateCloudAccountRequest {
     display_name: String,
     /// 描述
     description: Option<String>,
+    /// 云账号名称（如"主账号"、"子账号1"）
+    account_name: String,
     /// API 密钥 ID（腾讯云 SecretId, 阿里云 AccessKeyId）
     secret_id: String,
     /// API 密钥 Secret（腾讯云 SecretKey, 阿里云 AccessKeySecret）
     secret_key: String,
-    /// 地域（如 ap-shanghai）
-    region: Option<String>,
-    /// 额外配置（JSON，存储 base_url, timeout_secs 等）
-    extra_config: Option<serde_json::Value>,
+    /// 地域列表（如 ["ap-shanghai", "ap-guangzhou"]）
+    regions: Vec<String>,
     /// 采集间隔（秒，默认 300）
     collection_interval_secs: Option<i64>,
 }
@@ -59,10 +61,12 @@ struct CreateCloudAccountRequest {
 struct UpdateCloudAccountRequest {
     display_name: Option<String>,
     description: Option<Option<String>>,
+    /// 云账号名称
+    account_name: Option<String>,
     secret_id: Option<String>,
     secret_key: Option<String>,
-    region: Option<Option<String>>,
-    extra_config: Option<Option<serde_json::Value>>,
+    /// 地域列表（传入则完整替换）
+    regions: Option<Vec<String>>,
     collection_interval_secs: Option<i64>,
     enabled: Option<bool>,
 }
@@ -301,42 +305,28 @@ struct TriggerCollectionResponse {
     collected_count: Option<usize>,
 }
 
-fn parse_cloud_account_config_with_default(
-    config_json: &str,
-    default_collection_interval_secs: u64,
-) -> Result<CloudAccountConfig, serde_json::Error> {
-    let mut config_val: serde_json::Value = serde_json::from_str(config_json)?;
-    if config_val
-        .get("collection_interval_secs")
-        .and_then(|v| v.as_u64())
-        .is_none()
-    {
-        if let Some(obj) = config_val.as_object_mut() {
-            obj.insert(
-                "collection_interval_secs".to_string(),
-                serde_json::json!(default_collection_interval_secs),
-            );
-        }
+fn row_to_cloud_account_config(row: &CloudAccountRow) -> CloudAccountConfig {
+    CloudAccountConfig {
+        secret_id: row.secret_id.clone(),
+        secret_key: row.secret_key.clone(),
+        regions: row.regions.clone(),
+        collection_interval_secs: row.collection_interval_secs as u64,
+        concurrency: 5,
+        instance_filter: Default::default(),
     }
-    serde_json::from_value(config_val)
 }
 
 fn row_to_cloud_account_response(_state: &AppState, row: CloudAccountRow) -> CloudAccountResponse {
-    let extra_config = row
-        .extra_config
-        .as_ref()
-        .and_then(|s| serde_json::from_str(s).ok());
-
     CloudAccountResponse {
         id: row.id,
         config_key: row.config_key,
         provider: row.provider,
         display_name: row.display_name,
         description: row.description,
+        account_name: row.account_name,
         secret_id: row.secret_id,
         secret_key: row.secret_key,
-        region: row.region,
-        extra_config,
+        regions: row.regions,
         collection_interval_secs: row.collection_interval_secs,
         enabled: row.enabled,
         created_at: row.created_at.to_rfc3339(),
@@ -564,11 +554,6 @@ async fn create_cloud_account(
     }
 
     let now = chrono::Utc::now();
-    let extra_config_str = req
-        .extra_config
-        .as_ref()
-        .and_then(|v| serde_json::to_string(v).ok());
-
     let collection_interval = req.collection_interval_secs.unwrap_or(
         state
             .config
@@ -582,10 +567,10 @@ async fn create_cloud_account(
         provider: req.provider,
         display_name: req.display_name,
         description: req.description,
+        account_name: req.account_name,
         secret_id: req.secret_id,
         secret_key: req.secret_key,
-        region: req.region,
-        extra_config: extra_config_str,
+        regions: req.regions,
         collection_interval_secs: collection_interval,
         enabled: true,
         created_at: now,
@@ -717,18 +702,6 @@ async fn update_cloud_account(
     };
 
     // Build updated row
-    let extra_config_str = req
-        .extra_config
-        .as_ref()
-        .and_then(|opt| opt.as_ref().and_then(|v| serde_json::to_string(v).ok()))
-        .or(existing.extra_config);
-
-    let region = match req.region {
-        Some(Some(r)) => Some(r),
-        Some(None) => None,
-        None => existing.region,
-    };
-
     let description = match req.description {
         Some(Some(d)) => Some(d),
         Some(None) => None,
@@ -741,10 +714,10 @@ async fn update_cloud_account(
         provider: existing.provider,
         display_name: req.display_name.unwrap_or(existing.display_name),
         description,
+        account_name: req.account_name.unwrap_or(existing.account_name),
         secret_id: req.secret_id.unwrap_or(existing.secret_id),
         secret_key: req.secret_key.unwrap_or(existing.secret_key),
-        region,
-        extra_config: extra_config_str,
+        regions: req.regions.unwrap_or(existing.regions),
         collection_interval_secs: req
             .collection_interval_secs
             .unwrap_or(existing.collection_interval_secs),
@@ -831,10 +804,11 @@ async fn test_cloud_account_connection(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    // Get cloud account config
-    let row = match state.cert_store.get_system_config_by_id(&id) {
-        Ok(Some(row)) => {
-            if row.config_type != "cloud_account" {
+    let row = match state.cert_store.get_cloud_account_by_id(&id) {
+        Ok(row) => row,
+        Err(e) => {
+            let err_msg = e.to_string();
+            if err_msg.contains("no rows") || err_msg.contains("NOT FOUND") || err_msg.contains("not found") {
                 return error_response(
                     StatusCode::NOT_FOUND,
                     &trace_id,
@@ -843,18 +817,6 @@ async fn test_cloud_account_connection(
                 )
                 .into_response();
             }
-            row
-        }
-        Ok(None) => {
-            return error_response(
-                StatusCode::NOT_FOUND,
-                &trace_id,
-                "not_found",
-                "Cloud account not found",
-            )
-            .into_response()
-        }
-        Err(e) => {
             tracing::error!(error = %e, "Failed to get cloud account");
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -866,39 +828,10 @@ async fn test_cloud_account_connection(
         }
     };
 
-    // Parse config
-    let account_config: CloudAccountConfig = match parse_cloud_account_config_with_default(
-        &row.config_json,
-        state
-            .config
-            .cloud_check
-            .default_account_collection_interval_secs,
-    ) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to parse cloud account config");
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "config_error",
-                "Invalid cloud account configuration",
-            )
-            .into_response();
-        }
-    };
+    let account_config = row_to_cloud_account_config(&row);
+    let provider_type = &row.provider;
+    let account_name = &row.account_name;
 
-    // Extract provider and account name
-    let provider_type = row
-        .config_key
-        .strip_prefix("cloud_")
-        .and_then(|s| s.split('_').next())
-        .unwrap_or("unknown");
-    let account_name = row
-        .config_key
-        .strip_prefix(&format!("cloud_{}_", provider_type))
-        .unwrap_or("default");
-
-    // Build provider and test connection
     match build_provider(provider_type, account_name, account_config) {
         Ok(provider) => match provider.list_instances().await {
             Ok(instances) => {
@@ -948,10 +881,11 @@ async fn trigger_cloud_account_collection(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    // Get cloud account config
-    let row = match state.cert_store.get_system_config_by_id(&id) {
-        Ok(Some(row)) => {
-            if row.config_type != "cloud_account" {
+    let row = match state.cert_store.get_cloud_account_by_id(&id) {
+        Ok(row) => row,
+        Err(e) => {
+            let err_msg = e.to_string();
+            if err_msg.contains("no rows") || err_msg.contains("NOT FOUND") || err_msg.contains("not found") {
                 return error_response(
                     StatusCode::NOT_FOUND,
                     &trace_id,
@@ -960,18 +894,6 @@ async fn trigger_cloud_account_collection(
                 )
                 .into_response();
             }
-            row
-        }
-        Ok(None) => {
-            return error_response(
-                StatusCode::NOT_FOUND,
-                &trace_id,
-                "not_found",
-                "Cloud account not found",
-            )
-            .into_response()
-        }
-        Err(e) => {
             tracing::error!(error = %e, "Failed to get cloud account");
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -983,40 +905,12 @@ async fn trigger_cloud_account_collection(
         }
     };
 
-    // Parse config
-    let account_config: CloudAccountConfig = match parse_cloud_account_config_with_default(
-        &row.config_json,
-        state
-            .config
-            .cloud_check
-            .default_account_collection_interval_secs,
-    ) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to parse cloud account config");
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "config_error",
-                "Invalid cloud account configuration",
-            )
-            .into_response();
-        }
-    };
-
-    // Extract provider and account name
-    let provider_type = row
-        .config_key
-        .strip_prefix("cloud_")
-        .and_then(|s| s.split('_').next())
-        .unwrap_or("unknown");
-    let account_name = row
-        .config_key
-        .strip_prefix(&format!("cloud_{}_", provider_type))
-        .unwrap_or("default");
+    let account_config = row_to_cloud_account_config(&row);
+    let provider_type = row.provider.clone();
+    let account_name = row.account_name.clone();
 
     // Build provider and collect metrics
-    match build_provider(provider_type, account_name, account_config) {
+    match build_provider(&provider_type, &account_name, account_config) {
         Ok(provider) => {
             // First, list instances to get hardware specs
             let instances = match provider.list_instances().await {
@@ -1447,11 +1341,145 @@ async fn get_cloud_instance_detail(
     success_response(StatusCode::OK, &trace_id, resp)
 }
 
+/// 批量导入云账户响应
+#[derive(Serialize, ToSchema)]
+struct BatchCreateCloudAccountsResponse {
+    /// 成功创建数量
+    created: usize,
+    /// 跳过（config_key 已存在）数量
+    skipped: usize,
+    /// 错误列表（格式: "行N: 原因"）
+    errors: Vec<String>,
+}
+
+/// 批量导入云账户请求
+///
+/// 文本格式每行一条，字段用 `:` 分隔，区域用 `,` 分隔：
+/// `账号名:SecretId:SecretKey:region1,region2`
+///
+/// 多条记录用 `|` 分隔，例如：
+/// `主账号:AKID123:secret:ap-shanghai,ap-guangzhou|子账号:AKID456:secret2:ap-beijing`
+#[derive(Deserialize, ToSchema)]
+struct BatchCreateCloudAccountsRequest {
+    /// 供应商（tencent 或 alibaba）
+    provider: String,
+    /// 批量文本，格式：账号名:SecretId:SecretKey:region1,region2|...
+    text: String,
+    /// 采集间隔（秒，默认 300）
+    collection_interval_secs: Option<i64>,
+}
+
+/// 批量导入云账户
+#[utoipa::path(
+    post,
+    path = "/v1/cloud/accounts/batch",
+    tag = "Cloud",
+    security(("bearer_auth" = [])),
+    request_body = BatchCreateCloudAccountsRequest,
+    responses(
+        (status = 200, description = "批量导入结果", body = BatchCreateCloudAccountsResponse),
+        (status = 400, description = "请求参数错误", body = crate::api::ApiError),
+        (status = 401, description = "未认证", body = crate::api::ApiError)
+    )
+)]
+async fn batch_create_cloud_accounts(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Json(req): Json<BatchCreateCloudAccountsRequest>,
+) -> impl IntoResponse {
+    if req.provider != "tencent" && req.provider != "alibaba" {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &trace_id,
+            "invalid_provider",
+            "Provider must be 'tencent' or 'alibaba'",
+        )
+        .into_response();
+    }
+
+    let collection_interval = req.collection_interval_secs.unwrap_or(
+        state
+            .config
+            .cloud_check
+            .default_account_collection_interval_secs as i64,
+    );
+
+    let mut created = 0usize;
+    let mut skipped = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+
+    for (line_idx, entry) in req.text.split('|').enumerate() {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = entry.splitn(4, ':').collect();
+        if parts.len() != 4 {
+            errors.push(format!(
+                "条目{}: 格式错误，期望 账号名:SecretId:SecretKey:region1,region2",
+                line_idx + 1
+            ));
+            continue;
+        }
+        let account_name = parts[0].trim();
+        let secret_id = parts[1].trim();
+        let secret_key = parts[2].trim();
+        let regions: Vec<String> = parts[3]
+            .split(',')
+            .map(|r| r.trim().to_string())
+            .filter(|r| !r.is_empty())
+            .collect();
+
+        if account_name.is_empty() || secret_id.is_empty() || secret_key.is_empty() {
+            errors.push(format!("条目{}: 账号名、SecretId 或 SecretKey 不能为空", line_idx + 1));
+            continue;
+        }
+        if regions.is_empty() {
+            errors.push(format!("条目{}: 至少需要一个地域", line_idx + 1));
+            continue;
+        }
+
+        let config_key = format!("cloud_{}_{}", req.provider, account_name.replace(' ', "_"));
+        let now = chrono::Utc::now();
+        let row = oxmon_storage::cert_store::CloudAccountRow {
+            id: oxmon_common::id::next_id(),
+            config_key,
+            provider: req.provider.clone(),
+            display_name: account_name.to_string(),
+            description: None,
+            account_name: account_name.to_string(),
+            secret_id: secret_id.to_string(),
+            secret_key: secret_key.to_string(),
+            regions,
+            collection_interval_secs: collection_interval,
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+
+        match state.cert_store.insert_cloud_account(&row) {
+            Ok(_) => created += 1,
+            Err(e) => {
+                let err_msg = e.to_string();
+                if err_msg.contains("UNIQUE constraint failed") {
+                    skipped += 1;
+                } else {
+                    errors.push(format!("条目{} ({}): {}", line_idx + 1, account_name, err_msg));
+                }
+            }
+        }
+    }
+
+    let resp = BatchCreateCloudAccountsResponse { created, skipped, errors };
+    success_response(StatusCode::OK, &trace_id, resp)
+}
+
 /// 注册云API路由
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_cloud_accounts))
         .routes(routes!(create_cloud_account))
+        .routes(routes!(batch_create_cloud_accounts))
         .routes(routes!(get_cloud_account))
         .routes(routes!(update_cloud_account))
         .routes(routes!(delete_cloud_account))

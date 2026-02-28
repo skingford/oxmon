@@ -1,5 +1,6 @@
 pub mod alibaba;
 pub mod collector;
+pub mod error;
 pub mod tencent;
 
 use anyhow::Result;
@@ -188,24 +189,29 @@ impl InstanceFilter {
     }
 }
 
-/// Build a cloud provider from account configuration
+/// Build a cloud provider from account configuration.
+///
+/// # Errors
+///
+/// Returns [`error::CloudProviderError::UnsupportedProvider`] if `provider_type`
+/// is not `"tencent"` or `"alibaba"`.
+/// Returns [`error::CloudProviderError::ConfigError`] if the account config is invalid.
 pub fn build_provider(
     provider_type: &str,
     account_name: &str,
     config: CloudAccountConfig,
-) -> Result<Box<dyn CloudProvider>> {
+) -> error::Result<Box<dyn CloudProvider>> {
     match provider_type {
-        "tencent" => Ok(Box::new(tencent::TencentCloudProvider::new(
-            account_name,
-            config,
-        )?)),
-        "alibaba" => Ok(Box::new(alibaba::AlibabaCloudProvider::new(
-            account_name,
-            config,
-        )?)),
-        _ => Err(anyhow::anyhow!(
-            "Unsupported cloud provider: {}",
-            provider_type
+        "tencent" => Ok(Box::new(
+            tencent::TencentCloudProvider::new(account_name, config)
+                .map_err(|e| error::CloudProviderError::ConfigError(e.to_string()))?,
+        )),
+        "alibaba" => Ok(Box::new(
+            alibaba::AlibabaCloudProvider::new(account_name, config)
+                .map_err(|e| error::CloudProviderError::ConfigError(e.to_string()))?,
+        )),
+        _ => Err(error::CloudProviderError::UnsupportedProvider(
+            provider_type.to_string(),
         )),
     }
 }
@@ -215,7 +221,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_instance_filter_status_whitelist() {
+    fn should_apply_status_whitelist_when_filtering_instances() {
         let mut tags = std::collections::HashMap::new();
         tags.insert("env".to_string(), "prod".to_string());
 
@@ -279,7 +285,7 @@ mod tests {
     }
 
     #[test]
-    fn test_instance_filter_required_tags() {
+    fn should_match_instances_with_all_required_tags_present() {
         let mut tags = std::collections::HashMap::new();
         tags.insert("env".to_string(), "prod".to_string());
         tags.insert("team".to_string(), "backend".to_string());
@@ -350,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn test_instance_filter_excluded_tags() {
+    fn should_exclude_instances_when_excluded_tag_is_present() {
         let mut tags = std::collections::HashMap::new();
         tags.insert("env".to_string(), "prod".to_string());
         tags.insert("deprecated".to_string(), "true".to_string());
@@ -412,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cloud_account_config_regions_accepts_array() {
+    fn should_deserialize_regions_from_array_field() {
         let cfg: CloudAccountConfig = serde_json::from_value(serde_json::json!({
             "secret_id": "sid",
             "secret_key": "skey",
@@ -424,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cloud_account_config_regions_accepts_default_region_string_alias() {
+    fn should_deserialize_regions_from_default_region_string_alias() {
         let cfg: CloudAccountConfig = serde_json::from_value(serde_json::json!({
             "secret_id": "sid",
             "secret_key": "skey",
