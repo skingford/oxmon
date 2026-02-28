@@ -97,6 +97,7 @@ mod tests {
     use super::*;
     use crate::config::{AppIdConfig, AuthConfig, CertCheckConfig, CloudCheckConfig, ServerConfig};
     use crate::state::{AgentRegistry, AppState};
+    use anyhow::Result;
     use axum::body::to_bytes;
     use axum::routing::get;
     use axum::Router;
@@ -104,25 +105,20 @@ mod tests {
     use oxmon_alert::engine::AlertEngine;
     use oxmon_notify::manager::NotificationManager;
     use oxmon_notify::plugin::ChannelRegistry;
-    use oxmon_storage::CertStore;
     use oxmon_storage::engine::SqliteStorageEngine;
+    use oxmon_storage::CertStore;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
     use tower::ServiceExt;
 
-    fn build_mock_state(app_id_config: AppIdConfig) -> (AppState, TempDir) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(SqliteStorageEngine::new(temp_dir.path()).unwrap());
+    async fn build_mock_state(app_id_config: AppIdConfig) -> Result<(AppState, TempDir)> {
+        let temp_dir = tempfile::tempdir()?;
+        let storage = Arc::new(SqliteStorageEngine::new(temp_dir.path())?);
         let data_dir_str = temp_dir.path().to_string_lossy().to_string();
         let mut db_cfg = crate::config::DatabaseConfig::default();
         db_cfg.data_dir = data_dir_str;
         let db_url = db_cfg.connection_url();
-        let cert_store = Arc::new(
-            tokio::runtime::Runtime::new()
-                .unwrap()
-                .block_on(CertStore::new(&db_url, temp_dir.path()))
-                .unwrap(),
-        );
+        let cert_store = Arc::new(CertStore::new(&db_url, temp_dir.path()).await?);
         let alert_engine = Arc::new(Mutex::new(AlertEngine::new(vec![])));
         let notifier = Arc::new(NotificationManager::new(
             ChannelRegistry::default(),
@@ -147,9 +143,9 @@ mod tests {
             app_id: app_id_config,
         };
 
-        let password_encryptor = Arc::new(
-            oxmon_storage::auth::PasswordEncryptor::load_or_create(temp_dir.path()).unwrap(),
-        );
+        let password_encryptor = Arc::new(oxmon_storage::auth::PasswordEncryptor::load_or_create(
+            temp_dir.path(),
+        )?);
 
         let state = AppState {
             storage,
@@ -165,14 +161,11 @@ mod tests {
             config: Arc::new(config),
         };
 
-        (state, temp_dir)
+        Ok((state, temp_dir))
     }
 
     async fn test_handler() -> Response {
-        Response::builder()
-            .status(StatusCode::OK)
-            .body(Body::from("OK"))
-            .unwrap()
+        Response::new(Body::from("OK"))
     }
 
     fn build_test_app(state: AppState) -> Router {
@@ -186,117 +179,125 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_feature_disabled_passes_through() {
+    async fn test_feature_disabled_passes_through() -> Result<()> {
         let (state, _temp) = build_mock_state(AppIdConfig {
             require_app_id: false,
             allowed_app_ids: vec![],
-        });
+        })
+        .await?;
         let app = build_test_app(state);
 
-        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+        let req = Request::builder().uri("/test").body(Body::empty())?;
+        let resp = app.oneshot(req).await?;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body = to_bytes(resp.into_body(), usize::MAX).await?;
         assert_eq!(&body[..], b"OK");
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_missing_header_returns_403() {
+    async fn test_missing_header_returns_403() -> Result<()> {
         let (state, _temp) = build_mock_state(AppIdConfig {
             require_app_id: true,
             allowed_app_ids: vec![],
-        });
+        })
+        .await?;
         let app = build_test_app(state);
 
-        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+        let req = Request::builder().uri("/test").body(Body::empty())?;
+        let resp = app.oneshot(req).await?;
 
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let body = to_bytes(resp.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
         assert_eq!(json["err_code"], 1008);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_empty_header_returns_403() {
+    async fn test_empty_header_returns_403() -> Result<()> {
         let (state, _temp) = build_mock_state(AppIdConfig {
             require_app_id: true,
             allowed_app_ids: vec![],
-        });
+        })
+        .await?;
         let app = build_test_app(state);
 
         let req = Request::builder()
             .uri("/test")
             .header("ox-app-id", "")
-            .body(Body::empty())
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+            .body(Body::empty())?;
+        let resp = app.oneshot(req).await?;
 
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let body = to_bytes(resp.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
         assert_eq!(json["err_code"], 1008);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_valid_header_with_empty_allowed_list_passes() {
+    async fn test_valid_header_with_empty_allowed_list_passes() -> Result<()> {
         let (state, _temp) = build_mock_state(AppIdConfig {
             require_app_id: true,
             allowed_app_ids: vec![], // Empty list = accept any non-empty value
-        });
+        })
+        .await?;
         let app = build_test_app(state);
 
         let req = Request::builder()
             .uri("/test")
             .header("ox-app-id", "any-app")
-            .body(Body::empty())
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+            .body(Body::empty())?;
+        let resp = app.oneshot(req).await?;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body = to_bytes(resp.into_body(), usize::MAX).await?;
         assert_eq!(&body[..], b"OK");
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_valid_header_in_allowed_list_passes() {
+    async fn test_valid_header_in_allowed_list_passes() -> Result<()> {
         let (state, _temp) = build_mock_state(AppIdConfig {
             require_app_id: true,
             allowed_app_ids: vec!["web-console".to_string(), "mobile-app".to_string()],
-        });
+        })
+        .await?;
         let app = build_test_app(state);
 
         let req = Request::builder()
             .uri("/test")
             .header("ox-app-id", "web-console")
-            .body(Body::empty())
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+            .body(Body::empty())?;
+        let resp = app.oneshot(req).await?;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body = to_bytes(resp.into_body(), usize::MAX).await?;
         assert_eq!(&body[..], b"OK");
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_invalid_header_not_in_allowed_list_returns_403() {
+    async fn test_invalid_header_not_in_allowed_list_returns_403() -> Result<()> {
         let (state, _temp) = build_mock_state(AppIdConfig {
             require_app_id: true,
             allowed_app_ids: vec!["web-console".to_string(), "mobile-app".to_string()],
-        });
+        })
+        .await?;
         let app = build_test_app(state);
 
         let req = Request::builder()
             .uri("/test")
             .header("ox-app-id", "unknown-app")
-            .body(Body::empty())
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+            .body(Body::empty())?;
+        let resp = app.oneshot(req).await?;
 
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let body = to_bytes(resp.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
         assert_eq!(json["err_code"], 1009);
+        Ok(())
     }
 }

@@ -17,8 +17,8 @@ use oxmon_server::config::ServerConfig;
 use oxmon_server::grpc;
 use oxmon_server::state::{AgentRegistry, AppState};
 use oxmon_storage::auth::{hash_token, PasswordEncryptor};
-use oxmon_storage::CertStore;
 use oxmon_storage::engine::SqliteStorageEngine;
+use oxmon_storage::CertStore;
 use rsa::{Oaep, RsaPublicKey};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -41,13 +41,7 @@ fn ensure_rustls_provider() {
     });
 }
 
-pub fn build_test_context() -> Result<TestContext> {
-    tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(build_test_context_async())
-}
-
-async fn build_test_context_async() -> Result<TestContext> {
+pub async fn build_test_context() -> Result<TestContext> {
     oxmon_common::id::init(1, 1);
     ensure_rustls_provider();
 

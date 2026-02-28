@@ -11,7 +11,9 @@ use serde_json::json;
 
 #[tokio::test]
 async fn health_should_return_ok_envelope() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let (status, body, trace) = request_no_body(&ctx.app, "GET", "/v1/health", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
@@ -22,7 +24,9 @@ async fn health_should_return_ok_envelope() {
 
 #[tokio::test]
 async fn auth_login_success_and_failure_cases() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
 
     // Success case
     let encrypted = encrypt_password_with_state(&ctx.state, "changeme");
@@ -66,7 +70,9 @@ async fn auth_login_success_and_failure_cases() {
 
 #[tokio::test]
 async fn auth_change_password_success_and_revocation() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let encrypted_current = encrypt_password_with_state(&ctx.state, "changeme");
@@ -108,7 +114,9 @@ async fn auth_change_password_success_and_revocation() {
 
 #[tokio::test]
 async fn agents_and_latest_should_cover_auth_and_not_found() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/agents", None).await;
@@ -132,7 +140,9 @@ async fn agents_and_latest_should_cover_auth_and_not_found() {
 
 #[tokio::test]
 async fn metrics_alerts_and_history_should_return_paginated_data() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let _whitelist_token = add_whitelist_agent(&ctx.app, &token, "agent-metrics-1").await;
@@ -190,7 +200,9 @@ async fn metrics_alerts_and_history_should_return_paginated_data() {
 
 #[tokio::test]
 async fn whitelist_endpoints_should_cover_sensitive_field_and_crud_paths() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let (status, body, _) = request_json(
@@ -284,7 +296,9 @@ async fn whitelist_endpoints_should_cover_sensitive_field_and_crud_paths() {
 
 #[tokio::test]
 async fn certificate_endpoints_should_cover_query_and_crud_paths() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let (domain_id, cert_id) = ensure_cert_domain_with_result(&ctx, "seed.example.com").await;
@@ -434,7 +448,9 @@ async fn certificate_endpoints_should_cover_query_and_crud_paths() {
 
 #[tokio::test]
 async fn certificate_list_should_default_to_20_when_pagination_missing() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     for index in 0..25 {
@@ -453,7 +469,9 @@ async fn certificate_list_should_default_to_20_when_pagination_missing() {
 
 #[tokio::test]
 async fn dictionary_endpoints_should_cover_crud_paths() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     // List types (initially empty)
@@ -710,7 +728,9 @@ async fn dictionary_endpoints_should_cover_crud_paths() {
 
 #[tokio::test]
 async fn system_config_endpoints_should_cover_crud_paths() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     // List (initially empty)
@@ -909,7 +929,9 @@ async fn system_config_endpoints_should_cover_crud_paths() {
 
 #[tokio::test]
 async fn notification_log_endpoints_should_support_query_and_summary() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     // Empty result
@@ -952,7 +974,11 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
         api_message_id: None,
         api_error_code: None,
     };
-    ctx.state.cert_store.insert_notification_log(&log1).await.unwrap();
+    ctx.state
+        .cert_store
+        .insert_notification_log(&log1)
+        .await
+        .unwrap();
 
     let log2 = oxmon_storage::NotificationLogRow {
         id: oxmon_common::id::next_id(),
@@ -979,7 +1005,11 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
         api_message_id: None,
         api_error_code: None,
     };
-    ctx.state.cert_store.insert_notification_log(&log2).await.unwrap();
+    ctx.state
+        .cert_store
+        .insert_notification_log(&log2)
+        .await
+        .unwrap();
 
     // Query all
     let (status, body, _) =
@@ -1078,7 +1108,9 @@ async fn notification_log_endpoints_should_support_query_and_summary() {
 
 #[tokio::test]
 async fn notification_channel_config_get_by_id_should_work() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let now = chrono::Utc::now();
@@ -1145,7 +1177,9 @@ async fn notification_channel_config_get_by_id_should_work() {
 
 #[tokio::test]
 async fn cloud_account_create_and_get_should_normalize_regions_and_default_interval() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let (status, body, _) = request_json(
@@ -1197,7 +1231,9 @@ async fn cloud_account_create_and_get_should_normalize_regions_and_default_inter
 
 #[tokio::test]
 async fn dashboard_overview_should_include_cloud_resource_summary() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let now = chrono::Utc::now();
@@ -1325,7 +1361,9 @@ async fn dashboard_overview_should_include_cloud_resource_summary() {
 
 #[tokio::test]
 async fn dashboard_overview_should_count_unknown_cloud_instance_statuses() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let now = chrono::Utc::now();
@@ -1411,7 +1449,9 @@ async fn dashboard_overview_should_count_unknown_cloud_instance_statuses() {
 
 #[tokio::test]
 async fn system_certs_backfill_domains_should_backfill_from_certificate_details() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let now = chrono::Utc::now();
@@ -1490,7 +1530,9 @@ async fn system_certs_backfill_domains_should_backfill_from_certificate_details(
 
 #[tokio::test]
 async fn system_certs_backfill_domains_dry_run_should_preview_without_writing() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
     let token = login_and_get_token(&ctx.app).await;
 
     let now = chrono::Utc::now();
@@ -1575,7 +1617,9 @@ async fn system_certs_backfill_domains_dry_run_should_preview_without_writing() 
 
 #[tokio::test]
 async fn openapi_endpoints_should_be_accessible() {
-    let ctx = build_test_context().expect("test context should build");
+    let ctx = build_test_context()
+        .await
+        .expect("test context should build");
 
     let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.json", None).await;
     assert_eq!(status, StatusCode::OK);

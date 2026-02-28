@@ -4,9 +4,9 @@ use oxmon_alert::engine::AlertEngine;
 use oxmon_common::proto::metric_service_server::MetricServiceServer;
 use oxmon_notify::manager::NotificationManager;
 use oxmon_notify::plugin::ChannelRegistry;
-use oxmon_storage::{AlertRuleRow, CertStore};
 use oxmon_storage::engine::SqliteStorageEngine;
 use oxmon_storage::StorageEngine;
+use oxmon_storage::{AlertRuleRow, CertStore};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -33,7 +33,7 @@ fn print_usage() {
     eprintln!("  oxmon-server [config.toml]                                     Start the server");
     eprintln!("  oxmon-server init-channels <config.toml> <seed.json>          Initialize channels from seed file");
     eprintln!("  oxmon-server init-rules <config.toml> <seed.json>             Initialize alert rules from seed file");
-    eprintln!("  oxmon-server init-dictionaries <config.toml> <seed.json>      Initialize dictionaries from seed file");
+    eprintln!("  oxmon-server init-dictionaries <config.toml> [seed.json]      Initialize dictionaries (system defaults when seed omitted)");
     eprintln!("  oxmon-server init-configs <config.toml> <seed.json>           Initialize/update system configs (runtime settings, etc.)");
 }
 
@@ -77,15 +77,9 @@ async fn main() -> Result<()> {
         Some("init-dictionaries") => {
             let config_path = args.get(2).ok_or_else(|| {
                 print_usage();
-                anyhow::anyhow!(
-                    "init-dictionaries requires <config.toml> and <seed.json> arguments"
-                )
+                anyhow::anyhow!("init-dictionaries requires <config.toml> argument")
             })?;
-            let seed_path = args.get(3).ok_or_else(|| {
-                print_usage();
-                anyhow::anyhow!("init-dictionaries requires <seed.json> argument")
-            })?;
-            run_init_dictionaries(config_path, seed_path).await
+            run_init_dictionaries(config_path, args.get(3).map(String::as_str)).await
         }
         Some("init-configs") => {
             let config_path = args.get(2).ok_or_else(|| {
@@ -170,7 +164,10 @@ async fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
                 channels_created += 1;
 
                 if !ch.recipients.is_empty() {
-                    match cert_store.set_channel_recipients(&inserted.id, &ch.recipients).await {
+                    match cert_store
+                        .set_channel_recipients(&inserted.id, &ch.recipients)
+                        .await
+                    {
                         Ok(recs) => {
                             recipients_set += recs.len() as u32;
                             tracing::info!(
@@ -286,12 +283,18 @@ async fn run_init_rules(config_path: &str, seed_path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Initialize dictionaries from a JSON seed file.
-async fn run_init_dictionaries(config_path: &str, seed_path: &str) -> Result<()> {
+/// Initialize dictionaries.
+/// - With `seed_path`: import dictionaries from JSON seed file
+/// - Without `seed_path`: sync built-in system dictionaries
+async fn run_init_dictionaries(config_path: &str, seed_path: Option<&str>) -> Result<()> {
     let config = config::ServerConfig::load(config_path)?;
     let db_url = config.database.connection_url();
     let cert_store = CertStore::new(&db_url, Path::new(&config.database.data_dir)).await?;
-    oxmon_server::dictionary_seed::init_from_seed_file(&cert_store, seed_path).await?;
+    if let Some(path) = seed_path {
+        oxmon_server::dictionary_seed::init_from_seed_file(&cert_store, path).await?;
+    } else {
+        oxmon_server::dictionary_seed::init_default_dictionaries(&cert_store).await?;
+    }
     Ok(())
 }
 
@@ -400,12 +403,19 @@ async fn run_server(config_path: &str) -> Result<()> {
     );
 
     // Build components
-    let storage = Arc::new(SqliteStorageEngine::new(Path::new(&config.database.data_dir))?);
+    let storage = Arc::new(SqliteStorageEngine::new(Path::new(
+        &config.database.data_dir,
+    ))?);
     let db_url = config.database.connection_url();
     let cert_store = Arc::new(CertStore::new(&db_url, Path::new(&config.database.data_dir)).await?);
     let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(
         config.agent_collection_interval_secs,
     )));
+
+    // Sync built-in system dictionaries first so other seeds can depend on dictionary metadata.
+    if let Err(e) = oxmon_server::dictionary_seed::init_default_dictionaries(&cert_store).await {
+        tracing::error!(error = %e, "Failed to initialize default system dictionaries");
+    }
 
     // Seed default alert rules (only when DB has none)
     if let Err(e) = rule_seed::init_default_rules(&cert_store).await {
@@ -455,15 +465,18 @@ async fn run_server(config_path: &str) -> Result<()> {
     };
 
     // Initialize password encryptor (RSA key pair for login/change-password)
-    let password_encryptor = Arc::new(
-        oxmon_storage::auth::PasswordEncryptor::load_or_create(Path::new(&config.database.data_dir))?,
-    );
+    let password_encryptor = Arc::new(oxmon_storage::auth::PasswordEncryptor::load_or_create(
+        Path::new(&config.database.data_dir),
+    )?);
 
     // Default admin account: create if users table is empty
     match cert_store.count_users().await {
         Ok(0) => {
             let password_hash = oxmon_storage::auth::hash_token(&config.auth.default_password)?;
-            match cert_store.create_user(&config.auth.default_username, &password_hash).await {
+            match cert_store
+                .create_user(&config.auth.default_username, &password_hash)
+                .await
+            {
                 Ok(_) => {
                     tracing::info!(
                         username = %config.auth.default_username,
@@ -484,11 +497,6 @@ async fn run_server(config_path: &str) -> Result<()> {
         Err(e) => {
             tracing::error!(error = %e, "Failed to check users table");
         }
-    }
-
-    // Initialize default system dictionaries (one-time, only when table is empty)
-    if let Err(e) = oxmon_server::dictionary_seed::init_default_dictionaries(&cert_store).await {
-        tracing::error!(error = %e, "Failed to initialize default system dictionaries");
     }
 
     // One-time self-heal on startup: backfill monitored domains from existing certificate details.

@@ -273,15 +273,19 @@ oxmon-server init-channels config/server.toml config/channels.seed.json
 
 集中管理系统常量枚举（渠道类型、严重级别、规则类型、告警状态等）。存储在数据库（`system_dictionaries` 表）中，通过 REST API (`/v1/dictionaries`) 或 CLI 管理。
 
-**初始化**使用 `init-dictionaries` CLI 子命令和 JSON 种子文件：
+服务启动时会**自动同步系统内置字典**（新增自动创建、变更自动更新、废弃项自动禁用）。
+
+CLI 用法：
 
 ```bash
+# 同步系统内置字典（无需 seed 文件）
+oxmon-server init-dictionaries config/server.toml
+
+# 从自定义 seed 文件导入（用于业务扩展字典）
 oxmon-server init-dictionaries config/server.toml config/dictionaries.seed.json
 ```
 
-默认种子数据（约 50 条）见 `config/dictionaries.seed.example.json`。表为空时，首次启动会自动初始化默认字典。
-
-可用字典类型：`channel_type`、`severity`、`rule_type`、`alert_status`、`agent_status`、`compare_operator`、`metric_name`、`rule_source`、`recipient_type`。系统内置项受保护，不可删除。
+可用字典类型（系统内置）：`channel_type`、`severity`、`rule_type`、`alert_status`、`agent_status`、`compare_operator`、`metric_name`、`rule_source`、`recipient_type`、`system_config_type`、`language`、`cloud_provider`、`cloud_instance_status`、`cloud_charge_type`、`cloud_internet_charge_type`、`cloud_io_optimized`、`cloud_auto_renew`、`cloud_operation_state`、`ai_provider`、`ai_model`、`ai_risk_level`。系统内置项受保护，不可删除。
 
 ## 采集指标列表
 

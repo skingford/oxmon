@@ -1,21 +1,24 @@
 mod common;
 
+use anyhow::{anyhow, Result};
 use common::{build_test_context, request_no_body};
 use std::collections::{BTreeSet, HashSet};
 
 #[tokio::test]
-async fn openapi_paths_should_be_covered_by_test_matrix() {
-    let ctx = build_test_context().expect("test context should build");
+async fn openapi_paths_should_be_covered_by_test_matrix() -> Result<()> {
+    let ctx = build_test_context().await?;
     let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.json", None).await;
     assert_eq!(status, axum::http::StatusCode::OK);
 
-    let paths = body["paths"]
-        .as_object()
-        .expect("openapi paths should be object");
+    let Some(paths) = body["paths"].as_object() else {
+        return Err(anyhow!("openapi paths should be object"));
+    };
 
     let mut exposed: BTreeSet<String> = BTreeSet::new();
     for (path, methods) in paths {
-        let methods = methods.as_object().expect("path methods should be object");
+        let Some(methods) = methods.as_object() else {
+            return Err(anyhow!("path methods should be object for {path}"));
+        };
         for method in methods.keys() {
             let method = method.to_ascii_uppercase();
             exposed.insert(format!("{method} {path}"));
@@ -145,17 +148,18 @@ async fn openapi_paths_should_be_covered_by_test_matrix() {
         missing.is_empty(),
         "missing endpoint coverage for: {missing:?}"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn openapi_list_query_params_should_be_optional() {
-    let ctx = build_test_context().expect("test context should build");
+async fn openapi_list_query_params_should_be_optional() -> Result<()> {
+    let ctx = build_test_context().await?;
     let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.json", None).await;
     assert_eq!(status, axum::http::StatusCode::OK);
 
-    let paths = body["paths"]
-        .as_object()
-        .expect("openapi paths should be object");
+    let Some(paths) = body["paths"].as_object() else {
+        return Err(anyhow!("openapi paths should be object"));
+    };
 
     let cases: &[(&str, &[&str])] = &[
         ("/v1/agents", &["limit", "offset"]),
@@ -223,10 +227,10 @@ async fn openapi_list_query_params_should_be_optional() {
         let operation = paths
             .get(*path)
             .and_then(|item| item.get("get"))
-            .unwrap_or_else(|| panic!("missing GET operation for path {path}"));
-        let parameters = operation["parameters"]
-            .as_array()
-            .unwrap_or_else(|| panic!("missing parameters for GET {path}"));
+            .ok_or_else(|| anyhow!("missing GET operation for path {path}"))?;
+        let Some(parameters) = operation["parameters"].as_array() else {
+            return Err(anyhow!("missing parameters for GET {path}"));
+        };
 
         for name in *names {
             let parameter = parameters
@@ -234,7 +238,7 @@ async fn openapi_list_query_params_should_be_optional() {
                 .find(|param| {
                     param["in"].as_str() == Some("query") && param["name"].as_str() == Some(*name)
                 })
-                .unwrap_or_else(|| panic!("missing query parameter {name} on GET {path}"));
+                .ok_or_else(|| anyhow!("missing query parameter {name} on GET {path}"))?;
 
             let required = parameter
                 .get("required")
@@ -247,24 +251,25 @@ async fn openapi_list_query_params_should_be_optional() {
             );
         }
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn openapi_dashboard_overview_schema_should_include_cloud_summary_fields() {
-    let ctx = build_test_context().expect("test context should build");
+async fn openapi_dashboard_overview_schema_should_include_cloud_summary_fields() -> Result<()> {
+    let ctx = build_test_context().await?;
     let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.json", None).await;
     assert_eq!(status, axum::http::StatusCode::OK);
 
-    let schemas = body["components"]["schemas"]
-        .as_object()
-        .expect("openapi components.schemas should be object");
+    let Some(schemas) = body["components"]["schemas"].as_object() else {
+        return Err(anyhow!("openapi components.schemas should be object"));
+    };
 
     let dashboard = schemas
         .get("DashboardOverview")
-        .expect("DashboardOverview schema should exist");
-    let dashboard_props = dashboard["properties"]
-        .as_object()
-        .expect("DashboardOverview.properties should be object");
+        .ok_or_else(|| anyhow!("DashboardOverview schema should exist"))?;
+    let Some(dashboard_props) = dashboard["properties"].as_object() else {
+        return Err(anyhow!("DashboardOverview.properties should be object"));
+    };
     assert!(
         dashboard_props.contains_key("cloud_summary"),
         "DashboardOverview should contain cloud_summary"
@@ -272,10 +277,10 @@ async fn openapi_dashboard_overview_schema_should_include_cloud_summary_fields()
 
     let cloud_summary = schemas
         .get("CloudSummary")
-        .expect("CloudSummary schema should exist");
-    let cloud_props = cloud_summary["properties"]
-        .as_object()
-        .expect("CloudSummary.properties should be object");
+        .ok_or_else(|| anyhow!("CloudSummary schema should exist"))?;
+    let Some(cloud_props) = cloud_summary["properties"].as_object() else {
+        return Err(anyhow!("CloudSummary.properties should be object"));
+    };
 
     for field in [
         "total_accounts",
@@ -292,25 +297,29 @@ async fn openapi_dashboard_overview_schema_should_include_cloud_summary_fields()
             "CloudSummary should contain field {field}"
         );
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn openapi_system_certs_backfill_domains_should_expose_optional_dry_run_query_param() {
-    let ctx = build_test_context().expect("test context should build");
+async fn openapi_system_certs_backfill_domains_should_expose_optional_dry_run_query_param(
+) -> Result<()> {
+    let ctx = build_test_context().await?;
     let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.json", None).await;
     assert_eq!(status, axum::http::StatusCode::OK);
 
     let operation = &body["paths"]["/v1/system/certs/backfill-domains"]["post"];
-    let parameters = operation["parameters"]
-        .as_array()
-        .expect("POST /v1/system/certs/backfill-domains should expose parameters");
+    let Some(parameters) = operation["parameters"].as_array() else {
+        return Err(anyhow!(
+            "POST /v1/system/certs/backfill-domains should expose parameters"
+        ));
+    };
 
     let dry_run = parameters
         .iter()
         .find(|param| {
             param["in"].as_str() == Some("query") && param["name"].as_str() == Some("dry_run")
         })
-        .expect("dry_run query param should exist");
+        .ok_or_else(|| anyhow!("dry_run query param should exist"))?;
 
     let required = dry_run
         .get("required")
@@ -323,30 +332,34 @@ async fn openapi_system_certs_backfill_domains_should_expose_optional_dry_run_qu
         .find(|param| {
             param["in"].as_str() == Some("query") && param["name"].as_str() == Some("preview_limit")
         })
-        .expect("preview_limit query param should exist");
+        .ok_or_else(|| anyhow!("preview_limit query param should exist"))?;
     let required = preview_limit
         .get("required")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     assert!(!required, "preview_limit query param should be optional");
+    Ok(())
 }
 
 #[tokio::test]
-async fn openapi_system_certs_backfill_response_schema_should_include_domains_preview() {
-    let ctx = build_test_context().expect("test context should build");
+async fn openapi_system_certs_backfill_response_schema_should_include_domains_preview() -> Result<()>
+{
+    let ctx = build_test_context().await?;
     let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.json", None).await;
     assert_eq!(status, axum::http::StatusCode::OK);
 
-    let schemas = body["components"]["schemas"]
-        .as_object()
-        .expect("openapi components.schemas should be object");
+    let Some(schemas) = body["components"]["schemas"].as_object() else {
+        return Err(anyhow!("openapi components.schemas should be object"));
+    };
 
     let schema = schemas
         .get("CertDomainsBackfillResponse")
-        .expect("CertDomainsBackfillResponse schema should exist");
-    let props = schema["properties"]
-        .as_object()
-        .expect("CertDomainsBackfillResponse.properties should be object");
+        .ok_or_else(|| anyhow!("CertDomainsBackfillResponse schema should exist"))?;
+    let Some(props) = schema["properties"].as_object() else {
+        return Err(anyhow!(
+            "CertDomainsBackfillResponse.properties should be object"
+        ));
+    };
 
     for field in ["inserted_domains", "dry_run", "domains_preview"] {
         assert!(
@@ -354,4 +367,5 @@ async fn openapi_system_certs_backfill_response_schema_should_include_domains_pr
             "CertDomainsBackfillResponse should contain field {field}"
         );
     }
+    Ok(())
 }

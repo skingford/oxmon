@@ -273,15 +273,21 @@ Runtime parameters such as alert aggregation and log retention are stored in the
 
 Centralized enum management for system constants (channel types, severity levels, rule types, alert statuses, etc.). Stored in the database (`system_dictionaries` table) and managed via REST API (`/v1/dictionaries`) or CLI.
 
-**Initial setup** uses the `init-dictionaries` CLI subcommand with a JSON seed file:
+Built-in system dictionaries are **auto-synced on server startup** (auto-create missing items, auto-update changed items, auto-disable stale system items).
+
+CLI usage:
 
 ```bash
+# Sync built-in system dictionaries (no seed file required)
+oxmon-server init-dictionaries config/server.toml
+
+# Import custom dictionaries from a seed file
 oxmon-server init-dictionaries config/server.toml config/dictionaries.seed.json
 ```
 
-See `config/dictionaries.seed.example.json` for the default seed data (~50 items). Default dictionaries are auto-initialized on first server startup when the table is empty.
+See `config/dictionaries.seed.example.json` for custom dictionary seed examples.
 
-Available dictionary types: `channel_type`, `severity`, `rule_type`, `alert_status`, `agent_status`, `compare_operator`, `metric_name`, `rule_source`, `recipient_type`. System built-in items are protected from deletion.
+Available built-in dictionary types: `channel_type`, `severity`, `rule_type`, `alert_status`, `agent_status`, `compare_operator`, `metric_name`, `rule_source`, `recipient_type`, `system_config_type`, `language`, `cloud_provider`, `cloud_instance_status`, `cloud_charge_type`, `cloud_internet_charge_type`, `cloud_io_optimized`, `cloud_auto_renew`, `cloud_operation_state`, `ai_provider`, `ai_model`, `ai_risk_level`. System built-in items are protected from deletion.
 
 ## Collected Metrics
 
