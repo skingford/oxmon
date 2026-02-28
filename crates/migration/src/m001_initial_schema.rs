@@ -300,7 +300,7 @@ CREATE TABLE IF NOT EXISTS cloud_accounts (
     secret_id TEXT NOT NULL,
     secret_key TEXT NOT NULL,
     regions TEXT NOT NULL DEFAULT '[]',
-    collection_interval_secs INTEGER NOT NULL DEFAULT 300,
+    collection_interval_secs INTEGER NOT NULL DEFAULT 3600,
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

@@ -206,7 +206,7 @@ buffer_max_size = 1000
 |-------|-------------|---------|
 | `grpc_port` | gRPC port for receiving agent reports | `9090` |
 | `http_port` | REST API port | `8080` |
-| `data_dir` | SQLite data file storage directory | `"data"` |
+| `database.data_dir` | SQLite data file storage directory | `"data"` |
 | `retention_days` | Data retention in days, auto-cleanup when expired | `7` |
 | `require_agent_auth` | Require agent authentication | `false` |
 | `agent_collection_interval_secs` | Agent collection interval (seconds) for determining active status. Timeout threshold is 3x this value. Should match agents' `collection_interval_secs` | `10` |
@@ -332,7 +332,7 @@ Quick import URL (Apifox/Postman/Swagger): `http://<server-ip>:8080/v1/openapi.j
 
 oxmon stores data in SQLite:
 
-- `data/cert.db`: users, whitelist, certificate domains, certificate details
+- `data/oxmon.db`: users, whitelist, certificate domains, certificate details
 - `data/YYYY-MM-DD.db`: daily partitioned metric & alert data (`metrics`, `alert_events`)
 
 ```bash
@@ -340,7 +340,7 @@ oxmon stores data in SQLite:
 ls -lh data/*.db
 
 # Open main database
-sqlite3 data/cert.db
+sqlite3 data/oxmon.db
 
 # Open one daily partition database
 sqlite3 data/2026-02-09.db

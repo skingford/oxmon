@@ -74,7 +74,7 @@ async fn get_system_config(
         RuntimeConfig {
             grpc_port: config.grpc_port,
             http_port: config.http_port,
-            data_dir: config.data_dir.clone(),
+            data_dir: config.database.data_dir.clone(),
             retention_days: config.retention_days,
             require_agent_auth: config.require_agent_auth,
             cert_check_enabled: config.cert_check.enabled,

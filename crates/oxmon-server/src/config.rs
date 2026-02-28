@@ -6,8 +6,6 @@ pub struct ServerConfig {
     pub grpc_port: u16,
     #[serde(default = "default_http_port")]
     pub http_port: u16,
-    #[serde(default = "default_data_dir")]
-    pub data_dir: String,
     #[serde(default = "default_retention_days")]
     pub retention_days: u32,
     #[serde(default = "default_require_agent_auth")]
@@ -25,6 +23,8 @@ pub struct ServerConfig {
     #[serde(default = "default_rate_limit_enabled")]
     pub rate_limit_enabled: bool,
 
+    #[serde(default)]
+    pub database: DatabaseConfig,
     #[serde(default)]
     pub cert_check: CertCheckConfig,
     #[serde(default)]
@@ -338,6 +338,126 @@ fn default_rate_limit_enabled() -> bool {
 
 fn default_agent_collection_interval_secs() -> u64 {
     10
+}
+
+/// 管理数据库（oxmon.db）的连接配置。
+///
+/// 默认使用 SQLite，数据库文件存储在 `database.data_dir` 目录下。
+/// 若需使用 PostgreSQL 或 MySQL，填写 `driver`、`host`、`port`、
+/// `username`、`password`、`name`，或直接指定 `url`（优先级最高）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabaseConfig {
+    /// 数据库驱动类型：`sqlite`（默认）、`postgres`、`mysql`
+    #[serde(default = "default_db_driver")]
+    pub driver: String,
+    /// SQLite 数据目录（仅 sqlite 模式有效）
+    #[serde(default = "default_data_dir")]
+    pub data_dir: String,
+    /// SQLite 文件名（默认 `oxmon.db`）或远程数据库名称
+    #[serde(default = "default_db_name")]
+    pub name: String,
+    /// 远程数据库主机（仅 postgres/mysql 有效）
+    #[serde(default)]
+    pub host: Option<String>,
+    /// 远程数据库端口（postgres 默认 5432，mysql 默认 3306）
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// 数据库用户名（仅 postgres/mysql 有效）
+    #[serde(default)]
+    pub username: Option<String>,
+    /// 数据库密码（仅 postgres/mysql 有效）
+    #[serde(default)]
+    pub password: Option<String>,
+    /// 完整连接 URL，设置后忽略其余所有字段（最高优先级）
+    ///
+    /// 示例：
+    /// - `sqlite:///absolute/path/oxmon.db?mode=rwc`
+    /// - `postgres://user:pass@localhost:5432/oxmon`
+    /// - `mysql://user:pass@localhost:3306/oxmon`
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            driver: default_db_driver(),
+            data_dir: default_data_dir(),
+            name: default_db_name(),
+            host: None,
+            port: None,
+            username: None,
+            password: None,
+            url: None,
+        }
+    }
+}
+
+impl DatabaseConfig {
+    /// 根据配置构造数据库连接 URL。
+    ///
+    /// 优先级：`url` 字段 > `driver` + 其余字段组合。
+    /// `database.data_dir` 仅在 SQLite 模式下用于拼接文件路径。
+    pub fn connection_url(&self) -> String {
+        if let Some(ref explicit_url) = self.url {
+            return explicit_url.clone();
+        }
+
+        match self.driver.as_str() {
+            "postgres" | "postgresql" => {
+                let host = self.host.as_deref().unwrap_or("localhost");
+                let port = self.port.unwrap_or(5432);
+                let user = self.username.as_deref().unwrap_or("postgres");
+                let pass = self.password.as_deref().unwrap_or("");
+                format!("postgres://{}:{}@{}:{}/{}", user, pass, host, port, self.name)
+            }
+            "mysql" => {
+                let host = self.host.as_deref().unwrap_or("localhost");
+                let port = self.port.unwrap_or(3306);
+                let user = self.username.as_deref().unwrap_or("root");
+                let pass = self.password.as_deref().unwrap_or("");
+                format!("mysql://{}:{}@{}:{}/{}", user, pass, host, port, self.name)
+            }
+            _ => {
+                // SQLite（默认）
+                let db_path = std::path::Path::new(&self.data_dir).join(&self.name);
+                format!("sqlite://{}?mode=rwc", db_path.to_string_lossy())
+            }
+        }
+    }
+
+    /// 返回用于日志输出的 URL（隐藏密码）。
+    pub fn redacted_url(&self) -> String {
+        if self.url.is_some() {
+            return "<explicit url>".to_string();
+        }
+        match self.driver.as_str() {
+            "postgres" | "postgresql" => {
+                let host = self.host.as_deref().unwrap_or("localhost");
+                let port = self.port.unwrap_or(5432);
+                let user = self.username.as_deref().unwrap_or("postgres");
+                format!("postgres://{}:****@{}:{}/{}", user, host, port, self.name)
+            }
+            "mysql" => {
+                let host = self.host.as_deref().unwrap_or("localhost");
+                let port = self.port.unwrap_or(3306);
+                let user = self.username.as_deref().unwrap_or("root");
+                format!("mysql://{}:****@{}:{}/{}", user, host, port, self.name)
+            }
+            _ => {
+                let db_path = std::path::Path::new(&self.data_dir).join(&self.name);
+                format!("sqlite://{}?mode=rwc", db_path.to_string_lossy())
+            }
+        }
+    }
+}
+
+fn default_db_driver() -> String {
+    "sqlite".to_string()
+}
+
+fn default_db_name() -> String {
+    "oxmon.db".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

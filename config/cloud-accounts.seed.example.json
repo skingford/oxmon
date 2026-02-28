@@ -10,7 +10,7 @@
         "secret_id": "your-tencent-secret-id",
         "secret_key": "your-tencent-secret-key",
         "regions": ["ap-guangzhou", "ap-shanghai"],
-        "collection_interval_secs": 300
+        "collection_interval_secs": 3600
       }
     },
     {
@@ -23,7 +23,7 @@
         "access_key_id": "your-alibaba-access-key-id",
         "access_key_secret": "your-alibaba-access-key-secret",
         "regions": ["cn-hangzhou", "cn-beijing"],
-        "collection_interval_secs": 300
+        "collection_interval_secs": 3600
       }
     },
     {
@@ -36,7 +36,7 @@
         "secret_id": "your-tencent-test-secret-id",
         "secret_key": "your-tencent-test-secret-key",
         "regions": ["ap-guangzhou"],
-        "collection_interval_secs": 600
+        "collection_interval_secs": 3600
       }
     }
   ]

@@ -113,10 +113,14 @@ mod tests {
     fn build_mock_state(app_id_config: AppIdConfig) -> (AppState, TempDir) {
         let temp_dir = tempfile::tempdir().unwrap();
         let storage = Arc::new(SqliteStorageEngine::new(temp_dir.path()).unwrap());
+        let data_dir_str = temp_dir.path().to_string_lossy().to_string();
+        let mut db_cfg = crate::config::DatabaseConfig::default();
+        db_cfg.data_dir = data_dir_str;
+        let db_url = db_cfg.connection_url();
         let cert_store = Arc::new(
             tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(CertStore::new(temp_dir.path()))
+                .block_on(CertStore::new(&db_url, temp_dir.path()))
                 .unwrap(),
         );
         let alert_engine = Arc::new(Mutex::new(AlertEngine::new(vec![])));
@@ -130,12 +134,12 @@ mod tests {
         let config = ServerConfig {
             grpc_port: 9090,
             http_port: 8080,
-            data_dir: temp_dir.path().to_string_lossy().to_string(),
             retention_days: 7,
             require_agent_auth: false,
             agent_collection_interval_secs: 10,
             cors_allowed_origins: Vec::new(),
             rate_limit_enabled: false,
+            database: db_cfg,
             cert_check: CertCheckConfig::default(),
             cloud_check: CloudCheckConfig::default(),
             ai_check: crate::config::AICheckConfig::default(),

@@ -6,14 +6,30 @@ grpc_port = 9090
 # HTTP port for REST API
 http_port = 8080
 
-# Directory for metric data storage (SQLite partition files)
-data_dir = "data"
-
 # How many days to retain metric data
 retention_days = 7
 
 # Require agent authentication (default: false)
 require_agent_auth = false
+
+# Management Database Configuration (oxmon.db)
+# Controls the database used for alert rules, channels, cloud accounts, etc.
+# Defaults to SQLite stored under database.data_dir.
+[database]
+driver = "sqlite"           # Options: sqlite (default), postgres, mysql
+data_dir = "data"          # SQLite data directory (used for metric partitions and local keys)
+name   = "oxmon.db"         # SQLite file name (relative to database.data_dir), or remote database name
+
+# PostgreSQL / MySQL example (uncomment and fill in to switch):
+# driver   = "postgres"
+# name     = "oxmon"
+# host     = "localhost"
+# port     = 5432
+# username = "oxmon"
+# password = "your-password"
+
+# Or specify a full URL directly (overrides all fields above):
+# url = "postgres://oxmon:your-password@localhost:5432/oxmon"
 
 # REST API Authentication (JWT)
 [auth]

@@ -7,7 +7,7 @@ set -e
 
 # 配置
 PROJECT_DIR="/Users/kingford/workspace/github.com/oxmon"
-DB_PATH="$PROJECT_DIR/data/cert.db"
+DB_PATH="$PROJECT_DIR/data/oxmon.db"
 LOG_FILE="$PROJECT_DIR/logs/ai_report_cron.log"
 PYTHON_SCRIPT="$PROJECT_DIR/send_ai_report_clean.py"
 

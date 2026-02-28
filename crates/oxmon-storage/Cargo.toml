@@ -10,7 +10,7 @@ workspace = true
 oxmon-common = { workspace = true }
 # rusqlite：仍用于时序分片存储 (engine.rs / partition.rs)
 rusqlite = { workspace = true }
-# sea-orm：用于管理数据库 (cert.db) 的 ORM 层
+# sea-orm：用于管理数据库 (oxmon.db) 的 ORM 层
 sea-orm = { workspace = true }
 migration = { workspace = true }
 chrono = { workspace = true }

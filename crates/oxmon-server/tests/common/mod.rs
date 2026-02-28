@@ -53,7 +53,11 @@ async fn build_test_context_async() -> Result<TestContext> {
 
     let temp_dir = tempfile::tempdir()?;
     let storage = Arc::new(SqliteStorageEngine::new(temp_dir.path())?);
-    let cert_store = Arc::new(CertStore::new(temp_dir.path()).await?);
+    let data_dir_str = temp_dir.path().to_string_lossy().to_string();
+    let mut db_cfg = oxmon_server::config::DatabaseConfig::default();
+    db_cfg.data_dir = data_dir_str;
+    let db_url = db_cfg.connection_url();
+    let cert_store = Arc::new(CertStore::new(&db_url, temp_dir.path()).await?);
 
     let password_hash = hash_token("changeme")?;
     let _ = cert_store.create_user("admin", &password_hash).await?;
@@ -80,12 +84,12 @@ async fn build_test_context_async() -> Result<TestContext> {
     let config = ServerConfig {
         grpc_port: 9090,
         http_port: 8080,
-        data_dir: temp_dir.path().to_string_lossy().to_string(),
         retention_days: 7,
         require_agent_auth: false,
         agent_collection_interval_secs: 10,
         cors_allowed_origins: Vec::new(),
         rate_limit_enabled: false,
+        database: db_cfg,
         cert_check: Default::default(),
         cloud_check: Default::default(),
         ai_check: Default::default(),

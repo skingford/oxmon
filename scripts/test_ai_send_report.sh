@@ -76,7 +76,7 @@ echo ""
 echo "🤖 步骤 3: 创建 AI 账号"
 
 # 先检查是否已存在
-EXISTING_ACCOUNT=$(sqlite3 data/cert.db "SELECT id FROM ai_accounts WHERE config_key='ai_test_glm5' LIMIT 1;" 2>/dev/null || echo "")
+EXISTING_ACCOUNT=$(sqlite3 data/oxmon.db "SELECT id FROM ai_accounts WHERE config_key='ai_test_glm5' LIMIT 1;" 2>/dev/null || echo "")
 
 if [ ! -z "$EXISTING_ACCOUNT" ]; then
   echo "   ⚠️  AI 账号已存在，使用现有账号: $EXISTING_ACCOUNT"
@@ -98,7 +98,7 @@ EOF
 )
 
   # 直接插入数据库到 ai_accounts 表
-  sqlite3 data/cert.db <<EOF
+  sqlite3 data/oxmon.db <<EOF
 INSERT INTO ai_accounts (
   id, config_key, provider, display_name, description,
   api_key, model, extra_config, enabled, created_at, updated_at
@@ -127,14 +127,14 @@ echo ""
 
 # 4. 检查 agents 和指标数据
 echo "📊 步骤 4: 检查数据状态"
-AGENT_COUNT=$(sqlite3 data/cert.db "SELECT COUNT(*) FROM agents;" 2>/dev/null || echo "0")
+AGENT_COUNT=$(sqlite3 data/oxmon.db "SELECT COUNT(*) FROM agents;" 2>/dev/null || echo "0")
 echo "   Agents 数量: $AGENT_COUNT"
 
 if [ "$AGENT_COUNT" -eq 0 ]; then
   echo "   ⚠️  没有真实 agents，插入测试数据..."
 
   # 插入测试 agents
-  sqlite3 data/cert.db <<EOF
+  sqlite3 data/oxmon.db <<EOF
 INSERT OR IGNORE INTO agents (agent_id, first_seen, last_seen, created_at)
 VALUES
   ('test-agent-1', datetime('now'), datetime('now'), datetime('now')),
@@ -175,7 +175,7 @@ echo ""
 
 # 6. 查询生成的报告
 echo "📄 步骤 6: 查询 AI 报告"
-REPORT_COUNT=$(sqlite3 data/cert.db "SELECT COUNT(*) FROM ai_reports WHERE ai_account_id='$AI_ACCOUNT_ID';" 2>/dev/null || echo "0")
+REPORT_COUNT=$(sqlite3 data/oxmon.db "SELECT COUNT(*) FROM ai_reports WHERE ai_account_id='$AI_ACCOUNT_ID';" 2>/dev/null || echo "0")
 echo "   报告数量: $REPORT_COUNT"
 
 if [ "$REPORT_COUNT" -eq 0 ]; then
@@ -192,13 +192,13 @@ if [ "$REPORT_COUNT" -eq 0 ]; then
   echo "   额外等待 30 秒..."
   sleep 30
 
-  REPORT_COUNT=$(sqlite3 data/cert.db "SELECT COUNT(*) FROM ai_reports WHERE ai_account_id='$AI_ACCOUNT_ID';" 2>/dev/null || echo "0")
+  REPORT_COUNT=$(sqlite3 data/oxmon.db "SELECT COUNT(*) FROM ai_reports WHERE ai_account_id='$AI_ACCOUNT_ID';" 2>/dev/null || echo "0")
   echo "   报告数量: $REPORT_COUNT"
 fi
 
 if [ "$REPORT_COUNT" -gt 0 ]; then
   # 获取最新报告
-  REPORT_ID=$(sqlite3 data/cert.db "SELECT id FROM ai_reports WHERE ai_account_id='$AI_ACCOUNT_ID' ORDER BY created_at DESC LIMIT 1;")
+  REPORT_ID=$(sqlite3 data/oxmon.db "SELECT id FROM ai_reports WHERE ai_account_id='$AI_ACCOUNT_ID' ORDER BY created_at DESC LIMIT 1;")
 
   echo "   ✅ 发现 AI 报告!"
   echo "   报告 ID: $REPORT_ID"
@@ -206,7 +206,7 @@ if [ "$REPORT_COUNT" -gt 0 ]; then
 
   # 查询报告详情
   echo "📊 报告详情:"
-  sqlite3 data/cert.db <<EOF
+  sqlite3 data/oxmon.db <<EOF
 .mode column
 .headers on
 SELECT
@@ -224,12 +224,12 @@ EOF
 
   # 显示 AI 分析摘要
   echo "🤖 AI 分析 (前 500 字符):"
-  sqlite3 data/cert.db "SELECT substr(ai_analysis, 1, 500) || '...' FROM ai_reports WHERE id='$REPORT_ID';"
+  sqlite3 data/oxmon.db "SELECT substr(ai_analysis, 1, 500) || '...' FROM ai_reports WHERE id='$REPORT_ID';"
   echo ""
 
   # 保存 HTML 报告
   HTML_FILE="ai_report_${REPORT_ID}.html"
-  sqlite3 data/cert.db "SELECT html_content FROM ai_reports WHERE id='$REPORT_ID';" > "$HTML_FILE"
+  sqlite3 data/oxmon.db "SELECT html_content FROM ai_reports WHERE id='$REPORT_ID';" > "$HTML_FILE"
   echo "💾 HTML 报告已保存: $HTML_FILE"
   echo "   浏览器查看: open $HTML_FILE"
   echo ""
@@ -288,7 +288,7 @@ else
   echo "   2. 检查 API Key 是否有效"
   echo "   3. 确认网络连接正常"
   echo "   4. 验证账号配置:"
-  sqlite3 data/cert.db "SELECT * FROM ai_accounts WHERE id='$AI_ACCOUNT_ID';"
+  sqlite3 data/oxmon.db "SELECT * FROM ai_accounts WHERE id='$AI_ACCOUNT_ID';"
 fi
 
 echo ""
@@ -296,7 +296,7 @@ echo "✅ 测试完成"
 echo ""
 echo "📚 相关命令:"
 echo "   - 查看日志: tail -f server.log"
-echo "   - 查看报告: sqlite3 data/cert.db 'SELECT * FROM ai_reports;'"
+echo "   - 查看报告: sqlite3 data/oxmon.db 'SELECT * FROM ai_reports;'"
 echo "   - 查看账号: curl http://localhost:8080/v1/ai/accounts -H \"Authorization: Bearer \$TOKEN\""
 echo "   - API 文档: open http://localhost:8080/docs"
 echo ""

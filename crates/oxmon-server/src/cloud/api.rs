@@ -52,7 +52,7 @@ struct CreateCloudAccountRequest {
     secret_key: String,
     /// 地域列表（如 ["ap-shanghai", "ap-guangzhou"]）
     regions: Vec<String>,
-    /// 采集间隔（秒，默认 300）
+    /// 采集间隔（秒，默认 3600）
     collection_interval_secs: Option<i64>,
 }
 
@@ -1375,7 +1375,7 @@ struct BatchCreateCloudAccountsRequest {
     provider: String,
     /// 批量文本，格式：账号名:SecretId:SecretKey:region1,region2|...
     text: String,
-    /// 采集间隔（秒，默认 300）
+    /// 采集间隔（秒，默认 3600）
     collection_interval_secs: Option<i64>,
 }
 

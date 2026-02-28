@@ -11,7 +11,7 @@ set -e
 # 配置
 DATA_DIR="${DATA_DIR:-data}"
 CONFIG_FILE="${CONFIG_FILE:-config/server.toml}"
-CERT_DB="${DATA_DIR}/cert.db"
+CERT_DB="${DATA_DIR}/oxmon.db"
 
 # 颜色输出
 RED='\033[0;31m'

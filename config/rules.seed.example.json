@@ -9,7 +9,7 @@
       "silence_secs": 300,
       "config": {
         "operator": "greater_than",
-        "value": 90.0,
+        "value": 85.0,
         "duration_secs": 60
       }
     },
@@ -35,7 +35,7 @@
       "silence_secs": 300,
       "config": {
         "operator": "greater_than",
-        "value": 95.0,
+        "value": 80.0,
         "duration_secs": 60
       }
     },
@@ -48,7 +48,7 @@
       "silence_secs": 300,
       "config": {
         "operator": "greater_than",
-        "value": 85.0,
+        "value": 70.0,
         "duration_secs": 120
       }
     },
@@ -73,7 +73,7 @@
       "silence_secs": 600,
       "config": {
         "operator": "greater_than",
-        "value": 95.0,
+        "value": 80.0,
         "duration_secs": 0
       }
     },
@@ -86,7 +86,7 @@
       "silence_secs": 600,
       "config": {
         "operator": "greater_than",
-        "value": 85.0,
+        "value": 70.0,
         "duration_secs": 0
       }
     },

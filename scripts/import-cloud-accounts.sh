@@ -9,7 +9,7 @@ BASE_URL="${BASE_URL:-http://localhost:8080/v1}"
 ENV_FILE="${ENV_FILE:-/Users/kingford/workspace/coding.net/motern.com/xiaoiron.com/monitor/.env}"
 ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_PASS="${ADMIN_PASS:-changeme}"
-COLLECTION_INTERVAL="${COLLECTION_INTERVAL:-300}"
+COLLECTION_INTERVAL="${COLLECTION_INTERVAL:-3600}"
 DRY_RUN="${DRY_RUN:-false}"
 
 # 颜色定义

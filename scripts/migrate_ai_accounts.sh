@@ -5,12 +5,12 @@
 
 set -e
 
-DB_PATH="${1:-data/cert.db}"
+DB_PATH="${1:-data/oxmon.db}"
 
 if [ ! -f "$DB_PATH" ]; then
   echo "❌ 数据库文件不存在: $DB_PATH"
   echo "使用方法: $0 [数据库路径]"
-  echo "示例: $0 data/cert.db"
+  echo "示例: $0 data/oxmon.db"
   exit 1
 fi
 

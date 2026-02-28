@@ -6,8 +6,8 @@
 
 set -e
 
-SOURCE_DB="./data-test/cert.db"
-TARGET_DB="./data/cert.db"
+SOURCE_DB="./data-test/oxmon.db"
+TARGET_DB="./data/oxmon.db"
 
 echo "========================================"
 echo "数据库同步工具"

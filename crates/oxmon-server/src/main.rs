@@ -117,7 +117,8 @@ async fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
     use oxmon_storage::{NotificationChannelFilter, NotificationChannelRow, SilenceWindowRow};
 
     let config = config::ServerConfig::load(config_path)?;
-    let cert_store = CertStore::new(Path::new(&config.data_dir)).await?;
+    let db_url = config.database.connection_url();
+    let cert_store = CertStore::new(&db_url, Path::new(&config.database.data_dir)).await?;
 
     let seed_content = std::fs::read_to_string(seed_path)
         .map_err(|e| anyhow::anyhow!("Failed to read seed file '{}': {}", seed_path, e))?;
@@ -232,7 +233,8 @@ async fn run_init_channels(config_path: &str, seed_path: &str) -> Result<()> {
 /// Initialize alert rules from a JSON seed file.
 async fn run_init_rules(config_path: &str, seed_path: &str) -> Result<()> {
     let config = config::ServerConfig::load(config_path)?;
-    let cert_store = CertStore::new(Path::new(&config.data_dir)).await?;
+    let db_url = config.database.connection_url();
+    let cert_store = CertStore::new(&db_url, Path::new(&config.database.data_dir)).await?;
 
     let seed_content = std::fs::read_to_string(seed_path)
         .map_err(|e| anyhow::anyhow!("Failed to read seed file '{}': {}", seed_path, e))?;
@@ -287,7 +289,8 @@ async fn run_init_rules(config_path: &str, seed_path: &str) -> Result<()> {
 /// Initialize dictionaries from a JSON seed file.
 async fn run_init_dictionaries(config_path: &str, seed_path: &str) -> Result<()> {
     let config = config::ServerConfig::load(config_path)?;
-    let cert_store = CertStore::new(Path::new(&config.data_dir)).await?;
+    let db_url = config.database.connection_url();
+    let cert_store = CertStore::new(&db_url, Path::new(&config.database.data_dir)).await?;
     oxmon_server::dictionary_seed::init_from_seed_file(&cert_store, seed_path).await?;
     Ok(())
 }
@@ -298,7 +301,8 @@ async fn run_init_configs(config_path: &str, seed_path: &str) -> Result<()> {
     use oxmon_storage::SystemConfigRow;
 
     let config = config::ServerConfig::load(config_path)?;
-    let cert_store = CertStore::new(Path::new(&config.data_dir)).await?;
+    let db_url = config.database.connection_url();
+    let cert_store = CertStore::new(&db_url, Path::new(&config.database.data_dir)).await?;
 
     let seed_content = std::fs::read_to_string(seed_path)
         .map_err(|e| anyhow::anyhow!("Failed to read seed file '{}': {}", seed_path, e))?;
@@ -390,13 +394,15 @@ async fn run_server(config_path: &str) -> Result<()> {
     tracing::info!(
         grpc_port = config.grpc_port,
         http_port = config.http_port,
-        data_dir = %config.data_dir,
+        data_dir = %config.database.data_dir,
+        db = %config.database.redacted_url(),
         "oxmon-server starting"
     );
 
     // Build components
-    let storage = Arc::new(SqliteStorageEngine::new(Path::new(&config.data_dir))?);
-    let cert_store = Arc::new(CertStore::new(Path::new(&config.data_dir)).await?);
+    let storage = Arc::new(SqliteStorageEngine::new(Path::new(&config.database.data_dir))?);
+    let db_url = config.database.connection_url();
+    let cert_store = Arc::new(CertStore::new(&db_url, Path::new(&config.database.data_dir)).await?);
     let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(
         config.agent_collection_interval_secs,
     )));
@@ -450,7 +456,7 @@ async fn run_server(config_path: &str) -> Result<()> {
 
     // Initialize password encryptor (RSA key pair for login/change-password)
     let password_encryptor = Arc::new(
-        oxmon_storage::auth::PasswordEncryptor::load_or_create(Path::new(&config.data_dir))?,
+        oxmon_storage::auth::PasswordEncryptor::load_or_create(Path::new(&config.database.data_dir))?,
     );
 
     // Default admin account: create if users table is empty

@@ -32,7 +32,7 @@ pub use agent::{AgentListFilter, AgentWhitelistFilter};
 pub use cert::{CertDomainSummary, CertHealthSummary, CertStatusFilter, CertStatusSummary};
 pub use dictionary::DictTypeFilter;
 
-/// 管理数据库（cert.db）的统一访问层。
+/// 管理数据库（oxmon.db）的统一访问层。
 ///
 /// 所有方法均为 `async fn`，底层使用 SeaORM + SQLite。
 /// 时序分片存储（每日 .db 文件）仍由 `SqliteStorageEngine` 管理。
@@ -44,26 +44,26 @@ pub struct CertStore {
 impl CertStore {
     /// 连接并初始化管理数据库。
     ///
+    /// - `db_url`：完整的数据库连接 URL，由调用方（服务器配置）提供。
+    ///   SQLite 示例：`sqlite:///data/oxmon.db?mode=rwc`
+    ///   PostgreSQL 示例：`postgres://user:pass@localhost:5432/oxmon`
+    /// - `data_dir`：本地数据目录，用于存放 Token 加密密钥文件，与数据库类型无关。
+    ///
     /// 自动运行 `sea-orm-migration` 迁移，确保 Schema 最新。
-    pub async fn new(data_dir: &Path) -> Result<Self> {
+    pub async fn new(db_url: &str, data_dir: &Path) -> Result<Self> {
         std::fs::create_dir_all(data_dir)?;
-        let db_path = data_dir.join("cert.db");
-        let url = format!(
-            "sqlite://{}?mode=rwc",
-            db_path
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("non-UTF-8 data_dir path"))?
-        );
-        let db = Database::connect(&url).await?;
+        let db = Database::connect(db_url).await?;
 
-        // 开启 WAL 模式
-        db.execute_unprepared("PRAGMA journal_mode=WAL;").await?;
+        // WAL 模式仅对 SQLite 有效
+        if db_url.starts_with("sqlite://") {
+            db.execute_unprepared("PRAGMA journal_mode=WAL;").await?;
+        }
 
         // 运行所有待执行迁移
         Migrator::up(&db, None).await?;
 
         let token_encryptor = TokenEncryptor::load_or_create(data_dir)?;
-        tracing::info!(path = %db_path.display(), "Initialized cert store (SeaORM)");
+        tracing::info!(db_url = %db_url, "Initialized cert store (SeaORM)");
 
         Ok(Self { db, token_encryptor })
     }

@@ -5,12 +5,12 @@
 
 set -e
 
-DB_PATH="${1:-data/cert.db}"
+DB_PATH="${1:-data/oxmon.db}"
 
 if [ ! -f "$DB_PATH" ]; then
   echo "❌ 数据库文件不存在: $DB_PATH"
   echo "使用方法: $0 [数据库路径]"
-  echo "示例: $0 data/cert.db"
+  echo "示例: $0 data/oxmon.db"
   exit 1
 fi
 
@@ -99,7 +99,7 @@ SELECT
     'base_url', json_extract(config_json, '$.base_url'),
     'timeout_secs', json_extract(config_json, '$.timeout_secs')
   ) as extra_config,
-  COALESCE(json_extract(config_json, '$.collection_interval_secs'), 300) as collection_interval_secs,
+  COALESCE(json_extract(config_json, '$.collection_interval_secs'), 3600) as collection_interval_secs,
   enabled,
   created_at,
   updated_at

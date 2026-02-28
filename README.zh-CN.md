@@ -206,7 +206,7 @@ buffer_max_size = 1000
 |------|------|--------|
 | `grpc_port` | gRPC 端口，接收 Agent 上报 | `9090` |
 | `http_port` | REST API 端口 | `8080` |
-| `data_dir` | SQLite 数据文件存储目录 | `"data"` |
+| `database.data_dir` | SQLite 数据文件存储目录 | `"data"` |
 | `retention_days` | 数据保留天数，超期自动清理 | `7` |
 | `require_agent_auth` | 是否要求 Agent 认证 | `false` |
 | `agent_collection_interval_secs` | Agent 采集间隔（秒），用于判断活跃状态。超时阈值为此值的 3 倍。应与 Agent 配置的 `collection_interval_secs` 一致 | `10` |
@@ -332,7 +332,7 @@ Apifox/Postman/Swagger 快速导入 URL：`http://<server-ip>:8080/v1/openapi.js
 
 oxmon 使用 SQLite 存储数据：
 
-- `data/cert.db`：用户、白名单、证书域名、证书详情
+- `data/oxmon.db`：用户、白名单、证书域名、证书详情
 - `data/YYYY-MM-DD.db`：按天分区的指标与告警数据（`metrics`、`alert_events`）
 
 ```bash
@@ -340,7 +340,7 @@ oxmon 使用 SQLite 存储数据：
 ls -lh data/*.db
 
 # 打开主库
-sqlite3 data/cert.db
+sqlite3 data/oxmon.db
 
 # 打开某一天的分区库
 sqlite3 data/2026-02-09.db
