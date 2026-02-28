@@ -7,8 +7,8 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use oxmon_cloud::{build_provider, CloudAccountConfig};
-use oxmon_storage::{CloudAccountRow, CloudInstanceRow, MetricQuery};
 use oxmon_storage::StorageEngine;
+use oxmon_storage::{CloudAccountRow, CloudInstanceRow, MetricQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -810,7 +810,10 @@ async fn test_cloud_account_connection(
         Ok(row) => row,
         Err(e) => {
             let err_msg = e.to_string();
-            if err_msg.contains("no rows") || err_msg.contains("NOT FOUND") || err_msg.contains("not found") {
+            if err_msg.contains("no rows")
+                || err_msg.contains("NOT FOUND")
+                || err_msg.contains("not found")
+            {
                 return error_response(
                     StatusCode::NOT_FOUND,
                     &trace_id,
@@ -887,7 +890,10 @@ async fn trigger_cloud_account_collection(
         Ok(row) => row,
         Err(e) => {
             let err_msg = e.to_string();
-            if err_msg.contains("no rows") || err_msg.contains("NOT FOUND") || err_msg.contains("not found") {
+            if err_msg.contains("no rows")
+                || err_msg.contains("NOT FOUND")
+                || err_msg.contains("not found")
+            {
                 return error_response(
                     StatusCode::NOT_FOUND,
                     &trace_id,
@@ -1441,7 +1447,10 @@ async fn batch_create_cloud_accounts(
             .collect();
 
         if account_name.is_empty() || secret_id.is_empty() || secret_key.is_empty() {
-            errors.push(format!("条目{}: 账号名、SecretId 或 SecretKey 不能为空", line_idx + 1));
+            errors.push(format!(
+                "条目{}: 账号名、SecretId 或 SecretKey 不能为空",
+                line_idx + 1
+            ));
             continue;
         }
         if regions.is_empty() {
@@ -1474,13 +1483,22 @@ async fn batch_create_cloud_accounts(
                 if err_msg.contains("UNIQUE constraint failed") {
                     skipped += 1;
                 } else {
-                    errors.push(format!("条目{} ({}): {}", line_idx + 1, account_name, err_msg));
+                    errors.push(format!(
+                        "条目{} ({}): {}",
+                        line_idx + 1,
+                        account_name,
+                        err_msg
+                    ));
                 }
             }
         }
     }
 
-    let resp = BatchCreateCloudAccountsResponse { created, skipped, errors };
+    let resp = BatchCreateCloudAccountsResponse {
+        created,
+        skipped,
+        errors,
+    };
     success_response(StatusCode::OK, &trace_id, resp)
 }
 
@@ -1787,13 +1805,13 @@ async fn cloud_instances_chart(
     State(state): State<AppState>,
     Query(params): Query<CloudInstancesChartParams>,
 ) -> impl IntoResponse {
-    // 1. 加载实例列表（最多 1000 条，按供应商/地域/状态过滤）
+    // 1. 加载实例列表（最多 1000 条，按供应商/地域过滤）
     let instances = match state
         .cert_store
         .list_cloud_instances(
             params.provider.as_deref(),
             params.region.as_deref(),
-            params.status.as_deref(),
+            None,
             None,
             1000,
             0,
@@ -1813,12 +1831,28 @@ async fn cloud_instances_chart(
         }
     };
 
-    // 2. 确定指标列表
+    // 2. 统一按归一化状态过滤，避免不同云厂商原始状态值不一致导致筛选异常
+    let normalized_status_filter = params
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("all"))
+        .map(str::to_ascii_lowercase);
+
+    let instances: Vec<_> = match normalized_status_filter.as_deref() {
+        Some(expected) => instances
+            .into_iter()
+            .filter(|inst| normalize_cloud_instance_status(inst.status.as_deref()) == expected)
+            .collect(),
+        None => instances,
+    };
+
+    // 3. 确定指标列表
     let metric_names = parse_metric_names(params.metrics.as_deref());
     // 查最近 2 天确保跨分区都能拿到
     let metric_names_refs: Vec<&str> = metric_names.iter().map(|s| s.as_str()).collect();
 
-    // 3. 为每个实例查最新指标值，构建并行数组
+    // 4. 为每个实例查最新指标值，构建并行数组
     let mut labels: Vec<String> = Vec::with_capacity(instances.len());
     let mut chart_instances: Vec<CloudInstanceChartMeta> = Vec::with_capacity(instances.len());
     let mut series: std::collections::HashMap<String, Vec<Option<f64>>> = metric_names
@@ -1843,8 +1877,7 @@ async fn cloud_instances_chart(
             provider: inst.provider.clone(),
             region: inst.region.clone(),
             status: inst.status.clone(),
-            normalized_status: normalize_cloud_instance_status(inst.status.as_deref())
-                .to_string(),
+            normalized_status: normalize_cloud_instance_status(inst.status.as_deref()).to_string(),
         });
 
         // 查该实例最新指标

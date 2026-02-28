@@ -1181,6 +1181,138 @@ async fn cloud_account_create_and_get_should_normalize_regions_and_default_inter
 }
 
 #[tokio::test]
+async fn cloud_instances_chart_should_filter_by_normalized_status() {
+    let ctx = must_ok(build_test_context().await, "test context should build");
+    let token = login_and_get_token(&ctx.app).await;
+
+    let now_ts = chrono::Utc::now().timestamp();
+    must_ok(
+        ctx.state
+            .cert_store
+            .upsert_cloud_instance(&oxmon_storage::CloudInstanceRow {
+                id: String::new(),
+                instance_id: "ins-chart-running".to_string(),
+                instance_name: Some("chart-running".to_string()),
+                provider: "tencent".to_string(),
+                account_config_key: "cloud_tencent_chart_filter".to_string(),
+                region: "ap-guangzhou".to_string(),
+                public_ip: None,
+                private_ip: None,
+                os: None,
+                status: Some("RUNNING".to_string()),
+                last_seen_at: now_ts,
+                created_at: now_ts,
+                updated_at: now_ts,
+                instance_type: None,
+                cpu_cores: None,
+                memory_gb: None,
+                disk_gb: None,
+                created_time: None,
+                expired_time: None,
+                charge_type: None,
+                vpc_id: None,
+                subnet_id: None,
+                security_group_ids: None,
+                zone: None,
+                internet_max_bandwidth: None,
+                ipv6_addresses: None,
+                eip_allocation_id: None,
+                internet_charge_type: None,
+                image_id: None,
+                hostname: None,
+                description: None,
+                gpu: None,
+                io_optimized: None,
+                latest_operation: None,
+                latest_operation_state: None,
+                tags: None,
+                project_id: None,
+                resource_group_id: None,
+                auto_renew_flag: None,
+            })
+            .await,
+        "upsert running cloud instance should succeed",
+    );
+    must_ok(
+        ctx.state
+            .cert_store
+            .upsert_cloud_instance(&oxmon_storage::CloudInstanceRow {
+                id: String::new(),
+                instance_id: "ins-chart-stopped".to_string(),
+                instance_name: Some("chart-stopped".to_string()),
+                provider: "alibaba".to_string(),
+                account_config_key: "cloud_alibaba_chart_filter".to_string(),
+                region: "cn-hangzhou".to_string(),
+                public_ip: None,
+                private_ip: None,
+                os: None,
+                status: Some("Stopped".to_string()),
+                last_seen_at: now_ts,
+                created_at: now_ts,
+                updated_at: now_ts,
+                instance_type: None,
+                cpu_cores: None,
+                memory_gb: None,
+                disk_gb: None,
+                created_time: None,
+                expired_time: None,
+                charge_type: None,
+                vpc_id: None,
+                subnet_id: None,
+                security_group_ids: None,
+                zone: None,
+                internet_max_bandwidth: None,
+                ipv6_addresses: None,
+                eip_allocation_id: None,
+                internet_charge_type: None,
+                image_id: None,
+                hostname: None,
+                description: None,
+                gpu: None,
+                io_optimized: None,
+                latest_operation: None,
+                latest_operation_state: None,
+                tags: None,
+                project_id: None,
+                resource_group_id: None,
+                auto_renew_flag: None,
+            })
+            .await,
+        "upsert stopped cloud instance should succeed",
+    );
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/cloud/instances/chart?status=running",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["labels"].as_array().map_or(0, |v| v.len()), 1);
+    assert_eq!(
+        body["data"]["instances"][0]["normalized_status"],
+        serde_json::Value::String("running".to_string())
+    );
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/cloud/instances/chart?status=stopped",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["labels"].as_array().map_or(0, |v| v.len()), 1);
+    assert_eq!(
+        body["data"]["instances"][0]["normalized_status"],
+        serde_json::Value::String("stopped".to_string())
+    );
+}
+
+#[tokio::test]
 async fn dashboard_overview_should_include_cloud_resource_summary() {
     let ctx = must_ok(build_test_context().await, "test context should build");
     let token = login_and_get_token(&ctx.app).await;

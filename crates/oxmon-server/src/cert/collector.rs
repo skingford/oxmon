@@ -9,20 +9,21 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
-use trust_dns_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use x509_parser::oid_registry;
 use x509_parser::prelude::*;
 
 /// 证书收集器
 pub struct CertificateCollector {
-    resolver: TokioAsyncResolver,
+    resolver: TokioResolver,
     timeout_secs: u64,
 }
 
 impl CertificateCollector {
     pub async fn new(timeout_secs: u64) -> Result<Self> {
-        let resolver = TokioAsyncResolver::tokio_from_system_conf()
-            .context("Failed to create DNS resolver")?;
+        let resolver = TokioResolver::builder_tokio()
+            .context("Failed to create DNS resolver")?
+            .build();
         Ok(Self {
             resolver,
             timeout_secs,
