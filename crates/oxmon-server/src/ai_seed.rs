@@ -27,6 +27,13 @@ const DEFAULT_AI_ACCOUNTS: &[AIAccountDef] = &[
         description: "系统预置 AI 账号（Codex），请填写 API Key 后启用",
         model: "codex",
     },
+    AIAccountDef {
+        config_key: "seed_ai_claude",
+        provider: "claude",
+        display_name: "默认 Claude 账号",
+        description: "系统预置 AI 账号（Claude），请填写 API Key 后启用",
+        model: "claude-3-5-sonnet",
+    },
 ];
 
 /// 初始化默认 AI 账号（GLM/Codex）。
@@ -42,7 +49,10 @@ pub async fn init_default_ai_accounts(cert_store: &CertStore) -> anyhow::Result<
     for def in DEFAULT_AI_ACCOUNTS {
         default_keys.insert(def.config_key);
 
-        if let Some(existing) = cert_store.get_ai_account_by_config_key(def.config_key).await? {
+        if let Some(existing) = cert_store
+            .get_ai_account_by_config_key(def.config_key)
+            .await?
+        {
             let updated = cert_store
                 .update_ai_account(
                     &existing.id,
@@ -57,7 +67,10 @@ pub async fn init_default_ai_accounts(cert_store: &CertStore) -> anyhow::Result<
                 .await?;
             if updated {
                 synced += 1;
-                tracing::info!(config_key = def.config_key, "Updated default AI account seed");
+                tracing::info!(
+                    config_key = def.config_key,
+                    "Updated default AI account seed"
+                );
             }
             continue;
         }
@@ -79,7 +92,10 @@ pub async fn init_default_ai_accounts(cert_store: &CertStore) -> anyhow::Result<
         };
         cert_store.insert_ai_account(&row).await?;
         synced += 1;
-        tracing::info!(config_key = def.config_key, "Inserted default AI account seed");
+        tracing::info!(
+            config_key = def.config_key,
+            "Inserted default AI account seed"
+        );
     }
 
     let existing_accounts = cert_store.list_ai_accounts(None, None, 10_000, 0).await?;
@@ -128,7 +144,7 @@ mod tests {
         let (cert_store, _temp_dir) = setup_cert_store().await?;
 
         let inserted = init_default_ai_accounts(&cert_store).await?;
-        assert_eq!(inserted, 2);
+        assert_eq!(inserted, 3);
 
         let glm = cert_store
             .get_ai_account_by_config_key("seed_ai_glm")
@@ -172,7 +188,7 @@ mod tests {
             .await?;
 
         let updated = init_default_ai_accounts(&cert_store).await?;
-        assert_eq!(updated, 2);
+        assert_eq!(updated, 3);
 
         let glm_after = cert_store
             .get_ai_account_by_config_key("seed_ai_glm")
@@ -190,7 +206,7 @@ mod tests {
         assert!(legacy.is_none());
 
         let all_accounts = cert_store.list_ai_accounts(None, None, 100, 0).await?;
-        assert_eq!(all_accounts.len(), 2);
+        assert_eq!(all_accounts.len(), 3);
 
         Ok(())
     }

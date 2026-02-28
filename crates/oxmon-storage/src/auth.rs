@@ -4,8 +4,8 @@ use rand::RngExt;
 use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey, LineEnding};
-use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
 use rsa::sha2::Sha256;
+use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;

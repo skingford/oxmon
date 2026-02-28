@@ -79,13 +79,19 @@ pub async fn init_default_cloud_accounts(
                 .update_cloud_account(&existing.id, &seed_row)
                 .await?;
             synced += 1;
-            tracing::info!(config_key = def.config_key, "Updated default cloud account seed");
+            tracing::info!(
+                config_key = def.config_key,
+                "Updated default cloud account seed"
+            );
             continue;
         }
 
         cert_store.insert_cloud_account(&seed_row).await?;
         synced += 1;
-        tracing::info!(config_key = def.config_key, "Inserted default cloud account seed");
+        tracing::info!(
+            config_key = def.config_key,
+            "Inserted default cloud account seed"
+        );
     }
 
     let mut removed = 0usize;
