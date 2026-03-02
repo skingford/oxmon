@@ -14,7 +14,8 @@ pub mod store;
 
 pub use store::CertStore;
 pub use store::{
-    AIAccountRow, ActiveAlertFilter, AgentListFilter, AgentWhitelistFilter, AlertRuleFilter,
+    AIAccountRow, AIAccountUpdate, ActiveAlertFilter, AgentListFilter, AgentWhitelistFilter,
+    AlertRuleFilter,
     AlertRuleRow, AlertRuleUpdate, CertDomainSummary, CertHealthSummary, CertStatusFilter,
     CertStatusSummary, CloudAccountRow, CloudAccountSummary, CloudCollectionStateRow,
     CloudInstanceRow, CloudInstanceStatusSummary, DictTypeFilter, NotificationChannelFilter,

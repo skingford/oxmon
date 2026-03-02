@@ -450,30 +450,6 @@ fn sms_tencent_sign_produces_valid_authorization() {
     assert!(auth.contains("Signature="));
 }
 
-#[test]
-fn sms_redact_config_covers_all_providers() {
-    let registry = ChannelRegistry::default();
-    let plugin = registry.get_plugin("sms").unwrap();
-
-    // Generic
-    let generic = serde_json::json!({"api_key": "secret123", "gateway_url": "https://x.com"});
-    let redacted = plugin.redact_config(&generic);
-    assert_eq!(redacted["api_key"], "***");
-    assert_eq!(redacted["gateway_url"], "https://x.com");
-
-    // Aliyun
-    let aliyun = serde_json::json!({"access_key_secret": "secret123", "access_key_id": "visible"});
-    let redacted = plugin.redact_config(&aliyun);
-    assert_eq!(redacted["access_key_secret"], "***");
-    assert_eq!(redacted["access_key_id"], "visible");
-
-    // Tencent
-    let tencent = serde_json::json!({"secret_key": "secret123", "secret_id": "visible"});
-    let redacted = plugin.redact_config(&tencent);
-    assert_eq!(redacted["secret_key"], "***");
-    assert_eq!(redacted["secret_id"], "visible");
-}
-
 // ── Config resolution helper tests ──
 
 #[test]

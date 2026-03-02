@@ -901,22 +901,4 @@ impl ChannelPlugin for SmsPlugin {
         }))
     }
 
-    fn redact_config(&self, config: &Value) -> Value {
-        let mut redacted = config.clone();
-        if let Some(obj) = redacted.as_object_mut() {
-            if obj.contains_key("api_key") {
-                obj.insert("api_key".to_string(), Value::String("***".to_string()));
-            }
-            if obj.contains_key("access_key_secret") {
-                obj.insert(
-                    "access_key_secret".to_string(),
-                    Value::String("***".to_string()),
-                );
-            }
-            if obj.contains_key("secret_key") {
-                obj.insert("secret_key".to_string(), Value::String("***".to_string()));
-            }
-        }
-        redacted
-    }
 }

@@ -19,12 +19,32 @@ pub struct AIAccountRow {
     pub display_name: String,
     pub description: Option<String>,
     pub api_key: String,
-    pub api_secret: Option<String>,
     pub model: Option<String>,
-    pub extra_config: Option<String>,
+    pub base_url: Option<String>,
+    pub api_mode: Option<String>,
+    pub timeout_secs: Option<i32>,
+    pub max_tokens: Option<i32>,
+    pub temperature: Option<f32>,
+    pub collection_interval_secs: Option<i32>,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// AI 账号更新参数
+#[derive(Debug, Default)]
+pub struct AIAccountUpdate {
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+    pub api_key: Option<String>,
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+    pub api_mode: Option<String>,
+    pub timeout_secs: Option<i32>,
+    pub max_tokens: Option<i32>,
+    pub temperature: Option<f32>,
+    pub collection_interval_secs: Option<i32>,
+    pub enabled: Option<bool>,
 }
 
 fn model_to_account(m: ai_account::Model) -> AIAccountRow {
@@ -35,9 +55,13 @@ fn model_to_account(m: ai_account::Model) -> AIAccountRow {
         display_name: m.display_name,
         description: m.description,
         api_key: m.api_key,
-        api_secret: m.api_secret,
         model: m.model,
-        extra_config: m.extra_config,
+        base_url: m.base_url,
+        api_mode: m.api_mode,
+        timeout_secs: m.timeout_secs,
+        max_tokens: m.max_tokens,
+        temperature: m.temperature,
+        collection_interval_secs: m.collection_interval_secs,
         enabled: m.enabled,
         created_at: m.created_at.with_timezone(&Utc),
         updated_at: m.updated_at.with_timezone(&Utc),
@@ -74,9 +98,13 @@ impl CertStore {
             display_name: Set(row.display_name.clone()),
             description: Set(row.description.clone()),
             api_key: Set(row.api_key.clone()),
-            api_secret: Set(row.api_secret.clone()),
             model: Set(row.model.clone()),
-            extra_config: Set(row.extra_config.clone()),
+            base_url: Set(row.base_url.clone()),
+            api_mode: Set(row.api_mode.clone()),
+            timeout_secs: Set(row.timeout_secs),
+            max_tokens: Set(row.max_tokens),
+            temperature: Set(row.temperature),
+            collection_interval_secs: Set(row.collection_interval_secs),
             enabled: Set(row.enabled),
             created_at: Set(now),
             updated_at: Set(now),
@@ -139,41 +167,42 @@ impl CertStore {
         Ok(q.count(self.db()).await?)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn update_ai_account(
-        &self,
-        id: &str,
-        display_name: Option<String>,
-        description: Option<String>,
-        api_key: Option<String>,
-        api_secret: Option<String>,
-        model: Option<String>,
-        extra_config: Option<String>,
-        enabled: Option<bool>,
-    ) -> Result<bool> {
+    pub async fn update_ai_account(&self, id: &str, upd: AIAccountUpdate) -> Result<bool> {
         let m = AccEntity::find_by_id(id).one(self.db()).await?;
         if let Some(m) = m {
             let now = Utc::now().fixed_offset();
             let mut am: ai_account::ActiveModel = m.into();
-            if let Some(v) = display_name {
+            if let Some(v) = upd.display_name {
                 am.display_name = Set(v);
             }
-            if let Some(v) = description {
+            if let Some(v) = upd.description {
                 am.description = Set(Some(v));
             }
-            if let Some(v) = api_key {
+            if let Some(v) = upd.api_key {
                 am.api_key = Set(v);
             }
-            if let Some(v) = api_secret {
-                am.api_secret = Set(Some(v));
-            }
-            if let Some(v) = model {
+            if let Some(v) = upd.model {
                 am.model = Set(Some(v));
             }
-            if let Some(v) = extra_config {
-                am.extra_config = Set(Some(v));
+            if let Some(v) = upd.base_url {
+                am.base_url = Set(Some(v));
             }
-            if let Some(v) = enabled {
+            if let Some(v) = upd.api_mode {
+                am.api_mode = Set(Some(v));
+            }
+            if let Some(v) = upd.timeout_secs {
+                am.timeout_secs = Set(Some(v));
+            }
+            if let Some(v) = upd.max_tokens {
+                am.max_tokens = Set(Some(v));
+            }
+            if let Some(v) = upd.temperature {
+                am.temperature = Set(Some(v));
+            }
+            if let Some(v) = upd.collection_interval_secs {
+                am.collection_interval_secs = Set(Some(v));
+            }
+            if let Some(v) = upd.enabled {
                 am.enabled = Set(v);
             }
             am.updated_at = Set(now);

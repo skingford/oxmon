@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-/// 脱敏的运行时配置
+/// 运行时配置
 #[derive(Serialize, ToSchema)]
 struct RuntimeConfig {
     grpc_port: u16,
@@ -28,7 +28,7 @@ struct RuntimeConfig {
     language: String,
 }
 
-/// 获取运行时配置（敏感字段已脱敏）。
+/// 获取运行时配置。
 /// 鉴权：需要 Bearer Token。
 #[utoipa::path(
     get,

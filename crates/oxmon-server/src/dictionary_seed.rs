@@ -578,7 +578,7 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
     order = 0;
     for (key, label, desc) in [
         ("glm-5", "GLM-5", "智谱 GLM-5 模型（推荐）"),
-        ("glm-4", "GLM-4", "智谱 GLM-4 模型"),
+        ("glm-5", "GLM-5", "智谱 GLM-5 模型"),
         ("moonshot-v1-32k", "Moonshot V1 32K", "Kimi 32K 上下文模型"),
         (
             "moonshot-v1-128k",
@@ -587,11 +587,20 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
         ),
         ("abab6.5-chat", "ABAB 6.5 Chat", "MiniMax ABAB 6.5 对话模型"),
         (
-            "claude-3-5-sonnet-20241022",
-            "Claude 3.5 Sonnet",
-            "Claude 3.5 Sonnet",
+            "claude-sonnet-4-6",
+            "Claude Sonnet 4.6",
+            "Claude Sonnet 4.6",
         ),
-        ("claude-3-opus-20240229", "Claude 3 Opus", "Claude 3 Opus"),
+        (
+            "claude-opus-4-6",
+            "Claude Opus 4.6",
+            "Claude Opus 4.6",
+        ),
+        (
+            "claude-haiku-4-5-20251001",
+            "Claude Haiku 4.5",
+            "Claude Haiku 4.5",
+        ),
         ("gpt-4", "GPT-4", "OpenAI GPT-4"),
         ("gpt-4-turbo", "GPT-4 Turbo", "OpenAI GPT-4 Turbo"),
         ("custom", "自定义模型", "用户自定义模型名称"),

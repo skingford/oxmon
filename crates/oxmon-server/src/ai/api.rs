@@ -5,6 +5,7 @@ use axum::{
     Json,
 };
 use oxmon_common::types::AIReportRow;
+use oxmon_storage::AIAccountUpdate;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use utoipa::{IntoParams, OpenApi, ToSchema};
@@ -77,12 +78,18 @@ pub struct ListAIAccountsQuery {
 pub struct AIAccountResponse {
     pub id: String,
     pub config_key: String,
-    pub provider: Option<String>,
+    pub provider: String,
     pub display_name: String,
     pub description: Option<String>,
+    pub api_key: String,
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+    pub api_mode: Option<String>,
+    pub timeout_secs: Option<i32>,
+    pub max_tokens: Option<i32>,
+    pub temperature: Option<f32>,
+    pub collection_interval_secs: Option<i32>,
     pub enabled: bool,
-    /// 敏感字段已脱敏的配置 JSON
-    pub config_json: serde_json::Value,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -93,16 +100,30 @@ pub struct CreateAIAccountRequest {
     pub provider: String,
     pub display_name: String,
     pub description: Option<String>,
+    pub api_key: String,
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+    pub api_mode: Option<String>,
+    pub timeout_secs: Option<i32>,
+    pub max_tokens: Option<i32>,
+    pub temperature: Option<f32>,
+    pub collection_interval_secs: Option<i32>,
     pub enabled: bool,
-    pub config: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateAIAccountRequest {
     pub display_name: Option<String>,
     pub description: Option<String>,
+    pub api_key: Option<String>,
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+    pub api_mode: Option<String>,
+    pub timeout_secs: Option<i32>,
+    pub max_tokens: Option<i32>,
+    pub temperature: Option<f32>,
+    pub collection_interval_secs: Option<i32>,
     pub enabled: Option<bool>,
-    pub config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, IntoParams)]
@@ -137,6 +158,27 @@ pub struct AIReportListItem {
     pub created_at: String,
 }
 
+fn row_to_response(row: oxmon_storage::AIAccountRow) -> AIAccountResponse {
+    AIAccountResponse {
+        id: row.id,
+        config_key: row.config_key,
+        provider: row.provider,
+        display_name: row.display_name,
+        description: row.description,
+        api_key: row.api_key,
+        model: row.model,
+        base_url: row.base_url,
+        api_mode: row.api_mode,
+        timeout_secs: row.timeout_secs,
+        max_tokens: row.max_tokens,
+        temperature: row.temperature,
+        collection_interval_secs: row.collection_interval_secs,
+        enabled: row.enabled,
+        created_at: row.created_at.to_rfc3339(),
+        updated_at: row.updated_at.to_rfc3339(),
+    }
+}
+
 // ===== API 处理函数 =====
 
 /// 列出 AI 账号
@@ -157,7 +199,6 @@ async fn list_ai_accounts(
     let limit = PaginationParams::resolve_limit(query.limit);
     let offset = PaginationParams::resolve_offset(query.offset);
 
-    // 获取总数
     let total = match state
         .cert_store
         .count_ai_accounts(query.provider.as_deref(), query.enabled)
@@ -175,7 +216,6 @@ async fn list_ai_accounts(
         }
     };
 
-    // 获取列表数据
     let rows = match state
         .cert_store
         .list_ai_accounts(query.provider.as_deref(), query.enabled, limit, offset)
@@ -193,44 +233,7 @@ async fn list_ai_accounts(
         }
     };
 
-    let accounts: Vec<AIAccountResponse> = rows
-        .into_iter()
-        .map(|row| {
-            // 构建 config_json（脱敏处理）
-            let mut config = json!({});
-            if let Some(obj) = config.as_object_mut() {
-                obj.insert("api_key".to_string(), json!("***REDACTED***"));
-                if row.api_secret.is_some() {
-                    obj.insert("secret_key".to_string(), json!("***REDACTED***"));
-                }
-                if let Some(model) = &row.model {
-                    obj.insert("model".to_string(), json!(model));
-                }
-                if let Some(extra) = &row.extra_config {
-                    if let Ok(extra_json) = serde_json::from_str::<serde_json::Value>(extra) {
-                        if let Some(extra_obj) = extra_json.as_object() {
-                            for (k, v) in extra_obj {
-                                obj.insert(k.clone(), v.clone());
-                            }
-                        }
-                    }
-                }
-            }
-
-            AIAccountResponse {
-                id: row.id,
-                config_key: row.config_key,
-                provider: Some(row.provider),
-                display_name: row.display_name,
-                description: row.description,
-                enabled: row.enabled,
-                config_json: config,
-                created_at: row.created_at.to_rfc3339(),
-                updated_at: row.updated_at.to_rfc3339(),
-            }
-        })
-        .collect();
-
+    let accounts: Vec<AIAccountResponse> = rows.into_iter().map(row_to_response).collect();
     success_paginated_response(StatusCode::OK, &trace_id, accounts, total, limit, offset)
 }
 
@@ -257,38 +260,7 @@ async fn get_ai_account(
         .await?
         .ok_or(AppError::NotFound("AI account not found".into()))?;
 
-    // 构建 config_json（脱敏处理）
-    let mut config = json!({});
-    if let Some(obj) = config.as_object_mut() {
-        obj.insert("api_key".to_string(), json!("***REDACTED***"));
-        if row.api_secret.is_some() {
-            obj.insert("secret_key".to_string(), json!("***REDACTED***"));
-        }
-        if let Some(model) = &row.model {
-            obj.insert("model".to_string(), json!(model));
-        }
-        if let Some(extra) = &row.extra_config {
-            if let Ok(extra_json) = serde_json::from_str::<serde_json::Value>(extra) {
-                if let Some(extra_obj) = extra_json.as_object() {
-                    for (k, v) in extra_obj {
-                        obj.insert(k.clone(), v.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(Json(AIAccountResponse {
-        id: row.id,
-        config_key: row.config_key,
-        provider: Some(row.provider),
-        display_name: row.display_name,
-        description: row.description,
-        enabled: row.enabled,
-        config_json: config,
-        created_at: row.created_at.to_rfc3339(),
-        updated_at: row.updated_at.to_rfc3339(),
-    }))
+    Ok(Json(row_to_response(row)))
 }
 
 /// 创建 AI 账号
@@ -305,77 +277,27 @@ async fn create_ai_account(
     State(state): State<AppState>,
     Json(req): Json<CreateAIAccountRequest>,
 ) -> Result<(StatusCode, Json<AIAccountResponse>), AppError> {
-    // 从 config JSON 中提取字段
-    let api_key = req
-        .config
-        .get("api_key")
-        .and_then(|v| v.as_str())
-        .ok_or(AppError::BadRequest("api_key is required in config".into()))?
-        .to_string();
-
-    let api_secret = req
-        .config
-        .get("secret_key")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let model = req
-        .config
-        .get("model")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    // 提取其他额外配置
-    let mut extra_fields = req.config.clone();
-    if let Some(obj) = extra_fields.as_object_mut() {
-        obj.remove("api_key");
-        obj.remove("secret_key");
-        obj.remove("model");
-    }
-    let extra_config = if extra_fields
-        .as_object()
-        .map(|o| o.is_empty())
-        .unwrap_or(true)
-    {
-        None
-    } else {
-        Some(extra_fields.to_string())
-    };
-
     let row = oxmon_storage::AIAccountRow {
         id: oxmon_common::id::next_id(),
         config_key: req.config_key,
         provider: req.provider,
         display_name: req.display_name,
         description: req.description,
-        api_key,
-        api_secret,
-        model,
-        extra_config,
+        api_key: req.api_key,
+        model: req.model,
+        base_url: req.base_url,
+        api_mode: req.api_mode,
+        timeout_secs: req.timeout_secs,
+        max_tokens: req.max_tokens,
+        temperature: req.temperature,
+        collection_interval_secs: req.collection_interval_secs,
         enabled: req.enabled,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };
 
     let inserted = state.cert_store.insert_ai_account(&row).await?;
-
-    // 构建响应配置（脱敏）
-    let config = req.config;
-
-    Ok((
-        StatusCode::CREATED,
-        Json(AIAccountResponse {
-            id: inserted.id,
-            config_key: inserted.config_key,
-            provider: Some(inserted.provider),
-            display_name: inserted.display_name,
-            description: inserted.description,
-            enabled: inserted.enabled,
-            config_json: config,
-            created_at: inserted.created_at.to_rfc3339(),
-            updated_at: inserted.updated_at.to_rfc3339(),
-        }),
-    ))
+    Ok((StatusCode::CREATED, Json(row_to_response(inserted))))
 }
 
 /// 更新 AI 账号
@@ -397,66 +319,27 @@ async fn update_ai_account(
     Path(id): Path<String>,
     Json(req): Json<UpdateAIAccountRequest>,
 ) -> Result<Json<AIAccountResponse>, AppError> {
-    // 验证账号存在
     state
         .cert_store
         .get_ai_account_by_id(&id)
         .await?
         .ok_or(AppError::NotFound("AI account not found".into()))?;
 
-    // 从 config JSON 中提取字段（如果提供）
-    let (api_key, api_secret, model, extra_config) = if let Some(config) = &req.config {
-        let api_key = config
-            .get("api_key")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        let api_secret = config
-            .get("secret_key")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        let model = config
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        // 提取其他额外配置
-        let mut extra_fields = config.clone();
-        if let Some(obj) = extra_fields.as_object_mut() {
-            obj.remove("api_key");
-            obj.remove("secret_key");
-            obj.remove("model");
-        }
-        let extra_config = if extra_fields
-            .as_object()
-            .map(|o| o.is_empty())
-            .unwrap_or(true)
-        {
-            None
-        } else {
-            Some(extra_fields.to_string())
-        };
-
-        (api_key, api_secret, model, extra_config)
-    } else {
-        (None, None, None, None)
+    let upd = AIAccountUpdate {
+        display_name: req.display_name,
+        description: req.description,
+        api_key: req.api_key,
+        model: req.model,
+        base_url: req.base_url,
+        api_mode: req.api_mode,
+        timeout_secs: req.timeout_secs,
+        max_tokens: req.max_tokens,
+        temperature: req.temperature,
+        collection_interval_secs: req.collection_interval_secs,
+        enabled: req.enabled,
     };
 
-    // 更新账号
-    state
-        .cert_store
-        .update_ai_account(
-            &id,
-            req.display_name,
-            req.description,
-            api_key,
-            api_secret,
-            model,
-            extra_config,
-            req.enabled,
-        )
-        .await?;
+    state.cert_store.update_ai_account(&id, upd).await?;
 
     let updated = state
         .cert_store
@@ -466,38 +349,7 @@ async fn update_ai_account(
             "AI account not found after update".into(),
         ))?;
 
-    // 构建响应配置（脱敏）
-    let mut config = json!({});
-    if let Some(obj) = config.as_object_mut() {
-        obj.insert("api_key".to_string(), json!("***REDACTED***"));
-        if updated.api_secret.is_some() {
-            obj.insert("secret_key".to_string(), json!("***REDACTED***"));
-        }
-        if let Some(model) = &updated.model {
-            obj.insert("model".to_string(), json!(model));
-        }
-        if let Some(extra) = &updated.extra_config {
-            if let Ok(extra_json) = serde_json::from_str::<serde_json::Value>(extra) {
-                if let Some(extra_obj) = extra_json.as_object() {
-                    for (k, v) in extra_obj {
-                        obj.insert(k.clone(), v.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(Json(AIAccountResponse {
-        id: updated.id,
-        config_key: updated.config_key,
-        provider: Some(updated.provider),
-        display_name: updated.display_name,
-        description: updated.description,
-        enabled: updated.enabled,
-        config_json: config,
-        created_at: updated.created_at.to_rfc3339(),
-        updated_at: updated.updated_at.to_rfc3339(),
-    }))
+    Ok(Json(row_to_response(updated)))
 }
 
 /// 删除 AI 账号
@@ -543,7 +395,6 @@ async fn list_ai_reports(
     let limit = PaginationParams::resolve_limit(query.limit);
     let offset = PaginationParams::resolve_offset(query.offset);
 
-    // 获取总数（带过滤）
     let total = match state
         .cert_store
         .count_ai_reports(query.report_date.as_deref(), query.risk_level.as_deref())
@@ -561,7 +412,6 @@ async fn list_ai_reports(
         }
     };
 
-    // 获取列表数据（带过滤）
     let rows = match state
         .cert_store
         .list_ai_reports(
@@ -660,7 +510,6 @@ async fn view_ai_report_html(
 enum AppError {
     Internal(anyhow::Error),
     NotFound(String),
-    BadRequest(String),
 }
 
 impl From<anyhow::Error> for AppError {
@@ -677,7 +526,6 @@ impl IntoResponse for AppError {
                 (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
             }
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
         };
 
         (status, Json(json!({ "error": message }))).into_response()

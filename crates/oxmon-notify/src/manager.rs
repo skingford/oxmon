@@ -1,6 +1,6 @@
 use crate::cert_report_template::{CertAlertDetail, CertReportParams, CertReportRenderer};
 use crate::plugin::ChannelRegistry;
-use crate::utils::{redact_json_string, truncate_string, MAX_BODY_LENGTH};
+use crate::utils::{truncate_string, MAX_BODY_LENGTH};
 use crate::NotificationChannel;
 use chrono::{DateTime, Duration, NaiveTime, Utc};
 use oxmon_common::types::AlertEvent;
@@ -393,18 +393,14 @@ impl NotificationManager {
             api_message_id,
             api_error_code,
         ) = if let Some(ref resp) = ctx.response {
-            // 脱敏并截断 request_body
-            let redacted_request = resp.request_body.as_ref().map(|s| {
-                let redacted = redact_json_string(s);
-                truncate_string(&redacted, MAX_BODY_LENGTH)
-            });
-
             (
                 resp.http_status.map(|s| s as i32),
                 resp.response_body
                     .as_ref()
                     .map(|s| truncate_string(s, MAX_BODY_LENGTH)),
-                redacted_request,
+                resp.request_body
+                    .as_ref()
+                    .map(|s| truncate_string(s, MAX_BODY_LENGTH)),
                 resp.retry_count as i32,
                 serialize_recipient_results(resp),
                 resp.api_message_id.clone(),

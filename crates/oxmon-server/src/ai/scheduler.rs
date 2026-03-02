@@ -86,19 +86,10 @@ impl AIReportScheduler {
 
         // 4. 检查每个账号是否到期需要生成报告
         for account in accounts {
-            // 从 extra_config 中解析 collection_interval_secs
-            let interval_secs = if let Some(extra) = &account.extra_config {
-                serde_json::from_str::<serde_json::Value>(extra)
-                    .ok()
-                    .and_then(|config| {
-                        config
-                            .get("collection_interval_secs")
-                            .and_then(|v| v.as_i64())
-                    })
-                    .unwrap_or(86400)
-            } else {
-                86400 // 默认每天
-            };
+            let interval_secs = account
+                .collection_interval_secs
+                .map(|v| v as i64)
+                .unwrap_or(86400);
 
             // 检查是否应该生成报告（支持定时和间隔两种模式）
             let should_collect = self
@@ -336,31 +327,24 @@ impl AIReportScheduler {
             "zhipu" => {
                 let api_key = account.api_key.clone();
                 let model = account.model.clone();
-
-                // 从 extra_config 中解析其他配置
-                let (base_url, timeout, max_tokens, temperature) =
-                    if let Some(extra) = &account.extra_config {
-                        let config: serde_json::Value = serde_json::from_str(extra)
-                            .context("Failed to parse extra_config JSON")?;
-                        let base_url = config["base_url"].as_str().map(|s| s.to_string());
-                        let timeout = config["timeout_secs"].as_u64();
-                        let max_tokens = config["max_tokens"].as_u64().map(|v| v as usize);
-                        let temperature = config["temperature"].as_f64().map(|v| v as f32);
-                        (base_url, timeout, max_tokens, temperature)
-                    } else {
-                        (None, None, None, None)
-                    };
+                let base_url = account.base_url.clone();
+                let timeout = account.timeout_secs.map(|v| v as u64);
+                let max_tokens = account.max_tokens.map(|v| v as usize);
+                let temperature = account.temperature;
+                let api_mode = account.api_mode.clone();
 
                 tracing::debug!(
                     model = ?model,
                     base_url = ?base_url,
                     timeout = ?timeout,
+                    api_mode = ?api_mode,
                     "Creating ZhipuProvider"
                 );
 
-                let provider =
-                    ZhipuProvider::new(api_key, model, base_url, timeout, max_tokens, temperature)
-                        .context("Failed to create ZhipuProvider")?;
+                let provider = ZhipuProvider::new(
+                    api_key, model, base_url, timeout, max_tokens, temperature, api_mode,
+                )
+                .context("Failed to create ZhipuProvider")?;
 
                 Ok(Box::new(provider))
             }

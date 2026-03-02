@@ -258,7 +258,6 @@ CREATE TABLE IF NOT EXISTS ai_accounts (
     display_name TEXT NOT NULL,
     description TEXT,
     api_key TEXT NOT NULL,
-    api_secret TEXT,
     model TEXT,
     extra_config TEXT,
     enabled INTEGER NOT NULL DEFAULT 1,

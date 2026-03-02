@@ -29,11 +29,6 @@ pub trait ChannelPlugin: Send + Sync {
         config: &Value,
     ) -> Result<Box<dyn NotificationChannel>>;
 
-    /// Returns a copy of `config` with secrets redacted (e.g., passwords
-    /// replaced with `"***"`). Used for API responses.
-    fn redact_config(&self, config: &Value) -> Value {
-        config.clone()
-    }
 }
 
 /// Registry of available [`ChannelPlugin`]s, used to instantiate

@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
         total_agents: current_metrics.len() as i32,
         risk_level,
         ai_provider: "zhipu",
-        ai_model: "glm-4-flash",
+        ai_model: "glm-5-flash",
         ai_analysis,
         created_at: &chrono::Utc::now().to_rfc3339(),
         locale: "zh-CN",
@@ -152,7 +152,7 @@ async fn main() -> Result<()> {
     println!("   - 监控主机数: {}", current_metrics.len());
     println!("   - 报告日期: {}", report_date);
     println!("   - 风险等级: {}", risk_level);
-    println!("   - AI 提供商: zhipu (GLM-4)");
+    println!("   - AI 提供商: zhipu (GLM-5)");
     println!("   - 报告格式: HTML A4");
     println!();
 

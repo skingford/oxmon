@@ -380,16 +380,4 @@ impl ChannelPlugin for EmailPlugin {
         Ok(Box::new(channel))
     }
 
-    fn redact_config(&self, config: &Value) -> Value {
-        let mut redacted = config.clone();
-        if let Some(obj) = redacted.as_object_mut() {
-            if obj.contains_key("smtp_password") {
-                obj.insert(
-                    "smtp_password".to_string(),
-                    Value::String("***".to_string()),
-                );
-            }
-        }
-        redacted
-    }
 }

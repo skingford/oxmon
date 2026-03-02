@@ -79,7 +79,6 @@ SELECT
   display_name,
   description,
   json_extract(config_json, '$.api_key') as api_key,
-  json_extract(config_json, '$.secret_key') as api_secret,
   json_extract(config_json, '$.model') as model,
   -- 提取除了 api_key, secret_key, model 之外的其他配置
   json_object(
@@ -103,9 +102,7 @@ INSERT OR IGNORE INTO ai_accounts (
   display_name,
   description,
   api_key,
-  api_secret,
   model,
-  extra_config,
   enabled,
   created_at,
   updated_at
@@ -117,9 +114,7 @@ SELECT
   display_name,
   description,
   COALESCE(api_key, '') as api_key,
-  api_secret,
   model,
-  extra_config,
   enabled,
   created_at_unix,
   updated_at_unix
@@ -150,7 +145,6 @@ SELECT
   provider,
   display_name,
   CASE WHEN api_key != '' THEN '***REDACTED***' ELSE 'MISSING' END as api_key,
-  CASE WHEN api_secret IS NOT NULL THEN '***REDACTED***' ELSE NULL END as api_secret,
   model,
   enabled
 FROM ai_accounts

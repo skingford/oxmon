@@ -547,13 +547,4 @@ impl ChannelPlugin for DingTalkPlugin {
         )))
     }
 
-    fn redact_config(&self, config: &Value) -> Value {
-        let mut redacted = config.clone();
-        if let Some(obj) = redacted.as_object_mut() {
-            if obj.contains_key("secret") {
-                obj.insert("secret".to_string(), Value::String("***".to_string()));
-            }
-        }
-        redacted
-    }
 }
