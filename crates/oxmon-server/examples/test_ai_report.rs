@@ -2,7 +2,14 @@
 ///
 /// 用途: 演示 AI 分析器、报告生成和 HTML 渲染的核心流程
 ///
-/// 运行: cargo run --example test_ai_report
+/// 运行（模拟模式）:
+///   cargo run --example test_ai_report
+///
+/// 运行（真实 API - Anthropic 兼容模式）:
+///   ZHIPU_API_KEY=your-key cargo run --example test_ai_report
+///
+/// 运行（真实 API - OpenAI 兼容模式）:
+///   ZHIPU_API_KEY=your-key ZHIPU_API_MODE=openai cargo run --example test_ai_report
 use anyhow::Result;
 use oxmon_ai::{AIAnalyzer, AnalysisInput, HistoryMetric, MetricSnapshot, ZhipuProvider};
 use oxmon_notify::report_template::{ReportParams, ReportRenderer};
@@ -11,7 +18,7 @@ use oxmon_notify::report_template::{ReportParams, ReportRenderer};
 async fn main() -> Result<()> {
     // 初始化日志
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
     println!("🤖 AI 检测报告功能演示\n");
@@ -71,7 +78,7 @@ async fn main() -> Result<()> {
             avg_disk: 70.0,
         },
     ];
-    println!("   ✅ 准备了 {} 天历史数据\n", 7);
+    println!("   ✅ 准备了 7 天历史均值数据\n");
 
     // 3. 构建分析输入
     println!("🔧 步骤 3: 构建 AI 分析输入");
@@ -84,13 +91,17 @@ async fn main() -> Result<()> {
     };
     println!("   ✅ 报告日期: {}\n", report_date);
 
-    // 4. 模拟 AI 分析 (不调用真实 API)
-    println!("🤖 步骤 4: AI 分析 (模拟)");
-    println!("   ⚠️  注意: 需要配置真实的智谱 API Key 才能调用实际 API");
-    println!("   当前演示使用模拟数据\n");
+    // 4. 读取 API Key，决定使用真实 API 还是模拟数据
+    let api_key = std::env::var("ZHIPU_API_KEY").unwrap_or_default();
+    // 默认使用 Anthropic 模式（对应 seed_ai_glm_anthropic 账号），可通过环境变量覆盖
+    let api_mode = std::env::var("ZHIPU_API_MODE").unwrap_or_else(|_| "anthropic".to_string());
 
-    // 模拟 AI 分析结果
-    let ai_analysis = r#"# 系统监控日常报告
+    let (ai_analysis, risk_level, ai_provider, ai_model) = if api_key.is_empty() {
+        println!("🤖 步骤 4: AI 分析（模拟模式）");
+        println!("   ⚠️  未检测到 ZHIPU_API_KEY，使用模拟数据");
+        println!("   💡 设置 ZHIPU_API_KEY=your-key 后重新运行以调用真实 API\n");
+
+        let mock_analysis = r#"# 系统监控日常报告
 
 ## 整体评估
 根据今日监控数据分析，系统整体运行状况为**中等风险**。
@@ -109,33 +120,61 @@ async fn main() -> Result<()> {
 ### 正常运行服务器
 - **agent-002**: 各项指标正常，CPU 45.2%，内存 60.5%
 
-## 趋势分析
-- agent-001 的 CPU 使用率相比历史均值上升 15.5%
-- cloud:tencent:ins-abc123 持续高负载，需重点关注
-
-## 行动建议
-1. 优先处理 cloud:tencent:ins-abc123 的高负载问题
-2. 对 agent-001 进行性能优化或资源扩容评估
-3. 继续监控 agent-002 的运行状况
-4. 建议设置更精细的告警规则
-
 ## 总结
-系统存在部分高负载节点，建议及时处理以避免服务中断。
-"#;
+系统存在部分高负载节点，建议及时处理。
 
-    let risk_level = "medium";
-    println!("   ✅ 风险等级: {}", risk_level);
-    println!("   ✅ 分析内容长度: {} 字符\n", ai_analysis.len());
+RISK_LEVEL:medium"#;
+        (mock_analysis.to_string(), "medium".to_string(), "zhipu", "glm-5（模拟）")
+    } else {
+        // 根据 api_mode 选择端点
+        let (base_url, mode_label) = if api_mode.eq_ignore_ascii_case("openai") {
+            (
+                "https://open.bigmodel.cn/api/paas/v4".to_string(),
+                "OpenAI 兼容",
+            )
+        } else {
+            (
+                "https://open.bigmodel.cn/api/anthropic".to_string(),
+                "Anthropic 兼容",
+            )
+        };
+
+        println!("🤖 步骤 4: AI 分析（真实 API - {} 模式）", mode_label);
+        println!("   端点: {}", base_url);
+        println!("   api_mode: {}", api_mode);
+        println!("   模型: glm-5\n");
+
+        let provider = ZhipuProvider::new(
+            api_key,
+            Some("glm-5".to_string()),
+            Some(base_url),
+            Some(120),   // 超时 120 秒
+            Some(4096),  // max_tokens
+            None,        // temperature 默认
+            Some(api_mode.clone()),
+        )?;
+
+        println!("   调用中，请稍候...");
+        let result = provider.analyze(input).await?;
+        println!(
+            "   ✅ 风险等级: {}\n   ✅ 内容长度: {} 字符\n",
+            result.risk_level.as_str(),
+            result.content.len()
+        );
+
+        let level_str = result.risk_level.as_str().to_string();
+        (result.content, level_str, "zhipu", "glm-5")
+    };
 
     // 5. 渲染 HTML 报告
     println!("🎨 步骤 5: 渲染 HTML 报告");
     let html_content = ReportRenderer::render_report(&ReportParams {
         report_date: &report_date,
         total_agents: current_metrics.len() as i32,
-        risk_level,
-        ai_provider: "zhipu",
-        ai_model: "glm-5-flash",
-        ai_analysis,
+        risk_level: &risk_level,
+        ai_provider,
+        ai_model,
+        ai_analysis: &ai_analysis,
         created_at: &chrono::Utc::now().to_rfc3339(),
         locale: "zh-CN",
     })?;
@@ -152,24 +191,12 @@ async fn main() -> Result<()> {
     println!("   - 监控主机数: {}", current_metrics.len());
     println!("   - 报告日期: {}", report_date);
     println!("   - 风险等级: {}", risk_level);
-    println!("   - AI 提供商: zhipu (GLM-5)");
+    println!("   - AI 提供商: {}", ai_provider);
     println!("   - 报告格式: HTML A4");
     println!();
 
-    // 8. 提示如何查看
     println!("💡 查看报告:");
-    println!("   浏览器打开: open {}", output_path);
-    println!("   或直接双击文件查看");
-    println!();
-
-    // 9. 真实 API 调用示例 (需要配置)
-    println!("🔑 如需测试真实 AI API:");
-    println!("   1. 获取智谱 API Key: https://open.bigmodel.cn");
-    println!("   2. 设置环境变量: export ZHIPU_API_KEY=your-key");
-    println!("   3. 修改代码取消注释真实 API 调用部分");
-    println!();
-
-    println!("✅ 演示完成!");
+    println!("   open {}", output_path);
 
     Ok(())
 }

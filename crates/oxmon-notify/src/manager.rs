@@ -725,4 +725,187 @@ impl NotificationManager {
 
         success_count
     }
+
+    /// 发送 AI 检测报告到所有通知渠道，绕过静默窗口和聚合。
+    /// - Email 渠道：发送 HTML 格式报告
+    /// - 钉钉/企业微信：发送 Markdown 格式（ai_analysis 内容）
+    /// - 其他渠道：纯文本 fallback
+    /// 返回成功发送的渠道数量。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_ai_report(
+        &self,
+        report_id: &str,
+        report_date: &str,
+        risk_level: &str,
+        total_agents: i32,
+        ai_provider: &str,
+        ai_model: &str,
+        html_content: &str,
+        ai_analysis: &str,
+        locale: &str,
+    ) -> usize {
+        let now = Utc::now();
+
+        let subject = if locale.contains("zh") {
+            format!(
+                "[oxmon][AI检测报告] {} | 风险: {} | {} 台主机",
+                report_date, risk_level, total_agents
+            )
+        } else {
+            format!(
+                "[oxmon][AI Report] {} | Risk: {} | {} hosts",
+                report_date, risk_level, total_agents
+            )
+        };
+
+        let plain_content = if locale.contains("zh") {
+            format!(
+                "AI 检测报告\n报告日期: {}\n风险等级: {}\n监控主机: {} 台\nAI 提供商: {} ({})",
+                report_date, risk_level, total_agents, ai_provider, ai_model
+            )
+        } else {
+            format!(
+                "AI Detection Report\nDate: {}\nRisk Level: {}\nMonitored Hosts: {}\nAI Provider: {} ({})",
+                report_date, risk_level, total_agents, ai_provider, ai_model
+            )
+        };
+
+        let severity = match risk_level {
+            "high" => oxmon_common::types::Severity::Critical,
+            "medium" => oxmon_common::types::Severity::Warning,
+            _ => oxmon_common::types::Severity::Info,
+        };
+
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("report_id".to_string(), report_id.to_string());
+        labels.insert("report_date".to_string(), report_date.to_string());
+        labels.insert("risk_level".to_string(), risk_level.to_string());
+
+        let fallback_event = oxmon_common::types::AlertEvent {
+            id: format!("ai-report-{}", report_id),
+            rule_id: "ai-report".to_string(),
+            rule_name: "AI Daily Report".to_string(),
+            agent_id: "system".to_string(),
+            metric_name: "ai.report".to_string(),
+            severity,
+            message: plain_content.clone(),
+            value: total_agents as f64,
+            threshold: 0.0,
+            timestamp: now,
+            predicted_breach: None,
+            status: 1,
+            labels,
+            first_triggered_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let instances = self.instances.read().await;
+        let mut success_count = 0;
+
+        for (channel_id, instance) in instances.iter() {
+            // AI 报告为定时播报，不按 severity 过滤渠道
+
+            let start = Instant::now();
+
+            // 优先走渠道原生报告接口（email → HTML，dingtalk → markdown）
+            let result = instance
+                .channel
+                .send_cert_report(
+                    &subject,
+                    html_content,
+                    ai_analysis,
+                    &plain_content,
+                    &instance.recipients,
+                )
+                .await;
+
+            let (send_result, response) = match result {
+                Some(Ok(resp)) => {
+                    success_count += 1;
+                    (Ok(()), Some(resp))
+                }
+                Some(Err(e)) => {
+                    tracing::error!(
+                        channel_id = %channel_id,
+                        channel_type = %instance.channel_type,
+                        error = %e,
+                        "Failed to send AI report via native channel"
+                    );
+                    (Err(anyhow::anyhow!("{e}")), None)
+                }
+                // 渠道不支持报告接口，回退到纯文本
+                None => {
+                    let r = instance
+                        .channel
+                        .send(&fallback_event, &instance.recipients, locale)
+                        .await;
+                    let duration_ms = start.elapsed().as_millis() as i64;
+                    match r {
+                        Ok(resp) => {
+                            success_count += 1;
+                            let ctx = SendLogContext {
+                                channel_id,
+                                channel_name: &instance.name,
+                                channel_type: &instance.channel_type,
+                                duration_ms,
+                                recipient_count: instance.recipients.len() as i32,
+                                response: Some(resp),
+                            };
+                            Self::record_send_log(
+                                &self.cert_store,
+                                &fallback_event,
+                                &ctx,
+                                &Ok(()),
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                channel_id = %channel_id,
+                                channel_type = %instance.channel_type,
+                                error = %e,
+                                "Failed to send AI report via fallback channel"
+                            );
+                            let ctx = SendLogContext {
+                                channel_id,
+                                channel_name: &instance.name,
+                                channel_type: &instance.channel_type,
+                                duration_ms,
+                                recipient_count: instance.recipients.len() as i32,
+                                response: None,
+                            };
+                            Self::record_send_log(
+                                &self.cert_store,
+                                &fallback_event,
+                                &ctx,
+                                &Err(anyhow::anyhow!("{e}")),
+                            )
+                            .await;
+                        }
+                    }
+                    continue;
+                }
+            };
+
+            let duration_ms = start.elapsed().as_millis() as i64;
+            let ctx = SendLogContext {
+                channel_id,
+                channel_name: &instance.name,
+                channel_type: &instance.channel_type,
+                duration_ms,
+                recipient_count: instance.recipients.len() as i32,
+                response,
+            };
+            Self::record_send_log(&self.cert_store, &fallback_event, &ctx, &send_result).await;
+        }
+
+        tracing::info!(
+            report_id = %report_id,
+            success_count = success_count,
+            "AI report sent to all channels"
+        );
+
+        success_count
+    }
 }

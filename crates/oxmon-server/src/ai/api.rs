@@ -25,6 +25,7 @@ use crate::state::AppState;
         create_ai_account,
         update_ai_account,
         delete_ai_account,
+        trigger_ai_report,
         list_ai_reports,
         get_ai_report,
         view_ai_report_html,
@@ -34,6 +35,7 @@ use crate::state::AppState;
         AIAccountResponse,
         CreateAIAccountRequest,
         UpdateAIAccountRequest,
+        TriggerAIReportResponse,
         ListAIReportsQuery,
         AIReportListItem,
     ))
@@ -48,6 +50,7 @@ pub fn ai_routes() -> OpenApiRouter<AppState> {
             update_ai_account,
             delete_ai_account
         ))
+        .routes(routes!(trigger_ai_report))
         .routes(routes!(list_ai_reports))
         .routes(routes!(get_ai_report))
         .routes(routes!(view_ai_report_html))
@@ -377,6 +380,60 @@ async fn delete_ai_account(
     }
 }
 
+/// 手动触发 AI 报告生成
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TriggerAIReportResponse {
+    pub report_id: String,
+    pub message: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/ai/accounts/{id}/trigger",
+    params(
+        ("id" = String, Path, description = "AI 账号 ID")
+    ),
+    responses(
+        (status = 200, description = "AI 报告触发成功", body = TriggerAIReportResponse),
+        (status = 404, description = "AI 账号不存在"),
+        (status = 400, description = "AI 账号未启用"),
+    ),
+    tag = "AI 管理"
+)]
+async fn trigger_ai_report(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<TriggerAIReportResponse>, AppError> {
+    let account = state
+        .cert_store
+        .get_ai_account_by_id(&id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("AI account not found".into()))?;
+
+    if !account.enabled {
+        return Err(AppError::BadRequest(format!(
+            "AI account '{}' is disabled, please enable it first",
+            account.config_key
+        )));
+    }
+
+    let report_id = crate::ai::report::generate_report_for_account(
+        &account,
+        &state.storage,
+        &state.cert_store,
+        &state.notifier,
+    )
+    .await?;
+
+    Ok(Json(TriggerAIReportResponse {
+        report_id: report_id.clone(),
+        message: format!(
+            "AI report generated successfully for account '{}'. Report ID: {}",
+            account.config_key, report_id
+        ),
+    }))
+}
+
 /// 列出 AI 报告
 #[utoipa::path(
     get,
@@ -510,6 +567,7 @@ async fn view_ai_report_html(
 enum AppError {
     Internal(anyhow::Error),
     NotFound(String),
+    BadRequest(String),
 }
 
 impl From<anyhow::Error> for AppError {
@@ -526,6 +584,7 @@ impl IntoResponse for AppError {
                 (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
             }
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
+            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
         };
 
         (status, Json(json!({ "error": message }))).into_response()

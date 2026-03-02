@@ -5,6 +5,7 @@ mod m002_cloud_instances_gpu_integer;
 mod m003_cloud_instances_datetime_rfc3339;
 mod m004_cloud_instances_auto_renew_flag_bool;
 mod m005_drop_ai_accounts_api_secret;
+mod m006_ai_reports_remove_date_unique;
 
 pub struct Migrator;
 
@@ -17,6 +18,7 @@ impl MigratorTrait for Migrator {
             Box::new(m003_cloud_instances_datetime_rfc3339::Migration),
             Box::new(m004_cloud_instances_auto_renew_flag_bool::Migration),
             Box::new(m005_drop_ai_accounts_api_secret::Migration),
+            Box::new(m006_ai_reports_remove_date_unique::Migration),
         ]
     }
 }
