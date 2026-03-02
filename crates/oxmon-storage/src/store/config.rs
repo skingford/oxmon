@@ -172,7 +172,16 @@ impl CertStore {
             .await
             .ok()
             .flatten();
-        model.map(|m| m.config_json)
+        model.map(|m| {
+            // Runtime settings are stored as {"value": ...} JSON objects.
+            // Extract the inner value so callers can parse it directly.
+            if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&m.config_json) {
+                if let Some(val) = obj.get("value") {
+                    return val.to_string();
+                }
+            }
+            m.config_json
+        })
     }
 
     fn parse_json_string(json: &str) -> Option<String> {
