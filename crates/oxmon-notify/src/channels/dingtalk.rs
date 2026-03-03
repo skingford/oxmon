@@ -546,5 +546,4 @@ impl ChannelPlugin for DingTalkPlugin {
             cfg.at_user_ids,
         )))
     }
-
 }

@@ -379,5 +379,4 @@ impl ChannelPlugin for EmailPlugin {
         )?;
         Ok(Box::new(channel))
     }
-
 }

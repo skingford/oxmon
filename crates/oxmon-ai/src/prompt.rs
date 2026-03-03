@@ -29,131 +29,153 @@ pub fn build_summary_prompt(batch_results: &[String], locale: &str) -> Result<St
     Ok(template.replace("{{BATCH_RESULTS}}", &combined))
 }
 
-/// 格式化指标数据为表格形式
+/// 格式化指标数据为表格形式（已按风险排序，包含风险标注列）
 fn format_metrics(current: &[MetricSnapshot], history: &[HistoryMetric]) -> String {
+    // 构建历史数据查找表
+    let hist_map: std::collections::HashMap<&str, &HistoryMetric> =
+        history.iter().map(|h| (h.agent_id.as_str(), h)).collect();
+
     let mut output = String::new();
 
-    output.push_str("### 当前指标\n\n");
-    output.push_str("| Agent ID | 类型 | CPU使用率(%) | 内存使用率(%) | 磁盘使用率(%) |\n");
-    output.push_str("|----------|------|--------------|---------------|---------------|\n");
+    output.push_str("### 当前指标（已按风险排序，高风险排前）\n\n");
+    output.push_str("| # | Agent ID | 类型 | CPU(%) | 内存(%) | 磁盘(%) | CPU均值 | 内存均值 | 磁盘均值 | 风险 |\n");
+    output.push_str("|---|----------|------|--------|---------|---------|---------|----------|----------|------|\n");
 
-    for metric in current {
+    for (i, metric) in current.iter().enumerate() {
+        let hist = hist_map.get(metric.agent_id.as_str());
+        let risk = infer_risk_label(metric.cpu_usage, metric.memory_usage, metric.disk_usage);
         output.push_str(&format!(
-            "| {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            i + 1,
             metric.agent_id,
             metric.agent_type,
             metric
                 .cpu_usage
-                .map_or("N/A".to_string(), |v| format!("{:.2}", v)),
+                .map_or("N/A".to_string(), |v| format!("{:.1}", v)),
             metric
                 .memory_usage
-                .map_or("N/A".to_string(), |v| format!("{:.2}", v)),
+                .map_or("N/A".to_string(), |v| format!("{:.1}", v)),
             metric
                 .disk_usage
-                .map_or("N/A".to_string(), |v| format!("{:.2}", v)),
-        ));
-    }
-
-    output.push_str("\n### 历史7天均值\n\n");
-    output.push_str("| Agent ID | 平均CPU(%) | 平均内存(%) | 平均磁盘(%) |\n");
-    output.push_str("|----------|------------|-------------|-------------|\n");
-
-    for hist in history {
-        output.push_str(&format!(
-            "| {} | {:.2} | {:.2} | {:.2} |\n",
-            hist.agent_id, hist.avg_cpu, hist.avg_memory, hist.avg_disk
+                .map_or("N/A".to_string(), |v| format!("{:.1}", v)),
+            hist.map_or("N/A".to_string(), |h| format!("{:.1}", h.avg_cpu)),
+            hist.map_or("N/A".to_string(), |h| format!("{:.1}", h.avg_memory)),
+            hist.map_or("N/A".to_string(), |h| format!("{:.1}", h.avg_disk)),
+            risk,
         ));
     }
 
     output
 }
 
+/// 根据指标值推断风险等级标签（用于 Prompt 中的表格注释）
+fn infer_risk_label(cpu: Option<f64>, mem: Option<f64>, disk: Option<f64>) -> &'static str {
+    let values = [cpu, mem, disk];
+    if values.into_iter().flatten().any(|v| v > 85.0) {
+        "🚨 严重告警"
+    } else if values.into_iter().flatten().any(|v| v > 80.0) {
+        "🔴 告警"
+    } else if values.into_iter().flatten().any(|v| v >= 60.0) {
+        "🟡 关注"
+    } else {
+        "✅ 正常"
+    }
+}
+
 const ANALYSIS_PROMPT_ZH: &str = r#"你是一位资深运维专家，擅长分析服务器监控数据。请分析以下 {{REPORT_DATE}} 的监控数据，生成专业的巡检报告。
 
-监控数据：
+监控数据（已按风险从高到低排序）：
 {{METRICS_DATA}}
 
 请按照以下格式输出分析报告（使用 Markdown 格式）：
 
 ## 【整体概况】
-- 服务器总数：X 台
-- Agent 类型分布：本地 Agent X 台，云主机 Y 台（腾讯云 A 台，阿里云 B 台）
+- 服务器总数：X 台（本地 Agent X 台，腾讯云 A 台，阿里云 B 台）
+- 高风险实例数：X 台，中风险：X 台，低风险：X 台，正常：X 台
 
-## 【风险告警】
-列出以下高风险项（如果存在）：
-- CPU 使用率 > 80%
-- 内存使用率 > 85%
-- 磁盘使用率 > 90%
+## 【高风险实例详情】
+**必须列出所有风险等级为"🔴 高"的实例，每条包含：**
+- **实例 ID**：`agent-xxx`
+  - CPU：当前值 / 7天均值（趋势：↑上升 / ↓下降 / →持平）
+  - 内存：当前值 / 7天均值
+  - 磁盘：当前值 / 7天均值
+  - 告警原因：说明哪个指标超阈值
 
-格式：
-- **Agent ID**: cpu/memory/disk 当前值，历史7天均值
+若无高风险实例，填写"无高风险实例"。
+
+## 【中风险实例详情】
+列出所有风险等级为"🟡 中"的实例（格式同上，可简略）。
+若无，填写"无中风险实例"。
 
 ## 【趋势分析】
-对比历史 7 天数据，分析异常趋势：
-- 哪些 Agent 的指标出现明显上升趋势？
-- 是否有突发性峰值？
+对比历史 7 天均值，分析异常趋势：
+- 指标明显高于均值（超出 20% 以上）的实例
+- 是否存在突发性峰值或持续恶化趋势
 
 ## 【处理建议】
-针对高风险项，给出具体操作建议：
-1. 对于 CPU 高负载：排查进程、扩容等
-2. 对于内存不足：清理缓存、增加内存等
-3. 对于磁盘告警：清理日志、扩容磁盘等
+针对高/中风险实例，给出具体操作建议（按优先级排序）：
+1. 最紧急的问题及处理方法
+2. 次要问题及建议
 
 ## 【总结】
-- 是否需要人工介入：是 / 否
-- 风险优先级排序
+- 是否需要立即人工介入：是 / 否
+- 建议关注的关键指标
 
-**最后一行请标注风险等级（必须）：**
+**最后一行请标注风险等级（必须，不要有任何其他内容在此行之后）：**
 RISK_LEVEL:high/medium/low/normal
 
 风险等级判断标准：
-- high: 存在 CPU>80% 或 内存>85% 或 磁盘>90% 的 Agent，且趋势恶化
-- medium: 存在接近阈值的 Agent（CPU>70%, 内存>75%, 磁盘>80%）
-- low: 指标略有异常但未超过阈值
+- high: 存在任一指标 >85%（严重告警）
+- medium: 不满足 high，但存在任一指标 >80%（告警）
+- low: 不满足 medium，但存在任一指标在 60%~80%（关注）
 - normal: 所有指标正常
 "#;
 
 const ANALYSIS_PROMPT_EN: &str = r#"You are a senior DevOps expert skilled at analyzing server monitoring data. Please analyze the following monitoring data for {{REPORT_DATE}} and generate a professional inspection report.
 
-Monitoring Data:
+Monitoring Data (sorted by risk level, highest risk first):
 {{METRICS_DATA}}
 
 Please output the analysis report in the following format (use Markdown):
 
 ## 【Overview】
-- Total Servers: X
-- Agent Type Distribution: Local Agents X, Cloud Instances Y (Tencent Cloud A, Alibaba Cloud B)
+- Total Servers: X (Local X, Tencent Cloud A, Alibaba Cloud B)
+- High-risk: X, Medium-risk: X, Low-risk: X, Normal: X
 
-## 【Risk Alerts】
-List high-risk items (if any):
-- CPU usage > 80%
-- Memory usage > 85%
-- Disk usage > 90%
+## 【High-Risk Instance Details】
+**Must list ALL instances with risk "🔴 High", each including:**
+- **Instance ID**: `agent-xxx`
+  - CPU: current / 7-day avg (trend: ↑rising / ↓falling / →stable)
+  - Memory: current / 7-day avg
+  - Disk: current / 7-day avg
+  - Alert reason: which metric exceeded threshold
 
-Format:
-- **Agent ID**: cpu/memory/disk current value, 7-day historical average
+If none, write "No high-risk instances".
+
+## 【Medium-Risk Instance Details】
+List all instances with risk "🟡 Medium" (same format, can be brief).
+If none, write "No medium-risk instances".
 
 ## 【Trend Analysis】
-Compare with 7-day historical data and analyze anomalies:
-- Which agents show significant upward trends?
-- Are there any sudden spikes?
+Compare with 7-day averages and identify anomalies:
+- Instances with metrics significantly above average (>20%)
+- Sudden spikes or continuously worsening trends
 
 ## 【Recommendations】
-Provide specific operational suggestions for high-risk items:
-1. For high CPU load: Check processes, scale up, etc.
-2. For low memory: Clear cache, add memory, etc.
-3. For disk alerts: Clean logs, expand storage, etc.
+Provide specific suggestions for high/medium-risk instances (ordered by priority):
+1. Most urgent issue and remediation
+2. Secondary issues and suggestions
 
 ## 【Summary】
-- Requires manual intervention: Yes / No
-- Risk priority ranking
+- Requires immediate manual intervention: Yes / No
+- Key metrics to monitor
 
-**Last line must indicate risk level (required):**
+**Last line must indicate risk level (required, nothing after this line):**
 RISK_LEVEL:high/medium/low/normal
 
 Risk level criteria:
-- high: Agents with CPU>80% or Memory>85% or Disk>90%, and worsening trend
-- medium: Agents approaching thresholds (CPU>70%, Memory>75%, Disk>80%)
-- low: Slight anomalies but below thresholds
+- high: Any metric >85% (critical)
+- medium: Not high, but any metric >80% (alert)
+- low: Not medium, but any metric in 60%-80% (attention)
 - normal: All metrics normal
 "#;

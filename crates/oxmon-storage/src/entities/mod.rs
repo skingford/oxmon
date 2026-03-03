@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod agent_whitelist;
 pub mod ai_account;
+pub mod ai_check_job;
 pub mod ai_report;
 pub mod alert_rule;
 pub mod cert_check_result;

@@ -8,6 +8,8 @@ pub struct ReportParams<'a> {
     pub ai_provider: &'a str,
     pub ai_model: &'a str,
     pub ai_analysis: &'a str,
+    /// 服务端预生成的实例详情 HTML 表格（已按风险排序）
+    pub instance_table_html: &'a str,
     pub created_at: &'a str,
     pub locale: &'a str,
 }
@@ -47,23 +49,23 @@ impl ReportRenderer {
         let risk_level_label = match risk_level {
             "high" => {
                 if locale == "zh-CN" {
-                    "🔴 高风险"
+                    "🚨 严重告警"
                 } else {
-                    "🔴 High Risk"
+                    "🚨 Critical"
                 }
             }
             "medium" => {
                 if locale == "zh-CN" {
-                    "🟡 中风险"
+                    "🔴 告警"
                 } else {
-                    "🟡 Medium Risk"
+                    "🔴 Alert"
                 }
             }
             "low" => {
                 if locale == "zh-CN" {
-                    "🟢 低风险"
+                    "🟡 关注"
                 } else {
-                    "🟢 Low Risk"
+                    "🟡 Attention"
                 }
             }
             _ => {
@@ -92,6 +94,7 @@ impl ReportRenderer {
             .replace("{{risk_level_label}}", risk_level_label)
             .replace("{{ai_provider}}", ai_provider)
             .replace("{{ai_model}}", ai_model)
+            .replace("{{instance_table_html}}", params.instance_table_html)
             .replace("{{ai_analysis_html}}", &ai_analysis_html)
             .replace("{{created_at}}", created_at);
 
@@ -128,6 +131,7 @@ mod tests {
             ai_provider: "zhipu",
             ai_model: "glm-5",
             ai_analysis: "## 测试报告\n\n这是测试内容。",
+            instance_table_html: "",
             created_at: "2024-01-15T08:40:00Z",
             locale: "zh-CN",
         };
@@ -136,7 +140,7 @@ mod tests {
         assert!(html.contains("服务器监控 AI 分析报告"));
         assert!(html.contains("2024-01-15"));
         assert!(html.contains(">50<"));
-        assert!(html.contains("高风险"));
+        assert!(html.contains("严重告警"));
         assert!(html.contains("glm-5"));
     }
 }

@@ -28,7 +28,6 @@ pub trait ChannelPlugin: Send + Sync {
         instance_id: &str,
         config: &Value,
     ) -> Result<Box<dyn NotificationChannel>>;
-
 }
 
 /// Registry of available [`ChannelPlugin`]s, used to instantiate

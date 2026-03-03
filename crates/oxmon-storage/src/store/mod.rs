@@ -7,6 +7,7 @@ use crate::auth::TokenEncryptor;
 
 pub mod agent;
 pub mod ai;
+pub mod ai_check_job;
 pub mod alert;
 pub mod cert;
 pub mod cloud;
@@ -18,6 +19,7 @@ pub mod user;
 // ---- 公开 Row 类型（从各子模块重新导出）----
 pub use agent::{AgentListFilter, AgentWhitelistFilter};
 pub use ai::{AIAccountRow, AIAccountUpdate};
+pub use ai_check_job::AICheckJobRow;
 pub use alert::{AlertRuleFilter, AlertRuleRow, AlertRuleUpdate};
 pub use cert::{CertDomainSummary, CertHealthSummary, CertStatusFilter, CertStatusSummary};
 pub use cloud::{

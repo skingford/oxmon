@@ -124,7 +124,12 @@ async fn main() -> Result<()> {
 系统存在部分高负载节点，建议及时处理。
 
 RISK_LEVEL:medium"#;
-        (mock_analysis.to_string(), "medium".to_string(), "zhipu", "glm-5（模拟）")
+        (
+            mock_analysis.to_string(),
+            "medium".to_string(),
+            "zhipu",
+            "glm-5（模拟）",
+        )
     } else {
         // 根据 api_mode 选择端点
         let (base_url, mode_label) = if api_mode.eq_ignore_ascii_case("openai") {
@@ -148,9 +153,9 @@ RISK_LEVEL:medium"#;
             api_key,
             Some("glm-5".to_string()),
             Some(base_url),
-            Some(120),   // 超时 120 秒
-            Some(4096),  // max_tokens
-            None,        // temperature 默认
+            Some(120),  // 超时 120 秒
+            Some(4096), // max_tokens
+            None,       // temperature 默认
             Some(api_mode.clone()),
         )?;
 
@@ -175,6 +180,7 @@ RISK_LEVEL:medium"#;
         ai_provider,
         ai_model,
         ai_analysis: &ai_analysis,
+        instance_table_html: "",
         created_at: &chrono::Utc::now().to_rfc3339(),
         locale: "zh-CN",
     })?;

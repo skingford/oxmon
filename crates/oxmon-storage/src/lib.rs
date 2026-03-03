@@ -14,14 +14,13 @@ pub mod store;
 
 pub use store::CertStore;
 pub use store::{
-    AIAccountRow, AIAccountUpdate, ActiveAlertFilter, AgentListFilter, AgentWhitelistFilter,
-    AlertRuleFilter,
-    AlertRuleRow, AlertRuleUpdate, CertDomainSummary, CertHealthSummary, CertStatusFilter,
-    CertStatusSummary, CloudAccountRow, CloudAccountSummary, CloudCollectionStateRow,
-    CloudInstanceRow, CloudInstanceStatusSummary, DictTypeFilter, NotificationChannelFilter,
-    NotificationChannelRow, NotificationChannelUpdate, NotificationLogFilter, NotificationLogRow,
-    NotificationRecipientRow, SilenceWindowFilter, SilenceWindowRow, SystemConfigFilter,
-    SystemConfigRow, SystemConfigUpdate,
+    AIAccountRow, AIAccountUpdate, AICheckJobRow, ActiveAlertFilter, AgentListFilter,
+    AgentWhitelistFilter, AlertRuleFilter, AlertRuleRow, AlertRuleUpdate, CertDomainSummary,
+    CertHealthSummary, CertStatusFilter, CertStatusSummary, CloudAccountRow, CloudAccountSummary,
+    CloudCollectionStateRow, CloudInstanceRow, CloudInstanceStatusSummary, DictTypeFilter,
+    NotificationChannelFilter, NotificationChannelRow, NotificationChannelUpdate,
+    NotificationLogFilter, NotificationLogRow, NotificationRecipientRow, SilenceWindowFilter,
+    SilenceWindowRow, SystemConfigFilter, SystemConfigRow, SystemConfigUpdate,
 };
 
 #[cfg(test)]

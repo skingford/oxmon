@@ -1908,6 +1908,441 @@ async fn cloud_instances_chart(
     success_response(StatusCode::OK, &trace_id, resp)
 }
 
+// ===== 云实例 AI 检测 =====
+
+/// 手动触发 AI 检测请求体（所有字段可选，可传空 JSON `{}`）
+#[derive(Debug, Default, serde::Deserialize, ToSchema)]
+struct TriggerCloudAICheckRequest {
+    /// AI 账号 ID（不传则使用第一个启用的账号）
+    #[serde(default)]
+    ai_account_id: Option<String>,
+}
+
+/// 触发所有云实例 AI 检测响应（异步，立即返回 job_id）
+#[derive(Debug, Serialize, ToSchema)]
+struct TriggerCloudAICheckResponse {
+    /// 后台任务 ID，可通过 GET /v1/cloud/instances/ai-check/jobs/{id} 查询状态
+    job_id: String,
+    /// 提示信息
+    message: String,
+}
+
+/// 触发单个云实例 AI 检测响应（同步，直接返回 report_id）
+#[derive(Debug, Serialize, ToSchema)]
+struct TriggerSingleInstanceAICheckResponse {
+    /// 生成的报告 ID
+    report_id: String,
+    /// 提示信息
+    message: String,
+}
+
+/// AI 检测任务详情
+#[derive(Debug, Serialize, ToSchema)]
+struct AICheckJobResponse {
+    id: String,
+    /// 任务类型："cloud_all" | "cloud_instance:{db_id}"
+    job_type: String,
+    /// 任务状态："running" | "succeeded" | "failed"
+    status: String,
+    ai_account_id: String,
+    /// 成功后的报告 ID
+    report_id: Option<String>,
+    /// 失败时的错误信息
+    error_message: Option<String>,
+    started_at: String,
+    finished_at: Option<String>,
+    created_at: String,
+}
+
+fn job_row_to_response(row: oxmon_storage::AICheckJobRow) -> AICheckJobResponse {
+    AICheckJobResponse {
+        id: row.id,
+        job_type: row.job_type,
+        status: row.status,
+        ai_account_id: row.ai_account_id,
+        report_id: row.report_id,
+        error_message: row.error_message,
+        started_at: row.started_at.to_rfc3339(),
+        finished_at: row.finished_at.map(|dt| dt.to_rfc3339()),
+        created_at: row.created_at.to_rfc3339(),
+    }
+}
+
+/// 手动触发所有云实例 AI 检测（异步）
+///
+/// 立即返回任务 ID，AI 分析在后台执行以避免请求超时。
+/// 同类型任务正在运行时返回 409，不重复触发。
+/// 通过 `GET /v1/cloud/instances/ai-check/jobs/{id}` 查询任务状态。
+#[utoipa::path(
+    post,
+    path = "/v1/cloud/instances/ai-check",
+    request_body = TriggerCloudAICheckRequest,
+    responses(
+        (status = 202, description = "AI 检测任务已提交，后台执行", body = TriggerCloudAICheckResponse),
+        (status = 409, description = "同类型任务已在运行，请等待完成"),
+        (status = 400, description = "无可用 AI 账号"),
+    ),
+    tag = "Cloud"
+)]
+async fn trigger_all_cloud_instances_ai_check(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Json(req): Json<TriggerCloudAICheckRequest>,
+) -> impl IntoResponse {
+    // 1. 查找 AI 账号
+    let account = match resolve_ai_account(&state, req.ai_account_id.as_deref()).await {
+        Ok(a) => a,
+        Err(msg) => {
+            return error_response(StatusCode::BAD_REQUEST, &trace_id, "no_ai_account", &msg);
+        }
+    };
+
+    // 2. 防重复：检查是否已有同类型任务在运行
+    match state.cert_store.get_running_ai_check_job("cloud_all").await {
+        Ok(Some(running_job)) => {
+            return error_response(
+                StatusCode::CONFLICT,
+                &trace_id,
+                "job_already_running",
+                &format!(
+                    "An AI check job for all cloud instances is already running. Job ID: {}. \
+                     Check status via GET /v1/cloud/instances/ai-check/jobs/{}",
+                    running_job.id, running_job.id
+                ),
+            );
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to check running AI check jobs");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Failed to check for running jobs",
+            );
+        }
+    }
+
+    // 3. 创建任务记录
+    let job_id = oxmon_common::id::next_id();
+    if let Err(e) = state
+        .cert_store
+        .create_ai_check_job(&job_id, "cloud_all", &account.id)
+        .await
+    {
+        tracing::error!(error = %e, "Failed to create AI check job record");
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &trace_id,
+            "storage_error",
+            "Failed to create job record",
+        );
+    }
+
+    tracing::info!(
+        job_id = %job_id,
+        account_id = %account.id,
+        config_key = %account.config_key,
+        "AI check job created, starting background execution"
+    );
+
+    // 4. 后台异步执行 AI 分析
+    let storage_clone = state.storage.clone();
+    let cert_store_clone = state.cert_store.clone();
+    let notifier_clone = state.notifier.clone();
+    let job_id_clone = job_id.clone();
+    tokio::spawn(async move {
+        match crate::ai::report::generate_report_for_cloud_instances(
+            &account,
+            &storage_clone,
+            &cert_store_clone,
+            &notifier_clone,
+        )
+        .await
+        {
+            Ok(report_id) => {
+                tracing::info!(
+                    job_id = %job_id_clone,
+                    report_id = %report_id,
+                    "AI check job succeeded"
+                );
+                if let Err(e) = cert_store_clone
+                    .finish_ai_check_job(&job_id_clone, &report_id)
+                    .await
+                {
+                    tracing::error!(
+                        job_id = %job_id_clone,
+                        error = %e,
+                        "Failed to update job status to succeeded"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    job_id = %job_id_clone,
+                    error = %e,
+                    "AI check job failed"
+                );
+                if let Err(update_err) = cert_store_clone
+                    .fail_ai_check_job(&job_id_clone, &e.to_string())
+                    .await
+                {
+                    tracing::error!(
+                        job_id = %job_id_clone,
+                        error = %update_err,
+                        "Failed to update job status to failed"
+                    );
+                }
+            }
+        }
+    });
+
+    // 5. 立即返回 202 Accepted
+    success_response(
+        StatusCode::ACCEPTED,
+        &trace_id,
+        TriggerCloudAICheckResponse {
+            job_id: job_id.clone(),
+            message: format!(
+                "AI check task started in background. Job ID: {}. \
+                 Check status via GET /v1/cloud/instances/ai-check/jobs/{}",
+                job_id, job_id
+            ),
+        },
+    )
+}
+
+/// 手动触发单个云实例 AI 检测
+///
+/// 仅分析指定云实例，生成专项报告并通过通知渠道推送。
+#[utoipa::path(
+    post,
+    path = "/v1/cloud/instances/{id}/ai-check",
+    params(
+        ("id" = String, Path, description = "云实例数据库 ID（snowflake）")
+    ),
+    request_body = TriggerCloudAICheckRequest,
+    responses(
+        (status = 200, description = "AI 检测报告触发成功", body = TriggerSingleInstanceAICheckResponse),
+        (status = 400, description = "无可用 AI 账号"),
+        (status = 404, description = "云实例不存在"),
+        (status = 500, description = "报告生成失败"),
+    ),
+    tag = "Cloud"
+)]
+async fn trigger_single_instance_ai_check(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<TriggerCloudAICheckRequest>,
+) -> impl IntoResponse {
+    // 验证实例是否存在
+    let instance = match state.cert_store.get_cloud_instance_by_id(&id).await {
+        Ok(Some(inst)) => inst,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "instance_not_found",
+                &format!("Cloud instance '{}' not found", id),
+            );
+        }
+        Err(e) => {
+            tracing::error!(error = %e, instance_id = %id, "Failed to query cloud instance");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Failed to query cloud instance",
+            );
+        }
+    };
+
+    // 查找 AI 账号
+    let account = match resolve_ai_account(&state, req.ai_account_id.as_deref()).await {
+        Ok(a) => a,
+        Err(msg) => {
+            return error_response(StatusCode::BAD_REQUEST, &trace_id, "no_ai_account", &msg);
+        }
+    };
+
+    tracing::info!(
+        account_id = %account.id,
+        instance_id = %instance.instance_id,
+        provider = %instance.provider,
+        "Manually triggering AI check for single cloud instance"
+    );
+
+    match crate::ai::report::generate_report_for_single_instance(
+        &account,
+        &state.storage,
+        &state.cert_store,
+        &state.notifier,
+        &id,
+    )
+    .await
+    {
+        Ok(report_id) => success_response(
+            StatusCode::OK,
+            &trace_id,
+            TriggerSingleInstanceAICheckResponse {
+                report_id: report_id.clone(),
+                message: format!(
+                    "AI check triggered for cloud instance '{}'. Report ID: {}",
+                    instance.instance_id, report_id
+                ),
+            },
+        ),
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                instance_id = %instance.instance_id,
+                "Failed to generate AI report for cloud instance"
+            );
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "report_generation_failed",
+                &e.to_string(),
+            )
+        }
+    }
+}
+
+/// 列出 AI 检测任务查询参数
+#[derive(Debug, Deserialize, ToSchema)]
+struct ListAICheckJobsQuery {
+    /// 按状态过滤（running / succeeded / failed）
+    status: Option<String>,
+    /// 按任务类型过滤（cloud_all / cloud_instance:{id}）
+    job_type: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+}
+
+/// 查询 AI 检测任务列表
+///
+/// 返回后台 AI 检测任务列表，可按状态和类型过滤。
+#[utoipa::path(
+    get,
+    path = "/v1/cloud/instances/ai-check/jobs",
+    params(
+        ("status" = Option<String>, Query, description = "任务状态过滤（running / succeeded / failed）"),
+        ("job_type" = Option<String>, Query, description = "任务类型过滤（cloud_all / cloud_instance:{id}）"),
+        ("limit" = Option<u64>, Query, description = "每页数量，默认 20"),
+        ("offset" = Option<u64>, Query, description = "偏移量，默认 0"),
+    ),
+    responses(
+        (status = 200, description = "任务列表"),
+    ),
+    tag = "Cloud"
+)]
+async fn list_ai_check_jobs(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Query(q): Query<ListAICheckJobsQuery>,
+) -> impl IntoResponse {
+    let limit = q.limit.unwrap_or(20).min(1000) as usize;
+    let offset = q.offset.unwrap_or(0) as usize;
+
+    let (rows, total) = match tokio::try_join!(
+        state.cert_store.list_ai_check_jobs(
+            q.status.as_deref(),
+            q.job_type.as_deref(),
+            limit,
+            offset,
+        ),
+        state
+            .cert_store
+            .count_ai_check_jobs(q.status.as_deref(), q.job_type.as_deref(),),
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to list AI check jobs");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Failed to list AI check jobs",
+            );
+        }
+    };
+
+    let items: Vec<AICheckJobResponse> = rows.into_iter().map(job_row_to_response).collect();
+    success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
+}
+
+/// 查询单个 AI 检测任务详情
+#[utoipa::path(
+    get,
+    path = "/v1/cloud/instances/ai-check/jobs/{id}",
+    params(
+        ("id" = String, Path, description = "任务 ID")
+    ),
+    responses(
+        (status = 200, description = "任务详情", body = AICheckJobResponse),
+        (status = 404, description = "任务不存在"),
+    ),
+    tag = "Cloud"
+)]
+async fn get_ai_check_job(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.cert_store.get_ai_check_job_by_id(&id).await {
+        Ok(Some(row)) => success_response(StatusCode::OK, &trace_id, job_row_to_response(row)),
+        Ok(None) => error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "job_not_found",
+            &format!("AI check job '{}' not found", id),
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, job_id = %id, "Failed to get AI check job");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Failed to get AI check job",
+            )
+        }
+    }
+}
+
+/// 根据请求的 ai_account_id 查找 AI 账号；若未指定则取第一个启用账号。
+async fn resolve_ai_account(
+    state: &AppState,
+    ai_account_id: Option<&str>,
+) -> Result<oxmon_storage::AIAccountRow, String> {
+    if let Some(id) = ai_account_id {
+        let account = state
+            .cert_store
+            .get_ai_account_by_id(id)
+            .await
+            .map_err(|e| format!("Failed to query AI account: {}", e))?
+            .ok_or_else(|| format!("AI account '{}' not found", id))?;
+        if !account.enabled {
+            return Err(format!(
+                "AI account '{}' is disabled, please enable it first",
+                account.config_key
+            ));
+        }
+        Ok(account)
+    } else {
+        // 取第一个启用的 AI 账号
+        let accounts = state
+            .cert_store
+            .list_ai_accounts(None, Some(true), 1, 0)
+            .await
+            .map_err(|e| format!("Failed to list AI accounts: {}", e))?;
+        accounts
+            .into_iter()
+            .next()
+            .ok_or_else(|| "No enabled AI account found. Please configure an AI account first via POST /v1/ai/accounts".to_string())
+    }
+}
+
 /// 注册云API路由
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -1921,6 +2356,11 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(trigger_cloud_account_collection))
         .routes(routes!(list_cloud_instances))
         .routes(routes!(cloud_instances_chart))
+        // 注意：ai-check 字面路由必须在 :id 参数路由之前注册
+        .routes(routes!(trigger_all_cloud_instances_ai_check))
+        .routes(routes!(list_ai_check_jobs))
+        .routes(routes!(get_ai_check_job))
+        .routes(routes!(trigger_single_instance_ai_check))
         .routes(routes!(get_cloud_instance_detail))
         .routes(routes!(cloud_instance_metrics))
 }

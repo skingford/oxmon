@@ -62,8 +62,8 @@ impl ZhipuProvider {
             .timeout(std::time::Duration::from_secs(timeout))
             .build()?;
 
-        let base_url = base_url
-            .unwrap_or_else(|| "https://open.bigmodel.cn/api/paas/v4".to_string());
+        let base_url =
+            base_url.unwrap_or_else(|| "https://open.bigmodel.cn/api/paas/v4".to_string());
 
         let detected_mode = ApiMode::detect(&base_url, api_mode.as_deref());
 
@@ -383,10 +383,7 @@ mod tests {
 
     #[test]
     fn test_api_mode_detect_from_explicit_config() {
-        let mode = ApiMode::detect(
-            "https://open.bigmodel.cn/api/paas/v4",
-            Some("anthropic"),
-        );
+        let mode = ApiMode::detect("https://open.bigmodel.cn/api/paas/v4", Some("anthropic"));
         assert_eq!(mode, ApiMode::Anthropic);
     }
 

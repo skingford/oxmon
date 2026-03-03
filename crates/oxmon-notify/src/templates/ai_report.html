@@ -880,6 +880,136 @@
             }
         }
 
+        /* ── 实例详情表格 ── */
+        .instance-table-section {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 28px;
+            margin-bottom: 18px;
+            box-shadow: var(--shadow);
+        }
+
+        .instance-table-section h2 {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .instance-table-section h2::before {
+            content: '📊';
+            font-size: 16px;
+        }
+
+        .instance-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0;
+            font-size: 13px;
+            display: block;
+            overflow-x: auto;
+        }
+
+        .instance-table thead {
+            background: #f8fafc;
+        }
+
+        .instance-table th {
+            padding: 10px 12px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--border-strong);
+            white-space: nowrap;
+        }
+
+        .instance-table th.num,
+        .instance-table td.num {
+            text-align: right;
+        }
+
+        .instance-table th.center,
+        .instance-table td.center {
+            text-align: center;
+        }
+
+        .instance-table td {
+            padding: 9px 12px;
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: middle;
+            font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+        }
+
+        .instance-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .instance-table td.agent-id {
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 12px;
+        }
+
+        /* 风险行背景色 */
+        .instance-table tr.row-high {
+            background: #fff8f8;
+        }
+
+        .instance-table tr.row-high:hover {
+            background: #fef2f2;
+        }
+
+        .instance-table tr.row-medium {
+            background: #fffef5;
+        }
+
+        .instance-table tr.row-medium:hover {
+            background: #fffbe6;
+        }
+
+        .instance-table tr.row-low,
+        .instance-table tr.row-normal {
+            background: #fff;
+        }
+
+        .instance-table tr.row-low:hover,
+        .instance-table tr.row-normal:hover {
+            background: #f9fafb;
+        }
+
+        /* 指标值颜色 */
+        .instance-table td.val-danger {
+            color: #dc2626;
+            font-weight: 700;
+        }
+
+        .instance-table td.val-warn {
+            color: #8a6a00;
+            font-weight: 600;
+        }
+
+        @media (max-width: 768px) {
+            .instance-table-section {
+                padding: 18px 12px;
+                border-radius: 12px;
+            }
+
+            .instance-table th,
+            .instance-table td {
+                padding: 8px 8px;
+                font-size: 12px;
+            }
+        }
+
         @media print {
             :root {
                 --page-bg: #ffffff;
@@ -1074,6 +1204,8 @@
                 <span>{{risk_level_label}}</span>
             </div>
         </div>
+
+        {{instance_table_html}}
 
         <div class="content">
             {{ai_analysis_html}}

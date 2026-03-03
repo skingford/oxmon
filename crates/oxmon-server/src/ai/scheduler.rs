@@ -93,8 +93,13 @@ impl AIReportScheduler {
                     "AI account is due for report generation"
                 );
 
-                if let Err(e) =
-                    generate_report_for_account(&account, &self.storage, &self.cert_store, &self.notifier).await
+                if let Err(e) = generate_report_for_account(
+                    &account,
+                    &self.storage,
+                    &self.cert_store,
+                    &self.notifier,
+                )
+                .await
                 {
                     tracing::error!(
                         account_id = %account.id,

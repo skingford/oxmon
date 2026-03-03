@@ -728,7 +728,7 @@ impl NotificationManager {
 
     /// 发送 AI 检测报告到所有通知渠道，绕过静默窗口和聚合。
     /// - Email 渠道：发送 HTML 格式报告
-    /// - 钉钉/企业微信：发送 Markdown 格式（ai_analysis 内容）
+    /// - 钉钉/企业微信：发送 Markdown 格式（实例汇总表 + AI 分析）
     /// - 其他渠道：纯文本 fallback
     /// 返回成功发送的渠道数量。
     #[allow(clippy::too_many_arguments)]
@@ -741,7 +741,7 @@ impl NotificationManager {
         ai_provider: &str,
         ai_model: &str,
         html_content: &str,
-        ai_analysis: &str,
+        markdown_content: &str,
         locale: &str,
     ) -> usize {
         let now = Utc::now();
@@ -814,7 +814,7 @@ impl NotificationManager {
                 .send_cert_report(
                     &subject,
                     html_content,
-                    ai_analysis,
+                    markdown_content,
                     &plain_content,
                     &instance.recipients,
                 )
@@ -852,13 +852,8 @@ impl NotificationManager {
                                 recipient_count: instance.recipients.len() as i32,
                                 response: Some(resp),
                             };
-                            Self::record_send_log(
-                                &self.cert_store,
-                                &fallback_event,
-                                &ctx,
-                                &Ok(()),
-                            )
-                            .await;
+                            Self::record_send_log(&self.cert_store, &fallback_event, &ctx, &Ok(()))
+                                .await;
                         }
                         Err(e) => {
                             tracing::error!(
