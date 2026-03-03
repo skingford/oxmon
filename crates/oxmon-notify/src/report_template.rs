@@ -49,30 +49,30 @@ impl ReportRenderer {
         let risk_level_label = match risk_level {
             "high" => {
                 if locale == "zh-CN" {
-                    "🚨 严重告警"
+                    "🔴 严重告警"
                 } else {
-                    "🚨 Critical"
+                    "🔴 Critical"
                 }
             }
             "medium" => {
                 if locale == "zh-CN" {
-                    "🔴 告警"
+                    "🟠 告警"
                 } else {
-                    "🔴 Alert"
+                    "🟠 Alert"
                 }
             }
             "low" => {
                 if locale == "zh-CN" {
-                    "🟡 关注"
+                    "🔵 关注"
                 } else {
-                    "🟡 Attention"
+                    "🔵 Attention"
                 }
             }
             _ => {
                 if locale == "zh-CN" {
-                    "✅ 正常"
+                    "🟢 正常"
                 } else {
-                    "✅ Normal"
+                    "🟢 Normal"
                 }
             }
         };

@@ -807,6 +807,8 @@ enum InstanceRiskLevel {
     High,
 }
 
+const INSTANCE_TABLE_MAX_ROWS: usize = 30;
+
 fn instance_risk_level(cpu: Option<f64>, mem: Option<f64>, disk: Option<f64>) -> InstanceRiskLevel {
     let is_high = cpu.is_some_and(|v| v > 85.0)
         || mem.is_some_and(|v| v > 85.0)
@@ -892,10 +894,11 @@ fn instance_risk_css_class(level: InstanceRiskLevel) -> &'static str {
     }
 }
 
-fn metric_css_class(value: Option<f64>, warn: f64, danger: f64) -> &'static str {
+fn metric_css_class(value: Option<f64>, warn: f64, danger: f64, attention: f64) -> &'static str {
     match value {
         Some(v) if v >= danger => "val-danger",
         Some(v) if v >= warn => "val-warn",
+        Some(v) if v >= attention => "val-attn",
         _ => "",
     }
 }
@@ -909,7 +912,6 @@ fn build_instance_table_html(
     let (
         title,
         th_id,
-        th_name,
         th_type,
         th_cpu,
         th_mem,
@@ -921,8 +923,7 @@ fn build_instance_table_html(
     ) = if locale == "zh-CN" {
         (
             "实例详情",
-            "实例 ID",
-            "实例名称",
+            "实例 ID（名称）",
             "类型",
             "CPU (%)",
             "内存 (%)",
@@ -935,8 +936,7 @@ fn build_instance_table_html(
     } else {
         (
             "Instance Details",
-            "Instance ID",
-            "Instance Name",
+            "Instance ID (Name)",
             "Type",
             "CPU (%)",
             "Memory (%)",
@@ -948,14 +948,34 @@ fn build_instance_table_html(
         )
     };
 
+    let selected = select_prioritized_metrics(metrics, INSTANCE_TABLE_MAX_ROWS);
+    let omitted_count = metrics.len().saturating_sub(selected.len());
+    let omitted_note = if omitted_count > 0 {
+        if locale == "zh-CN" {
+            format!(
+                r#"<div class="instance-table-note">已展示前 {} 行（严重告警/告警优先），其余 {} 行已省略。</div>"#,
+                selected.len(),
+                omitted_count
+            )
+        } else {
+            format!(
+                r#"<div class="instance-table-note">Showing top {} rows (Critical/Alert first); {} row(s) omitted.</div>"#,
+                selected.len(),
+                omitted_count
+            )
+        }
+    } else {
+        String::new()
+    };
+
     let mut html = format!(
         r#"<div class="instance-table-section">
 <h2>{title}</h2>
+{omitted_note}
 <table class="instance-table">
 <thead>
 <tr>
   <th>{th_id}</th>
-  <th>{th_name}</th>
   <th>{th_type}</th>
   <th class="num">{th_cpu}</th>
   <th class="num">{th_mem}</th>
@@ -970,7 +990,7 @@ fn build_instance_table_html(
 "#
     );
 
-    for m in metrics {
+    for m in selected {
         let level = instance_risk_level(m.cpu_usage, m.memory_usage, m.disk_usage);
         let row_class = instance_risk_css_class(level);
         let risk_label = instance_risk_label(level, locale);
@@ -985,9 +1005,9 @@ fn build_instance_table_html(
                 .unwrap_or_else(|| "N/A".to_string())
         };
 
-        let cpu_class = metric_css_class(m.cpu_usage, 70.0, 80.0);
-        let mem_class = metric_css_class(m.memory_usage, 75.0, 85.0);
-        let disk_class = metric_css_class(m.disk_usage, 80.0, 90.0);
+        let cpu_class = metric_css_class(m.cpu_usage, 80.0, 85.0, 60.0);
+        let mem_class = metric_css_class(m.memory_usage, 80.0, 85.0, 60.0);
+        let disk_class = metric_css_class(m.disk_usage, 80.0, 85.0, 60.0);
 
         let risk_badge_class = match level {
             InstanceRiskLevel::High => "badge is-danger",
@@ -995,16 +1015,11 @@ fn build_instance_table_html(
             InstanceRiskLevel::Low => "badge is-ok",
             InstanceRiskLevel::Normal => "badge is-info",
         };
-        let instance_name = m
-            .instance_name
-            .as_deref()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or("N/A");
+        let agent_identity_html = render_instance_identity_html(m);
 
         html.push_str(&format!(
             r#"<tr class="{row_class}">
-  <td class="agent-id">{agent_id}</td>
-  <td>{instance_name}</td>
+  <td class="agent-id">{agent_identity_html}</td>
   <td>{agent_type}</td>
   <td class="num {cpu_class}">{cpu}</td>
   <td class="num {mem_class}">{mem}</td>
@@ -1016,8 +1031,7 @@ fn build_instance_table_html(
 </tr>
 "#,
             row_class = row_class,
-            agent_id = m.agent_id,
-            instance_name = instance_name,
+            agent_identity_html = agent_identity_html,
             agent_type = m.agent_type,
             cpu = fmt(m.cpu_usage),
             mem = fmt(m.memory_usage),
@@ -1163,17 +1177,17 @@ fn escape_markdown_cell(value: &str) -> String {
 fn markdown_risk_label(level: InstanceRiskLevel, locale: &str) -> &'static str {
     if locale == "zh-CN" {
         match level {
-            InstanceRiskLevel::High => "🚨 严重告警",
-            InstanceRiskLevel::Medium => "🔴 告警",
-            InstanceRiskLevel::Low => "🟡 关注",
-            InstanceRiskLevel::Normal => "✅ 正常",
+            InstanceRiskLevel::High => "🔴 严重告警",
+            InstanceRiskLevel::Medium => "🟠 告警",
+            InstanceRiskLevel::Low => "🔵 关注",
+            InstanceRiskLevel::Normal => "🟢 正常",
         }
     } else {
         match level {
-            InstanceRiskLevel::High => "🚨 Critical",
-            InstanceRiskLevel::Medium => "🔴 Alert",
-            InstanceRiskLevel::Low => "🟡 Attention",
-            InstanceRiskLevel::Normal => "✅ Normal",
+            InstanceRiskLevel::High => "🔴 Critical",
+            InstanceRiskLevel::Medium => "🟠 Alert",
+            InstanceRiskLevel::Low => "🔵 Attention",
+            InstanceRiskLevel::Normal => "🟢 Normal",
         }
     }
 }
@@ -1181,17 +1195,17 @@ fn markdown_risk_label(level: InstanceRiskLevel, locale: &str) -> &'static str {
 fn risk_level_display(risk_level: &str, locale: &str) -> &'static str {
     if locale == "zh-CN" {
         match risk_level {
-            "high" => "🚨 严重告警",
-            "medium" => "🔴 告警",
-            "low" => "🟡 关注",
-            _ => "✅ 正常",
+            "high" => "🔴 严重告警",
+            "medium" => "🟠 告警",
+            "low" => "🔵 关注",
+            _ => "🟢 正常",
         }
     } else {
         match risk_level {
-            "high" => "🚨 Critical",
-            "medium" => "🔴 Alert",
-            "low" => "🟡 Attention",
-            _ => "✅ Normal",
+            "high" => "🔴 Critical",
+            "medium" => "🟠 Alert",
+            "low" => "🔵 Attention",
+            _ => "🟢 Normal",
         }
     }
 }
@@ -1244,67 +1258,67 @@ fn build_instance_table_markdown(
     history_map: &std::collections::HashMap<&str, &HistoryAverage>,
     locale: &str,
 ) -> String {
-    let (
-        th_id,
-        th_name,
-        th_type,
-        th_cpu,
-        th_mem,
-        th_disk,
-        th_avg_cpu,
-        th_avg_mem,
-        th_avg_disk,
-        th_risk,
-    ) = if locale == "zh-CN" {
-        (
-            "实例 ID",
-            "实例名称",
-            "类型",
-            "CPU(%)",
-            "内存(%)",
-            "磁盘(%)",
-            "CPU均值",
-            "内存均值",
-            "磁盘均值",
-            "风险",
-        )
-    } else {
-        (
-            "Instance ID",
-            "Instance Name",
-            "Type",
-            "CPU(%)",
-            "Memory(%)",
-            "Disk(%)",
-            "Avg CPU",
-            "Avg Memory",
-            "Avg Disk",
-            "Risk",
-        )
-    };
+    let (th_id, th_type, th_cpu, th_mem, th_disk, th_avg_cpu, th_avg_mem, th_avg_disk, th_risk) =
+        if locale == "zh-CN" {
+            (
+                "实例 ID（名称）",
+                "类型",
+                "CPU(%)",
+                "内存(%)",
+                "磁盘(%)",
+                "CPU均值",
+                "内存均值",
+                "磁盘均值",
+                "风险",
+            )
+        } else {
+            (
+                "Instance ID (Name)",
+                "Type",
+                "CPU(%)",
+                "Memory(%)",
+                "Disk(%)",
+                "Avg CPU",
+                "Avg Memory",
+                "Avg Disk",
+                "Risk",
+            )
+        };
 
-    let mut markdown = format!(
-        "| {th_id} | {th_name} | {th_type} | {th_cpu} | {th_mem} | {th_disk} | {th_avg_cpu} | {th_avg_mem} | {th_avg_disk} | {th_risk} |\n\
-         |---|---|---|---:|---:|---:|---:|---:|---:|---|\n"
-    );
+    let selected = select_prioritized_metrics(metrics, INSTANCE_TABLE_MAX_ROWS);
+    let omitted_count = metrics.len().saturating_sub(selected.len());
+    let mut markdown = String::new();
+    if omitted_count > 0 {
+        if locale == "zh-CN" {
+            markdown.push_str(&format!(
+                "> 已展示前 {} 行（严重告警/告警优先），其余 {} 行已省略。\n\n",
+                selected.len(),
+                omitted_count
+            ));
+        } else {
+            markdown.push_str(&format!(
+                "> Showing top {} rows (Critical/Alert first); {} row(s) omitted.\n\n",
+                selected.len(),
+                omitted_count
+            ));
+        }
+    }
+    markdown.push_str(&format!(
+        "| {th_id} | {th_type} | {th_cpu} | {th_mem} | {th_disk} | {th_avg_cpu} | {th_avg_mem} | {th_avg_disk} | {th_risk} |\n\
+         |---|---|---:|---:|---:|---:|---:|---:|---|\n"
+    ));
 
-    for metric in metrics {
+    for metric in selected {
         let level = instance_risk_level(metric.cpu_usage, metric.memory_usage, metric.disk_usage);
         let risk = markdown_risk_label(level, locale);
         let history = history_map.get(metric.agent_id.as_str());
         let avg_cpu = history.map(|h| h.avg_cpu);
         let avg_memory = history.map(|h| h.avg_memory);
         let avg_disk = history.map(|h| h.avg_disk);
-        let instance_name = metric
-            .instance_name
-            .as_deref()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or("N/A");
 
         markdown.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
-            escape_markdown_cell(&metric.agent_id),
-            escape_markdown_cell(instance_name),
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            escape_markdown_cell(&render_instance_identity_markdown(metric)),
             escape_markdown_cell(&metric.agent_type),
             format_metric(metric.cpu_usage),
             format_metric(metric.memory_usage),
@@ -1323,7 +1337,7 @@ fn build_instance_table_markdown(
             "No instance data"
         };
         markdown.push_str(&format!(
-            "| {empty_label} | - | - | - | - | - | - | - | - | - |\n"
+            "| {empty_label} | - | - | - | - | - | - | - | - |\n"
         ));
     }
 
@@ -1385,6 +1399,52 @@ fn build_ai_notification_markdown(
     markdown
 }
 
+fn select_prioritized_metrics(metrics: &[LatestMetric], max_rows: usize) -> Vec<&LatestMetric> {
+    let mut priority = Vec::new();
+    let mut others = Vec::new();
+
+    for metric in metrics {
+        let level = instance_risk_level(metric.cpu_usage, metric.memory_usage, metric.disk_usage);
+        if matches!(level, InstanceRiskLevel::High | InstanceRiskLevel::Medium) {
+            priority.push(metric);
+        } else {
+            others.push(metric);
+        }
+    }
+
+    priority.extend(others);
+    priority.into_iter().take(max_rows).collect()
+}
+
+fn render_instance_identity_markdown(metric: &LatestMetric) -> String {
+    let instance_name = metric
+        .instance_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(name) = instance_name {
+        format!("{} ({})", metric.agent_id, name)
+    } else {
+        metric.agent_id.clone()
+    }
+}
+
+fn render_instance_identity_html(metric: &LatestMetric) -> String {
+    let instance_name = metric
+        .instance_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(name) = instance_name {
+        format!(
+            r#"<span class="agent-id-main">{}</span><span class="agent-name">{}</span>"#,
+            metric.agent_id, name
+        )
+    } else {
+        format!(r#"<span class="agent-id-main">{}</span>"#, metric.agent_id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1423,9 +1483,9 @@ mod tests {
             history.iter().map(|h| (h.agent_id.as_str(), h)).collect();
 
         let markdown = build_instance_table_markdown(&metrics, &history_map, "zh-CN");
-        assert!(markdown.contains("| 实例 ID | 实例名称 | 类型 | CPU(%) |"));
+        assert!(markdown.contains("| 实例 ID（名称） | 类型 | CPU(%) |"));
         assert!(markdown.contains("web-prod-01"));
-        assert!(markdown.contains("cloud:alibaba:i-test"));
+        assert!(markdown.contains("cloud:alibaba:i-test (web-prod-01)"));
         assert!(markdown.contains("66.6"));
         assert!(markdown.contains("40.0"));
     }
@@ -1463,7 +1523,7 @@ mod tests {
         );
 
         assert!(markdown.contains("#### 实例汇总"));
-        assert!(markdown.contains("| 实例 ID | 实例名称 | 类型 | CPU(%) |"));
+        assert!(markdown.contains("| 实例 ID（名称） | 类型 | CPU(%) |"));
         assert!(markdown.contains("api-node-1"));
         assert!(markdown.contains("#### AI 分析"));
         assert!(markdown.contains("保持观察"));
@@ -1517,5 +1577,45 @@ mod tests {
             instance_risk_level(Some(85.1), Some(10.0), Some(10.0)),
             InstanceRiskLevel::High
         );
+    }
+
+    #[test]
+    fn top_n_should_prioritize_critical_and_alert() {
+        let mut metrics = Vec::new();
+        for i in 0..40 {
+            metrics.push(LatestMetric {
+                agent_id: format!("agent-low-{i}"),
+                instance_name: None,
+                agent_type: "local".to_string(),
+                cpu_usage: Some(65.0),
+                memory_usage: Some(30.0),
+                disk_usage: Some(20.0),
+                timestamp: 0,
+            });
+        }
+        metrics.push(LatestMetric {
+            agent_id: "agent-alert-1".to_string(),
+            instance_name: None,
+            agent_type: "local".to_string(),
+            cpu_usage: Some(81.0),
+            memory_usage: Some(20.0),
+            disk_usage: Some(20.0),
+            timestamp: 0,
+        });
+        metrics.push(LatestMetric {
+            agent_id: "agent-critical-1".to_string(),
+            instance_name: None,
+            agent_type: "local".to_string(),
+            cpu_usage: Some(90.0),
+            memory_usage: Some(20.0),
+            disk_usage: Some(20.0),
+            timestamp: 0,
+        });
+
+        let selected = select_prioritized_metrics(&metrics, INSTANCE_TABLE_MAX_ROWS);
+        assert_eq!(selected.len(), INSTANCE_TABLE_MAX_ROWS);
+        let selected_ids: Vec<&str> = selected.iter().map(|m| m.agent_id.as_str()).collect();
+        assert!(selected_ids.contains(&"agent-alert-1"));
+        assert!(selected_ids.contains(&"agent-critical-1"));
     }
 }

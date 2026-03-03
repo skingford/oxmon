@@ -19,12 +19,12 @@
             --accent-soft: #fff4a3;
             --risk-high: #dc2626;
             --risk-high-bg: #fef2f2;
-            --risk-medium: #8a6a00;
-            --risk-medium-bg: #fff8cc;
-            --risk-low: #111827;
-            --risk-low-bg: #f3f4f6;
-            --risk-normal: #111827;
-            --risk-normal-bg: #fffbe6;
+            --risk-medium: #c2410c;
+            --risk-medium-bg: #fff7ed;
+            --risk-low: #1d4ed8;
+            --risk-low-bg: #eff6ff;
+            --risk-normal: #15803d;
+            --risk-normal-bg: #f0fdf4;
             --shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
         }
 
@@ -238,19 +238,19 @@
         .risk-medium {
             color: var(--risk-medium);
             background: var(--risk-medium-bg);
-            border-color: #f4d000;
+            border-color: #fdba74;
         }
 
         .risk-low {
             color: var(--risk-low);
             background: var(--risk-low-bg);
-            border-color: #d1d5db;
+            border-color: #93c5fd;
         }
 
         .risk-normal {
             color: var(--risk-normal);
             background: var(--risk-normal-bg);
-            border-color: #f4d000;
+            border-color: #86efac;
         }
 
         .content {
@@ -625,16 +625,16 @@
 
         .status-badge.is-ok,
         .badge.is-ok {
-            background: #f3f4f6;
-            border-color: #d1d5db;
-            color: #111827;
+            background: #eff6ff;
+            border-color: #93c5fd;
+            color: #1e40af;
         }
 
         .status-badge.is-warn,
         .badge.is-warn {
-            background: #fff8cc;
-            border-color: #f4d000;
-            color: #8a6a00;
+            background: #fff7ed;
+            border-color: #fdba74;
+            color: #c2410c;
         }
 
         .status-badge.is-danger,
@@ -646,9 +646,9 @@
 
         .status-badge.is-info,
         .badge.is-info {
-            background: #fffbe6;
-            border-color: #f1dd68;
-            color: #111827;
+            background: #f0fdf4;
+            border-color: #86efac;
+            color: #166534;
         }
 
         code {
@@ -905,6 +905,17 @@
             font-size: 16px;
         }
 
+        .instance-table-note {
+            margin: 0 0 10px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: #fff8cc;
+            border: 1px solid #f4d000;
+            color: #8a6a00;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
         .instance-table {
             width: 100%;
             border-collapse: collapse;
@@ -952,11 +963,27 @@
         }
 
         .instance-table td.agent-id {
-            max-width: 200px;
+            max-width: 280px;
             overflow: hidden;
             text-overflow: ellipsis;
-            white-space: nowrap;
             font-size: 12px;
+        }
+
+        .instance-table td.agent-id .agent-id-main {
+            display: block;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .instance-table td.agent-id .agent-name {
+            display: block;
+            margin-top: 2px;
+            color: var(--text-muted);
+            font-size: 11px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         /* 风险行背景色 */
@@ -969,21 +996,27 @@
         }
 
         .instance-table tr.row-medium {
-            background: #fffef5;
+            background: #fff7ed;
         }
 
         .instance-table tr.row-medium:hover {
-            background: #fffbe6;
+            background: #ffedd5;
         }
 
-        .instance-table tr.row-low,
+        .instance-table tr.row-low {
+            background: #eff6ff;
+        }
+
+        .instance-table tr.row-low:hover {
+            background: #dbeafe;
+        }
+
         .instance-table tr.row-normal {
-            background: #fff;
+            background: #f0fdf4;
         }
 
-        .instance-table tr.row-low:hover,
         .instance-table tr.row-normal:hover {
-            background: #f9fafb;
+            background: #dcfce7;
         }
 
         /* 指标值颜色 */
@@ -993,7 +1026,12 @@
         }
 
         .instance-table td.val-warn {
-            color: #8a6a00;
+            color: #c2410c;
+            font-weight: 600;
+        }
+
+        .instance-table td.val-attn {
+            color: #1d4ed8;
             font-weight: 600;
         }
 
@@ -1015,9 +1053,9 @@
                 --page-bg: #ffffff;
                 --accent: #d4aa00;
                 --accent-soft: #f3df79;
-                --risk-medium-bg: #f7edb2;
-                --risk-low-bg: #f3f4f6;
-                --risk-normal-bg: #f8efbf;
+                --risk-medium-bg: #ffe7d2;
+                --risk-low-bg: #e8f0ff;
+                --risk-normal-bg: #e7f7eb;
             }
 
             body::before,
