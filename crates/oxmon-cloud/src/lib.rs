@@ -1,6 +1,7 @@
 pub mod alibaba;
 pub mod collector;
 pub mod error;
+pub mod sangfor;
 pub mod tencent;
 
 use anyhow::Result;
@@ -114,6 +115,12 @@ pub struct CloudAccountConfig {
         deserialize_with = "deserialize_regions"
     )]
     pub regions: Vec<String>,
+    /// 私有云访问地址（深信服 SCP 等私有云必填，如 "192.168.1.100" 或 "scp.example.com:8443"）
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    /// AWS4 签名时使用的 region 字段（深信服 SCP 专用，默认 "cn-south-1"）
+    #[serde(default)]
+    pub region_for_sign: Option<String>,
     #[serde(default = "default_collection_interval")]
     pub collection_interval_secs: u64,
     #[serde(default = "default_concurrency")]
@@ -208,6 +215,10 @@ pub fn build_provider(
         )),
         "alibaba" => Ok(Box::new(
             alibaba::AlibabaCloudProvider::new(account_name, config)
+                .map_err(|e| error::CloudProviderError::ConfigError(e.to_string()))?,
+        )),
+        "sangfor" => Ok(Box::new(
+            sangfor::SangforCloudProvider::new(account_name, config)
                 .map_err(|e| error::CloudProviderError::ConfigError(e.to_string()))?,
         )),
         _ => Err(error::CloudProviderError::UnsupportedProvider(

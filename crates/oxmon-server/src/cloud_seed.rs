@@ -10,6 +10,8 @@ struct CloudAccountDef {
     display_name: &'static str,
     description: &'static str,
     regions: &'static [&'static str],
+    /// 私有云访问地址，公有云留 None
+    endpoint: Option<&'static str>,
 }
 
 const DEFAULT_CLOUD_ACCOUNTS: &[CloudAccountDef] = &[
@@ -19,6 +21,7 @@ const DEFAULT_CLOUD_ACCOUNTS: &[CloudAccountDef] = &[
         display_name: "默认腾讯云账号",
         description: "系统预置腾讯云账号，请填写 SecretId/SecretKey 后启用",
         regions: &["ap-guangzhou"],
+        endpoint: None,
     },
     CloudAccountDef {
         config_key: "seed_cloud_alibaba",
@@ -26,10 +29,19 @@ const DEFAULT_CLOUD_ACCOUNTS: &[CloudAccountDef] = &[
         display_name: "默认阿里云账号",
         description: "系统预置阿里云账号，请填写 AccessKey 后启用",
         regions: &["cn-hangzhou"],
+        endpoint: None,
+    },
+    CloudAccountDef {
+        config_key: "seed_cloud_sangfor",
+        provider: "sangfor",
+        display_name: "默认深信服云账号",
+        description: "系统预置深信服SCP账号，请填写 AK/SK 和私有云地址后启用",
+        regions: &[],
+        endpoint: None,
     },
 ];
 
-/// 初始化默认云账号（腾讯云/阿里云）。
+/// 初始化默认云账号（腾讯云/阿里云/深信服云）。
 ///
 /// 行为：
 /// 1. 按 `config_key` 幂等创建/更新默认账号；
@@ -88,6 +100,7 @@ pub async fn init_default_cloud_accounts(
             secret_id: String::new(),
             secret_key: String::new(),
             regions: def.regions.iter().map(|v| (*v).to_string()).collect(),
+            endpoint: def.endpoint.map(|s| s.to_string()),
             collection_interval_secs: interval_secs,
             enabled: false,
             created_at: Utc::now(),
@@ -146,7 +159,7 @@ mod tests {
         let (cert_store, _temp_dir) = setup_cert_store().await?;
 
         let inserted = init_default_cloud_accounts(&cert_store, 7200).await?;
-        assert_eq!(inserted, 2);
+        assert_eq!(inserted, 3);
 
         let tencent = cert_store
             .get_cloud_account_by_config_key("seed_cloud_tencent")
@@ -178,6 +191,7 @@ mod tests {
                 secret_id: "legacy".to_string(),
                 secret_key: "legacy".to_string(),
                 regions: vec!["ap-shanghai".to_string()],
+                endpoint: None,
                 collection_interval_secs: 300,
                 enabled: true,
                 created_at: now,
@@ -186,7 +200,7 @@ mod tests {
             .await?;
 
         let updated = init_default_cloud_accounts(&cert_store, 3600).await?;
-        assert_eq!(updated, 2);
+        assert_eq!(updated, 3);
 
         let tencent_after = cert_store
             .get_cloud_account_by_config_key("seed_cloud_tencent")
@@ -204,7 +218,7 @@ mod tests {
         assert!(legacy.is_err());
 
         let all_accounts = cert_store.list_cloud_accounts(None, None, 100, 0).await?;
-        assert_eq!(all_accounts.len(), 2);
+        assert_eq!(all_accounts.len(), 3);
 
         Ok(())
     }

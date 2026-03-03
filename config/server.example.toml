@@ -86,9 +86,14 @@ batch_size = 20                 # Batch size for processing agents (split when >
 # Cloud Accounts
 # Managed via REST API or CLI: oxmon-server init-cloud-accounts <config> <seed.json>
 # See config/cloud-accounts.seed.example.json for examples
-# Supported providers: tencent, alibaba
+# Supported providers: tencent, alibaba, sangfor
 # Cloud instances appear as virtual agents with ID format: cloud:{provider}:{instance_id}
 # Metrics: cloud.cpu.usage, cloud.memory.usage, cloud.disk.usage
+#
+# Sangfor SCP (深信服私有云) specific:
+#   endpoint: SCP management IP or hostname (required), e.g. "192.168.1.100" or "scp.example.com:8443"
+#   regions:  Resource pool / AZ IDs to query (optional, leave empty to query all)
+#   The provider uses AWS4-HMAC-SHA256 signing and accepts self-signed TLS certificates.
 
 # Application ID validation for public routes (health, login)
 # When enabled, all unauthenticated API routes require the ox-app-id header

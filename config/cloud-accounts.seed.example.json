@@ -38,6 +38,20 @@
         "regions": ["ap-guangzhou"],
         "collection_interval_secs": 3600
       }
+    },
+    {
+      "config_key": "sangfor-prod",
+      "provider": "sangfor",
+      "display_name": "深信服云生产环境",
+      "description": "深信服 SCP 私有云主机监控",
+      "enabled": false,
+      "config": {
+        "secret_id": "your-scp-access-key-id",
+        "secret_key": "your-scp-access-key-secret",
+        "endpoint": "192.168.1.100",
+        "regions": [],
+        "collection_interval_secs": 3600
+      }
     }
   ]
 }

@@ -38,7 +38,7 @@ struct CloudAccountResponse {
 struct CreateCloudAccountRequest {
     /// 配置标识（唯一，如 cloud_tencent_prod）
     config_key: String,
-    /// 云供应商（tencent 或 alibaba）
+    /// 云供应商（tencent / alibaba / sangfor）
     provider: String,
     /// 显示名称
     display_name: String,
@@ -46,12 +46,14 @@ struct CreateCloudAccountRequest {
     description: Option<String>,
     /// 云账号名称（如"主账号"、"子账号1"）
     account_name: String,
-    /// API 密钥 ID（腾讯云 SecretId, 阿里云 AccessKeyId）
+    /// API 密钥 ID（腾讯云 SecretId, 阿里云 AccessKeyId, 深信服 AK）
     secret_id: String,
-    /// API 密钥 Secret（腾讯云 SecretKey, 阿里云 AccessKeySecret）
+    /// API 密钥 Secret（腾讯云 SecretKey, 阿里云 AccessKeySecret, 深信服 SK）
     secret_key: String,
-    /// 地域列表（如 ["ap-shanghai", "ap-guangzhou"]）
+    /// 地域列表（公有云如 ["ap-shanghai"]；深信服 SCP 填资源池 ID 或留空查全部）
     regions: Vec<String>,
+    /// 私有云访问地址（深信服 SCP 必填，如 "192.168.1.100" 或 "scp.example.com"）
+    endpoint: Option<String>,
     /// 采集间隔（秒，默认 3600）
     collection_interval_secs: Option<i64>,
 }
@@ -67,6 +69,8 @@ struct UpdateCloudAccountRequest {
     secret_key: Option<String>,
     /// 地域列表（传入则完整替换）
     regions: Option<Vec<String>>,
+    /// 私有云访问地址（传入则更新）
+    endpoint: Option<Option<String>>,
     collection_interval_secs: Option<i64>,
     enabled: Option<bool>,
 }
@@ -310,6 +314,8 @@ fn row_to_cloud_account_config(row: &CloudAccountRow) -> CloudAccountConfig {
         secret_id: row.secret_id.clone(),
         secret_key: row.secret_key.clone(),
         regions: row.regions.clone(),
+        endpoint: row.endpoint.clone(),
+        region_for_sign: None,
         collection_interval_secs: row.collection_interval_secs as u64,
         concurrency: 5,
         instance_filter: Default::default(),
@@ -573,6 +579,7 @@ async fn create_cloud_account(
         secret_id: req.secret_id,
         secret_key: req.secret_key,
         regions: req.regions,
+        endpoint: req.endpoint,
         collection_interval_secs: collection_interval,
         enabled: true,
         created_at: now,
@@ -720,6 +727,7 @@ async fn update_cloud_account(
         secret_id: req.secret_id.unwrap_or(existing.secret_id),
         secret_key: req.secret_key.unwrap_or(existing.secret_key),
         regions: req.regions.unwrap_or(existing.regions),
+        endpoint: req.endpoint.unwrap_or(existing.endpoint),
         collection_interval_secs: req
             .collection_interval_secs
             .unwrap_or(existing.collection_interval_secs),
@@ -1470,6 +1478,7 @@ async fn batch_create_cloud_accounts(
             secret_id: secret_id.to_string(),
             secret_key: secret_key.to_string(),
             regions,
+            endpoint: None,
             collection_interval_secs: collection_interval,
             enabled: true,
             created_at: now,

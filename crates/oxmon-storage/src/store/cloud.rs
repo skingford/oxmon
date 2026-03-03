@@ -23,6 +23,8 @@ pub struct CloudAccountRow {
     pub secret_id: String,
     pub secret_key: String,
     pub regions: Vec<String>,
+    /// 私有云平台访问地址（深信服 SCP 等私有云专用，公有云留空）
+    pub endpoint: Option<String>,
     pub collection_interval_secs: i64,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
@@ -113,6 +115,7 @@ fn model_to_account(m: cloud_account::Model) -> CloudAccountRow {
         secret_id: m.secret_id,
         secret_key: m.secret_key,
         regions,
+        endpoint: m.endpoint,
         collection_interval_secs: m.collection_interval_secs,
         enabled: m.enabled,
         created_at: m.created_at.with_timezone(&Utc),
@@ -197,6 +200,7 @@ impl CertStore {
             secret_id: Set(row.secret_id.clone()),
             secret_key: Set(row.secret_key.clone()),
             regions: Set(regions_json),
+            endpoint: Set(row.endpoint.clone()),
             collection_interval_secs: Set(row.collection_interval_secs),
             enabled: Set(row.enabled),
             created_at: Set(now),
@@ -282,6 +286,7 @@ impl CertStore {
         am.secret_id = Set(row.secret_id.clone());
         am.secret_key = Set(row.secret_key.clone());
         am.regions = Set(regions_json);
+        am.endpoint = Set(row.endpoint.clone());
         am.collection_interval_secs = Set(row.collection_interval_secs);
         am.enabled = Set(row.enabled);
         am.updated_at = Set(now);

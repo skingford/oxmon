@@ -329,11 +329,7 @@ pub fn default_seed_items() -> Vec<DictionaryItem> {
     for (key, label, desc) in [
         ("tencent", "腾讯云", "Tencent Cloud"),
         ("alibaba", "阿里云", "Alibaba Cloud"),
-        (
-            "aws",
-            "亚马逊云",
-            "Amazon Web Services (reserved for future use)",
-        ),
+        ("sangfor", "信服云(深信服)", "Sangfor Cloud"),
     ] {
         order += 1;
         items.push(make_system_item(

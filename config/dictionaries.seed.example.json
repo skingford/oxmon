@@ -70,6 +70,12 @@
           "description": "Alibaba Cloud"
         },
         {
+          "dict_type": "cloud_provider",
+          "dict_key": "sangfor",
+          "dict_label": "信服云(深信服)",
+          "description": "Sangfor Cloud"
+        },
+        {
           "dict_type": "cloud_instance_status",
           "dict_key": "RUNNING",
           "dict_label": "运行中",

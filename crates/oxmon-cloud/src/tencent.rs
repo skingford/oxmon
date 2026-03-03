@@ -631,6 +631,8 @@ mod tests {
             secret_id: "test_id".to_string(),
             secret_key: "test_key".to_string(),
             regions: vec!["ap-guangzhou".to_string()],
+            endpoint: None,
+            region_for_sign: None,
             collection_interval_secs: 300,
             concurrency: 5,
             instance_filter: Default::default(),

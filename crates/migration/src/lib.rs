@@ -7,6 +7,7 @@ mod m004_cloud_instances_auto_renew_flag_bool;
 mod m005_drop_ai_accounts_api_secret;
 mod m006_ai_reports_remove_date_unique;
 mod m007_ai_check_jobs;
+mod m008_cloud_accounts_endpoint;
 
 pub struct Migrator;
 
@@ -21,6 +22,7 @@ impl MigratorTrait for Migrator {
             Box::new(m005_drop_ai_accounts_api_secret::Migration),
             Box::new(m006_ai_reports_remove_date_unique::Migration),
             Box::new(m007_ai_check_jobs::Migration),
+            Box::new(m008_cloud_accounts_endpoint::Migration),
         ]
     }
 }

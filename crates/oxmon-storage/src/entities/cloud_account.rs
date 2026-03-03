@@ -15,6 +15,7 @@ pub struct Model {
     pub secret_id: String,
     pub secret_key: String,
     pub regions: String,
+    pub endpoint: Option<String>,
     pub collection_interval_secs: i64,
     pub enabled: bool,
     pub created_at: DateTimeWithTimeZone,
