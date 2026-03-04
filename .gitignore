@@ -34,3 +34,5 @@ config/agent.toml
 .env
 
 *.log
+
+nginx/

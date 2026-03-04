@@ -5,8 +5,8 @@ use oxmon_common::types::{
     UpdateDomainRequest,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Order, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, EntityTrait, Order, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, Select,
 };
 use serde::{Deserialize, Serialize};
 
@@ -156,6 +156,77 @@ fn model_to_details(m: certificate_detail::Model) -> CertificateDetails {
         cipher_suite: m.cipher_suite,
         chain_depth: m.chain_depth,
     }
+}
+
+fn unix_seconds_to_fixed_offset(ts: i64) -> Option<DateTime<chrono::FixedOffset>> {
+    DateTime::<Utc>::from_timestamp(ts, 0).map(|dt| dt.fixed_offset())
+}
+
+fn apply_certificate_details_filters(
+    mut query: Select<DetailEntity>,
+    filter: &CertificateDetailsFilter,
+) -> Select<DetailEntity> {
+    if let Some(ref s) = filter.domain_contains {
+        query = query.filter(DetailCol::Domain.contains(s.as_str()));
+    }
+    if let Some(ts) = filter.not_after_lte {
+        if let Some(dt) = unix_seconds_to_fixed_offset(ts) {
+            query = query.filter(DetailCol::NotAfter.lte(dt));
+        }
+    }
+    if let Some(ts) = filter.not_after_gte {
+        if let Some(dt) = unix_seconds_to_fixed_offset(ts) {
+            query = query.filter(DetailCol::NotAfter.gte(dt));
+        }
+    }
+    if let Some(chain_valid) = filter.chain_valid_eq {
+        query = query.filter(DetailCol::ChainValid.eq(chain_valid));
+    }
+    if let Some(is_valid) = filter.is_valid_eq {
+        let now = Utc::now().fixed_offset();
+
+        if is_valid {
+            query = query
+                .filter(DetailCol::ChainValid.eq(true))
+                .filter(DetailCol::NotAfter.gte(now));
+        } else {
+            query = query.filter(
+                Condition::any()
+                    .add(DetailCol::ChainValid.eq(false))
+                    .add(DetailCol::NotAfter.lt(now)),
+            );
+        }
+    }
+    if let Some(ref chain_error) = filter.chain_error_eq {
+        query = query.filter(DetailCol::ChainError.eq(chain_error.as_str()));
+    }
+    if let Some(ts) = filter.last_checked_gte {
+        if let Some(dt) = unix_seconds_to_fixed_offset(ts) {
+            query = query.filter(DetailCol::LastChecked.gte(dt));
+        }
+    }
+    if let Some(ts) = filter.last_checked_lte {
+        if let Some(dt) = unix_seconds_to_fixed_offset(ts) {
+            query = query.filter(DetailCol::LastChecked.lte(dt));
+        }
+    }
+    if let Some(ref ip) = filter.ip_address_contains {
+        query = query.filter(DetailCol::IpAddresses.contains(ip.as_str()));
+    }
+    if let Some(ref issuer) = filter.issuer_contains {
+        query = query.filter(
+            Condition::any()
+                .add(DetailCol::IssuerCn.contains(issuer.as_str()))
+                .add(DetailCol::IssuerO.contains(issuer.as_str()))
+                .add(DetailCol::IssuerOu.contains(issuer.as_str()))
+                .add(DetailCol::IssuerC.contains(issuer.as_str())),
+        );
+    }
+    if let Some(ref tls_version) = filter.tls_version_eq {
+        query = query.filter(DetailCol::TlsVersion.eq(tls_version.as_str()));
+    }
+
+    query
 }
 
 impl CertStore {
@@ -784,16 +855,7 @@ impl CertStore {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<CertificateDetails>> {
-        let mut q = DetailEntity::find();
-        if let Some(ref s) = filter.domain_contains {
-            q = q.filter(DetailCol::Domain.contains(s.as_str()));
-        }
-        if let Some(ts) = filter.not_after_lte {
-            let dt = chrono::DateTime::<Utc>::from_timestamp(ts, 0)
-                .unwrap_or_default()
-                .fixed_offset();
-            q = q.filter(DetailCol::NotAfter.lte(dt));
-        }
+        let q = apply_certificate_details_filters(DetailEntity::find(), filter);
         let rows = q
             .order_by(DetailCol::Domain, Order::Asc)
             .limit(limit as u64)
@@ -807,16 +869,7 @@ impl CertStore {
         &self,
         filter: &CertificateDetailsFilter,
     ) -> Result<u64> {
-        let mut q = DetailEntity::find();
-        if let Some(ref s) = filter.domain_contains {
-            q = q.filter(DetailCol::Domain.contains(s.as_str()));
-        }
-        if let Some(ts) = filter.not_after_lte {
-            let dt = chrono::DateTime::<Utc>::from_timestamp(ts, 0)
-                .unwrap_or_default()
-                .fixed_offset();
-            q = q.filter(DetailCol::NotAfter.lte(dt));
-        }
+        let q = apply_certificate_details_filters(DetailEntity::find(), filter);
         Ok(q.count(self.db()).await?)
     }
 
