@@ -354,7 +354,7 @@ impl CloudCheckScheduler {
             if let Some(cpu) = m.cpu_usage {
                 data_points.push(MetricDataPoint {
                     id: next_id(),
-                    timestamp: m.collected_at,
+                    timestamp: now,
                     agent_id: agent_id.clone(),
                     metric_name: "cloud.cpu.usage".to_string(),
                     value: cpu,
@@ -368,7 +368,7 @@ impl CloudCheckScheduler {
             if let Some(memory) = m.memory_usage {
                 data_points.push(MetricDataPoint {
                     id: next_id(),
-                    timestamp: m.collected_at,
+                    timestamp: now,
                     agent_id: agent_id.clone(),
                     metric_name: "cloud.memory.usage".to_string(),
                     value: memory,
@@ -382,7 +382,7 @@ impl CloudCheckScheduler {
             if let Some(disk) = m.disk_usage {
                 data_points.push(MetricDataPoint {
                     id: next_id(),
-                    timestamp: m.collected_at,
+                    timestamp: now,
                     agent_id: agent_id.clone(),
                     metric_name: "cloud.disk.usage".to_string(),
                     value: disk,
@@ -396,7 +396,7 @@ impl CloudCheckScheduler {
             if let Some(network_in) = m.network_in_bytes {
                 data_points.push(MetricDataPoint {
                     id: next_id(),
-                    timestamp: m.collected_at,
+                    timestamp: now,
                     agent_id: agent_id.clone(),
                     metric_name: "cloud.network.in_bytes".to_string(),
                     value: network_in,
@@ -410,7 +410,7 @@ impl CloudCheckScheduler {
             if let Some(network_out) = m.network_out_bytes {
                 data_points.push(MetricDataPoint {
                     id: next_id(),
-                    timestamp: m.collected_at,
+                    timestamp: now,
                     agent_id: agent_id.clone(),
                     metric_name: "cloud.network.out_bytes".to_string(),
                     value: network_out,
@@ -424,7 +424,7 @@ impl CloudCheckScheduler {
             if let Some(disk_read) = m.disk_iops_read {
                 data_points.push(MetricDataPoint {
                     id: next_id(),
-                    timestamp: m.collected_at,
+                    timestamp: now,
                     agent_id: agent_id.clone(),
                     metric_name: "cloud.disk.iops_read".to_string(),
                     value: disk_read,
@@ -438,7 +438,7 @@ impl CloudCheckScheduler {
             if let Some(disk_write) = m.disk_iops_write {
                 data_points.push(MetricDataPoint {
                     id: next_id(),
-                    timestamp: m.collected_at,
+                    timestamp: now,
                     agent_id: agent_id.clone(),
                     metric_name: "cloud.disk.iops_write".to_string(),
                     value: disk_write,
@@ -452,7 +452,7 @@ impl CloudCheckScheduler {
             if let Some(conns) = m.connections {
                 data_points.push(MetricDataPoint {
                     id: next_id(),
-                    timestamp: m.collected_at,
+                    timestamp: now,
                     agent_id: agent_id.clone(),
                     metric_name: "cloud.connections".to_string(),
                     value: conns,
@@ -482,9 +482,18 @@ impl CloudCheckScheduler {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
+        let rule_count = engine.rules().len();
+        tracing::debug!(
+            data_points = data_points.len(),
+            rules = rule_count,
+            "Evaluating cloud metrics against alert rules"
+        );
+
+        let mut fired_count = 0usize;
         for dp in data_points {
             let outputs = engine.ingest_with_locale(dp, &locale);
             for output in outputs {
+                fired_count += 1;
                 let event = output.event().clone();
                 // Store alert event
                 if let Err(e) = self.storage.write_alert_event(&event) {
@@ -497,6 +506,14 @@ impl CloudCheckScheduler {
                         agent_id = %event.agent_id,
                         "Cloud alert auto-recovered"
                     );
+                } else {
+                    tracing::info!(
+                        rule_id = %event.rule_id,
+                        agent_id = %event.agent_id,
+                        metric = %event.metric_name,
+                        value = event.value,
+                        "Cloud alert fired"
+                    );
                 }
                 // Send notification
                 let notifier = self.notifier.clone();
@@ -504,6 +521,10 @@ impl CloudCheckScheduler {
                     notifier.notify(&event).await;
                 });
             }
+        }
+
+        if fired_count > 0 {
+            tracing::info!(fired = fired_count, "Cloud alert evaluation completed");
         }
     }
 }

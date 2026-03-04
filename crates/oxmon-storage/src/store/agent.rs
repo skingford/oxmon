@@ -426,4 +426,21 @@ impl CertStore {
             .await?;
         Ok(model.map(agent_to_entry))
     }
+
+    /// 获取所有本地 Agent（无上限），内部分批查询，用于报告生成等需要完整数据的场景。
+    pub async fn list_all_agents(&self) -> Result<Vec<AgentWhitelistEntry>> {
+        const BATCH: usize = 500;
+        let mut all = Vec::new();
+        let mut offset = 0usize;
+        loop {
+            let batch = self.list_agents(BATCH, offset).await?;
+            let fetched = batch.len();
+            all.extend(batch);
+            if fetched < BATCH {
+                break;
+            }
+            offset += BATCH;
+        }
+        Ok(all)
+    }
 }

@@ -59,7 +59,10 @@ pub async fn generate_report_for_account(
     });
 
     // 6. 构建分析输入
-    let report_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let report_date = chrono::Utc::now()
+        .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+        .format("%Y-%m-%d")
+        .to_string();
     let history_map: std::collections::HashMap<&str, &HistoryAverage> = history_metrics
         .iter()
         .map(|h| (h.agent_id.as_str(), h))
@@ -126,7 +129,9 @@ pub async fn generate_report_for_account(
         ai_model: analyzer.model_name(),
         ai_analysis: &analysis_result.content,
         instance_table_html: &instance_table_html,
-        created_at: &chrono::Utc::now().to_rfc3339(),
+        created_at: &chrono::Utc::now()
+            .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+            .to_rfc3339(),
         locale: &locale,
     })?;
 
@@ -215,7 +220,10 @@ pub async fn generate_report_for_cloud_instances(
         score_b.cmp(&score_a)
     });
 
-    let report_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let report_date = chrono::Utc::now()
+        .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+        .format("%Y-%m-%d")
+        .to_string();
     let history_map: std::collections::HashMap<&str, &HistoryAverage> = history_metrics
         .iter()
         .map(|h| (h.agent_id.as_str(), h))
@@ -273,7 +281,9 @@ pub async fn generate_report_for_cloud_instances(
         ai_model: analyzer.model_name(),
         ai_analysis: &analysis_result.content,
         instance_table_html: &instance_table_html,
-        created_at: &chrono::Utc::now().to_rfc3339(),
+        created_at: &chrono::Utc::now()
+            .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+            .to_rfc3339(),
         locale: &locale,
     })?;
 
@@ -384,7 +394,10 @@ pub async fn generate_report_for_single_instance(
         .map(|h| (h.agent_id.as_str(), h))
         .collect();
 
-    let report_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let report_date = chrono::Utc::now()
+        .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+        .format("%Y-%m-%d")
+        .to_string();
 
     let input = AnalysisInput {
         current_metrics: current_metrics
@@ -437,7 +450,9 @@ pub async fn generate_report_for_single_instance(
         ai_model: analyzer.model_name(),
         ai_analysis: &analysis_result.content,
         instance_table_html: &instance_table_html,
-        created_at: &chrono::Utc::now().to_rfc3339(),
+        created_at: &chrono::Utc::now()
+            .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+            .to_rfc3339(),
         locale: &locale,
     })?;
 
@@ -517,7 +532,7 @@ pub async fn query_latest_metrics(
     cert_store: &Arc<CertStore>,
     storage: &Arc<SqliteStorageEngine>,
 ) -> Result<Vec<LatestMetric>> {
-    let agents = cert_store.list_agents(1000, 0).await?;
+    let agents = cert_store.list_all_agents().await?;
     let mut results = Vec::new();
 
     for agent in &agents {
@@ -527,9 +542,7 @@ pub async fn query_latest_metrics(
     }
 
     // 查询云实例指标（全部状态）
-    let instances = cert_store
-        .list_cloud_instances(None, None, None, None, 1000, 0)
-        .await?;
+    let instances = cert_store.list_all_cloud_instances().await?;
 
     let now = chrono::Utc::now().timestamp();
     for instance in instances {
@@ -610,10 +623,8 @@ async fn query_history_averages(
     cert_store: &Arc<CertStore>,
     storage: &Arc<SqliteStorageEngine>,
 ) -> Result<Vec<HistoryAverage>> {
-    let agents = cert_store.list_agents(1000, 0).await?;
-    let instances = cert_store
-        .list_cloud_instances(None, None, None, None, 1000, 0)
-        .await?;
+    let agents = cert_store.list_all_agents().await?;
+    let instances = cert_store.list_all_cloud_instances().await?;
 
     let now = chrono::Utc::now();
     let from = now - chrono::Duration::days(7);
@@ -732,9 +743,7 @@ async fn query_cloud_instances_latest_metrics(
     cert_store: &Arc<CertStore>,
     storage: &Arc<SqliteStorageEngine>,
 ) -> Result<Vec<LatestMetric>> {
-    let instances = cert_store
-        .list_cloud_instances(None, None, None, None, 1000, 0)
-        .await?;
+    let instances = cert_store.list_all_cloud_instances().await?;
 
     let now = chrono::Utc::now().timestamp();
     let mut results = Vec::new();
@@ -764,9 +773,7 @@ async fn query_cloud_instances_history_averages(
     cert_store: &Arc<CertStore>,
     storage: &Arc<SqliteStorageEngine>,
 ) -> Result<Vec<HistoryAverage>> {
-    let instances = cert_store
-        .list_cloud_instances(None, None, None, None, 1000, 0)
-        .await?;
+    let instances = cert_store.list_all_cloud_instances().await?;
 
     let now = chrono::Utc::now();
     let from = now - chrono::Duration::days(7);

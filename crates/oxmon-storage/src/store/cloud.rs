@@ -619,4 +619,23 @@ impl CertStore {
         let model = InstEntity::find_by_id(id).one(self.db()).await?;
         Ok(model.map(model_to_instance))
     }
+
+    /// 获取所有云实例（无上限），内部分批查询，用于报告生成等需要完整数据的场景。
+    pub async fn list_all_cloud_instances(&self) -> Result<Vec<CloudInstanceRow>> {
+        const BATCH: usize = 500;
+        let mut all = Vec::new();
+        let mut offset = 0usize;
+        loop {
+            let batch = self
+                .list_cloud_instances(None, None, None, None, BATCH, offset)
+                .await?;
+            let fetched = batch.len();
+            all.extend(batch);
+            if fetched < BATCH {
+                break;
+            }
+            offset += BATCH;
+        }
+        Ok(all)
+    }
 }

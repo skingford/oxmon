@@ -126,7 +126,6 @@ impl AlertEngine {
                 .or_insert_with(|| SlidingWindow::new(silence_secs.max(600)));
 
             window.push(data_point.clone());
-            window.evict(now);
 
             // Use make_contiguous() to get a &[MetricDataPoint] without allocating a Vec
             let event = rule.evaluate(window.as_contiguous_slice(), now, locale);

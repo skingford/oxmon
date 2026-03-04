@@ -29,6 +29,7 @@ use crate::state::AppState;
         list_ai_reports,
         get_ai_report,
         view_ai_report_html,
+        list_report_instances,
     ),
     components(schemas(
         ListAIAccountsQuery,
@@ -38,6 +39,8 @@ use crate::state::AppState;
         TriggerAIReportResponse,
         ListAIReportsQuery,
         AIReportListItem,
+        ListReportInstancesQuery,
+        AIReportInstanceItem,
     ))
 )]
 pub struct AIApiDoc;
@@ -54,9 +57,50 @@ pub fn ai_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(list_ai_reports))
         .routes(routes!(get_ai_report))
         .routes(routes!(view_ai_report_html))
+        .routes(routes!(list_report_instances))
 }
 
 // ===== 数据结构 =====
+
+/// GET /v1/ai/reports/{id} 查询参数
+#[derive(Debug, Default, Serialize, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct GetAIReportQuery {
+    /// 是否排除 html_content 和 raw_metrics_json 大字段（默认 false）
+    #[param(required = false)]
+    pub exclude_content: Option<bool>,
+}
+
+/// GET /v1/ai/reports/{id}/instances 查询参数
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ListReportInstancesQuery {
+    /// 按风险等级过滤：high / medium / low / normal（可选）
+    #[param(required = false)]
+    pub risk_level: Option<String>,
+    /// 每页记录数（默认 20，最大 1000）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub limit: Option<u64>,
+    /// 偏移量（默认 0）
+    #[param(required = false)]
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub offset: Option<u64>,
+}
+
+/// 报告实例分页条目
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AIReportInstanceItem {
+    pub agent_id: String,
+    pub instance_name: Option<String>,
+    pub agent_type: String,
+    pub cpu_usage: Option<f64>,
+    pub memory_usage: Option<f64>,
+    pub disk_usage: Option<f64>,
+    /// 风险等级：high / medium / low / normal
+    pub risk_level: String,
+    pub timestamp: i64,
+}
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -514,7 +558,8 @@ async fn list_ai_reports(
     get,
     path = "/v1/ai/reports/{id}",
     params(
-        ("id" = String, Path, description = "报告 ID")
+        ("id" = String, Path, description = "报告 ID"),
+        ("exclude_content" = Option<bool>, Query, description = "是否排除 html_content 和 raw_metrics_json 大字段（默认 false）"),
     ),
     responses(
         (status = 200, description = "AI 报告详情", body = AIReportRow),
@@ -525,12 +570,18 @@ async fn list_ai_reports(
 async fn get_ai_report(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<GetAIReportQuery>,
 ) -> Result<Json<AIReportRow>, AppError> {
-    let report = state
+    let mut report = state
         .cert_store
         .get_ai_report_by_id(&id)
         .await?
         .ok_or(AppError::NotFound("Report not found".into()))?;
+
+    if query.exclude_content.unwrap_or(false) {
+        report.html_content = String::new();
+        report.raw_metrics_json = String::new();
+    }
 
     Ok(Json(report))
 }
@@ -559,6 +610,117 @@ async fn view_ai_report_html(
         .ok_or(AppError::NotFound("Report not found".into()))?;
 
     Ok(Html(report.html_content))
+}
+
+/// 分页获取报告中的实例指标列表
+///
+/// 从报告的 raw_metrics_json 中解析实例数据并分页返回，支持按风险等级过滤。
+#[utoipa::path(
+    get,
+    path = "/v1/ai/reports/{id}/instances",
+    params(
+        ("id" = String, Path, description = "报告 ID"),
+        ListReportInstancesQuery,
+    ),
+    responses(
+        (status = 200, description = "实例列表（分页）", body = Vec<AIReportInstanceItem>),
+        (status = 404, description = "报告不存在"),
+    ),
+    tag = "AI 报告"
+)]
+async fn list_report_instances(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(trace_id): Extension<TraceId>,
+    Query(query): Query<ListReportInstancesQuery>,
+) -> Response {
+    let report = match state.cert_store.get_ai_report_by_id(&id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                "Report not found",
+            )
+        }
+        Err(e) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                &format!("Failed to get report: {e}"),
+            )
+        }
+    };
+
+    let metrics: Vec<crate::ai::report::LatestMetric> =
+        match serde_json::from_str(&report.raw_metrics_json) {
+            Ok(m) => m,
+            Err(e) => {
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &trace_id,
+                    "parse_error",
+                    &format!("Failed to parse metrics: {e}"),
+                )
+            }
+        };
+
+    // 计算每个实例的风险等级并过滤
+    let filter_level = query.risk_level.as_deref().map(|s| s.trim().to_lowercase());
+    let all_items: Vec<AIReportInstanceItem> = metrics
+        .into_iter()
+        .map(|m| {
+            let level = compute_risk_level(m.cpu_usage, m.memory_usage, m.disk_usage);
+            AIReportInstanceItem {
+                agent_id: m.agent_id,
+                instance_name: m.instance_name,
+                agent_type: m.agent_type,
+                cpu_usage: m.cpu_usage,
+                memory_usage: m.memory_usage,
+                disk_usage: m.disk_usage,
+                risk_level: level,
+                timestamp: m.timestamp,
+            }
+        })
+        .filter(|item| {
+            filter_level
+                .as_deref()
+                .map_or(true, |f| item.risk_level == f)
+        })
+        .collect();
+
+    let total = all_items.len() as u64;
+    let limit = query.limit.unwrap_or(20).min(1000) as usize;
+    let offset = query.offset.unwrap_or(0) as usize;
+
+    let items: Vec<AIReportInstanceItem> = all_items.into_iter().skip(offset).take(limit).collect();
+
+    success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
+}
+
+/// 根据 CPU/内存/磁盘使用率计算风险等级字符串。
+fn compute_risk_level(cpu: Option<f64>, mem: Option<f64>, disk: Option<f64>) -> String {
+    let is_high = cpu.is_some_and(|v| v > 85.0)
+        || mem.is_some_and(|v| v > 85.0)
+        || disk.is_some_and(|v| v > 85.0);
+    if is_high {
+        return "high".to_string();
+    }
+    let is_medium = cpu.is_some_and(|v| v > 80.0)
+        || mem.is_some_and(|v| v > 80.0)
+        || disk.is_some_and(|v| v > 80.0);
+    if is_medium {
+        return "medium".to_string();
+    }
+    let is_low = cpu.is_some_and(|v| v >= 60.0)
+        || mem.is_some_and(|v| v >= 60.0)
+        || disk.is_some_and(|v| v >= 60.0);
+    if is_low {
+        return "low".to_string();
+    }
+    "normal".to_string()
 }
 
 // ===== 错误处理 =====
