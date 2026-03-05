@@ -202,6 +202,50 @@ impl MetricService for MetricServiceImpl {
             }
         }
 
+        // Record agent report log (async, non-blocking)
+        {
+            let store = self.state.cert_store.clone();
+            let agent_id = proto.agent_id.clone();
+            let metric_count = batch.data_points.len();
+            let reported_at = batch_ts;
+            let (hostname, os, os_version, arch, kernel_version, cpu_cores, memory_gb, disk_gb) =
+                proto.system_info.as_ref().map_or(
+                    (None, None, None, None, None, None, None, None),
+                    |si| {
+                        (
+                            if si.hostname.is_empty() { None } else { Some(si.hostname.clone()) },
+                            if si.os.is_empty() { None } else { Some(si.os.clone()) },
+                            if si.os_version.is_empty() { None } else { Some(si.os_version.clone()) },
+                            if si.arch.is_empty() { None } else { Some(si.arch.clone()) },
+                            if si.kernel_version.is_empty() { None } else { Some(si.kernel_version.clone()) },
+                            if si.cpu_cores > 0 { Some(si.cpu_cores) } else { None },
+                            if si.memory_gb > 0.0 { Some(si.memory_gb) } else { None },
+                            if si.disk_gb > 0.0 { Some(si.disk_gb) } else { None },
+                        )
+                    },
+                );
+            tokio::spawn(async move {
+                if let Err(e) = store
+                    .insert_agent_report_log(
+                        &agent_id,
+                        metric_count,
+                        hostname.as_deref(),
+                        os.as_deref(),
+                        os_version.as_deref(),
+                        arch.as_deref(),
+                        kernel_version.as_deref(),
+                        cpu_cores,
+                        memory_gb,
+                        disk_gb,
+                        reported_at,
+                    )
+                    .await
+                {
+                    tracing::warn!(error = %e, agent_id = %agent_id, "Failed to insert agent report log");
+                }
+            });
+        }
+
         // Feed metrics to alert engine
         {
             let locale = self

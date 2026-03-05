@@ -729,49 +729,152 @@ async fn agent_latest(
         Err(resp) => return resp.into_response(),
     };
 
-    let to = Utc::now();
-    let from = to - chrono::Duration::days(2);
-    let rows = match state.storage.query_metrics_paginated(
-        from,
-        to,
-        Some(&agent_entry.agent_id),
-        None,
-        1,
-        0,
-    ) {
+    let rows = match state
+        .storage
+        .query_all_latest_for_agent(&agent_entry.agent_id, 2)
+    {
         Ok(rows) => rows,
         Err(err) => {
-            tracing::error!(id = %id, error = %err, "failed to query latest metric");
+            tracing::error!(id = %id, error = %err, "failed to query latest metrics");
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
                 "storage_error",
-                "Failed to query latest metric",
+                "Failed to query latest metrics",
             )
             .into_response();
         }
     };
 
-    if let Some(point) = rows.first() {
-        return success_response(
-            StatusCode::OK,
+    if rows.is_empty() {
+        return error_response(
+            StatusCode::NOT_FOUND,
             &trace_id,
-            vec![LatestMetric {
-                metric_name: point.metric_name.clone(),
-                value: point.value,
-                labels: point.labels.clone(),
-                timestamp: point.timestamp,
-            }],
-        );
+            "not_found",
+            "No metrics found for agent",
+        )
+        .into_response();
     }
 
-    error_response(
-        StatusCode::NOT_FOUND,
-        &trace_id,
-        "not_found",
-        "Agent not found",
+    let metrics: Vec<LatestMetric> = rows
+        .into_iter()
+        .map(|point| LatestMetric {
+            metric_name: point.metric_name,
+            value: point.value,
+            labels: point.labels,
+            timestamp: point.timestamp,
+        })
+        .collect();
+
+    success_response(StatusCode::OK, &trace_id, metrics)
+}
+
+
+/// 获取指定 Agent 的上报日志（分页）。
+/// 鉴权：需要 Bearer Token。
+#[utoipa::path(
+    get,
+    path = "/v1/agents/{id}/report-logs",
+    tag = "Agents",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Agent ID（agent.id）"),
+        ("limit" = Option<u64>, Query, description = "每页条数（默认 20）"),
+        ("offset" = Option<u64>, Query, description = "偏移量（默认 0）"),
+    ),
+    responses(
+        (status = 200, description = "Agent 上报日志列表"),
+        (status = 401, description = "未认证", body = ApiError),
+        (status = 404, description = "Agent 不存在", body = ApiError)
     )
-    .into_response()
+)]
+async fn agent_report_logs(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<PaginationParams>,
+) -> impl IntoResponse {
+    use oxmon_storage::AgentReportLogRow;
+
+    let agent_entry = match state
+        .cert_store
+        .get_agent_by_id_or_agent_id(&id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to query agent");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        }) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                &format!("Agent '{}' not found", id),
+            )
+            .into_response()
+        }
+        Err(resp) => return resp.into_response(),
+    };
+
+    let limit = params.limit.unwrap_or(20).min(1000) as usize;
+    let offset = params.offset.unwrap_or(0) as usize;
+
+    let (rows, total) = match tokio::join!(
+        state
+            .cert_store
+            .list_agent_report_logs(&agent_entry.agent_id, limit, offset),
+        state
+            .cert_store
+            .count_agent_report_logs(&agent_entry.agent_id),
+    ) {
+        (Ok(rows), Ok(total)) => (rows, total),
+        (Err(e), _) | (_, Err(e)) => {
+            tracing::error!(error = %e, "Failed to query agent report logs");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Failed to query agent report logs",
+            )
+            .into_response();
+        }
+    };
+
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|r: AgentReportLogRow| {
+            serde_json::json!({
+                "id": r.id,
+                "agent_id": r.agent_id,
+                "metric_count": r.metric_count,
+                "hostname": r.hostname,
+                "os": r.os,
+                "os_version": r.os_version,
+                "arch": r.arch,
+                "kernel_version": r.kernel_version,
+                "cpu_cores": r.cpu_cores,
+                "memory_gb": r.memory_gb,
+                "disk_gb": r.disk_gb,
+                "reported_at": r.reported_at,
+                "created_at": r.created_at,
+            })
+        })
+        .collect();
+
+    success_paginated_response(
+        StatusCode::OK,
+        &trace_id,
+        items,
+        total,
+        limit,
+        offset,
+    )
 }
 
 // GET /v1/metrics
@@ -1359,6 +1462,7 @@ pub fn protected_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(list_agents))
         .routes(routes!(get_agent, update_agent_info, delete_agent_record))
         .routes(routes!(agent_latest))
+        .routes(routes!(agent_report_logs))
         .routes(routes!(query_all_metrics))
         .routes(routes!(metric_names))
         .routes(routes!(metric_agents))

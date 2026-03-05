@@ -5,10 +5,48 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Order, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::entities::agent::{self, Column as AgentCol, Entity as AgentEntity};
+use crate::entities::agent_report_log;
 use crate::entities::agent_whitelist::{self, Column as WhitelistCol, Entity as WhitelistEntity};
 use crate::store::CertStore;
+
+/// Agent 上报日志行（用于 API 返回）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentReportLogRow {
+    pub id: String,
+    pub agent_id: String,
+    pub metric_count: i32,
+    pub hostname: Option<String>,
+    pub os: Option<String>,
+    pub os_version: Option<String>,
+    pub arch: Option<String>,
+    pub kernel_version: Option<String>,
+    pub cpu_cores: Option<i32>,
+    pub memory_gb: Option<f64>,
+    pub disk_gb: Option<f64>,
+    pub reported_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+fn model_to_report_log_row(m: agent_report_log::Model) -> AgentReportLogRow {
+    AgentReportLogRow {
+        id: m.id,
+        agent_id: m.agent_id,
+        metric_count: m.metric_count,
+        hostname: m.hostname,
+        os: m.os,
+        os_version: m.os_version,
+        arch: m.arch,
+        kernel_version: m.kernel_version,
+        cpu_cores: m.cpu_cores,
+        memory_gb: m.memory_gb,
+        disk_gb: m.disk_gb,
+        reported_at: m.reported_at.with_timezone(&Utc),
+        created_at: m.created_at.with_timezone(&Utc),
+    }
+}
 
 /// 白名单列表过滤器
 #[derive(Debug, Clone, Default)]
@@ -515,5 +553,88 @@ impl CertStore {
             offset += BATCH;
         }
         Ok(all)
+    }
+
+    // ---- agent_report_logs ----
+
+    /// 记录一次 Agent 上报日志。
+    pub async fn insert_agent_report_log(
+        &self,
+        agent_id: &str,
+        metric_count: usize,
+        hostname: Option<&str>,
+        os: Option<&str>,
+        os_version: Option<&str>,
+        arch: Option<&str>,
+        kernel_version: Option<&str>,
+        cpu_cores: Option<i32>,
+        memory_gb: Option<f64>,
+        disk_gb: Option<f64>,
+        reported_at: DateTime<Utc>,
+    ) -> Result<()> {
+        use crate::entities::agent_report_log::{self, Entity as LogEntity};
+        let now = Utc::now().fixed_offset();
+        let am = agent_report_log::ActiveModel {
+            id: Set(oxmon_common::id::next_id()),
+            agent_id: Set(agent_id.to_owned()),
+            metric_count: Set(metric_count as i32),
+            hostname: Set(hostname.map(|s| s.to_owned())),
+            os: Set(os.map(|s| s.to_owned())),
+            os_version: Set(os_version.map(|s| s.to_owned())),
+            arch: Set(arch.map(|s| s.to_owned())),
+            kernel_version: Set(kernel_version.map(|s| s.to_owned())),
+            cpu_cores: Set(cpu_cores),
+            memory_gb: Set(memory_gb),
+            disk_gb: Set(disk_gb),
+            reported_at: Set(reported_at.fixed_offset()),
+            created_at: Set(now),
+        };
+        LogEntity::insert(am).exec(self.db()).await?;
+        Ok(())
+    }
+
+    /// 分页查询某 Agent 的上报日志，按 reported_at 降序。
+    pub async fn list_agent_report_logs(
+        &self,
+        agent_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<AgentReportLogRow>> {
+        use crate::entities::agent_report_log::{Column as LogCol, Entity as LogEntity};
+        let rows = LogEntity::find()
+            .filter(LogCol::AgentId.eq(agent_id))
+            .order_by(LogCol::ReportedAt, Order::Desc)
+            .limit(limit as u64)
+            .offset(offset as u64)
+            .all(self.db())
+            .await?;
+        Ok(rows.into_iter().map(model_to_report_log_row).collect())
+    }
+
+    /// 统计某 Agent 的上报日志总数。
+    pub async fn count_agent_report_logs(&self, agent_id: &str) -> Result<u64> {
+        use crate::entities::agent_report_log::{Column as LogCol, Entity as LogEntity};
+        Ok(LogEntity::find()
+            .filter(LogCol::AgentId.eq(agent_id))
+            .count(self.db())
+            .await?)
+    }
+
+    /// 清理超过保留天数的 Agent 上报日志。
+    pub async fn cleanup_agent_report_logs(&self, retention_days: u32) -> Result<u64> {
+        use sea_orm::{ConnectionTrait, Statement};
+        let cutoff = (Utc::now() - chrono::Duration::days(retention_days as i64)).fixed_offset();
+        let sql = format!(
+            "DELETE FROM agent_report_logs WHERE reported_at < '{}'",
+            cutoff.to_rfc3339()
+        );
+        let result = self
+            .db()
+            .execute_raw(Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                sql,
+            ))
+            .await?;
+        Ok(result.rows_affected())
     }
 }

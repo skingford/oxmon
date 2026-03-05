@@ -17,7 +17,7 @@ pub mod notification;
 pub mod user;
 
 // ---- 公开 Row 类型（从各子模块重新导出）----
-pub use agent::{AgentListFilter, AgentWhitelistFilter};
+pub use agent::{AgentListFilter, AgentReportLogRow, AgentWhitelistFilter};
 pub use ai::{AIAccountRow, AIAccountUpdate};
 pub use ai_check_job::AICheckJobRow;
 pub use alert::{AlertRuleFilter, AlertRuleRow, AlertRuleUpdate};

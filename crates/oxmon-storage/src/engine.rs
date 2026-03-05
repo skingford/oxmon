@@ -986,4 +986,71 @@ impl StorageEngine for SqliteStorageEngine {
 
         Ok(results.into_values().collect())
     }
+
+    fn query_all_latest_for_agent(
+        &self,
+        agent_id: &str,
+        lookback_days: u32,
+    ) -> Result<Vec<MetricDataPoint>> {
+        let to = Utc::now();
+        let from = to - chrono::Duration::days(lookback_days as i64);
+        let mut keys = self.partitions.partitions_in_range(from, to)?;
+        keys.reverse(); // Search most recent partitions first
+
+        // Key = (metric_name, labels_json) to correctly handle labeled metrics
+        let mut results: std::collections::HashMap<(String, String), MetricDataPoint> =
+            std::collections::HashMap::new();
+
+        for key in keys {
+            self.partitions.with_partition(&key, |conn| {
+                // For each (metric_name, labels) combo, get the row with MAX(timestamp)
+                let sql = "SELECT m.id, m.timestamp, m.agent_id, m.metric_name, m.value, m.labels, m.created_at, m.updated_at \
+                           FROM metrics m \
+                           INNER JOIN ( \
+                               SELECT metric_name, labels, MAX(timestamp) as max_ts \
+                               FROM metrics \
+                               WHERE agent_id = ?1 \
+                               GROUP BY metric_name, labels \
+                           ) latest ON m.agent_id = ?1 \
+                               AND m.metric_name = latest.metric_name \
+                               AND m.labels = latest.labels \
+                               AND m.timestamp = latest.max_ts";
+
+                let mut stmt = conn.prepare(sql)?;
+                let rows = stmt.query_map([agent_id], |row| {
+                    let timestamp_ms: i64 = row.get(1)?;
+                    let labels_json: String = row.get(5)?;
+                    let created_at_ms: i64 = row.get(6)?;
+                    let updated_at_ms: i64 = row.get(7)?;
+
+                    let labels: std::collections::HashMap<String, String> =
+                        serde_json::from_str(&labels_json).unwrap_or_default();
+
+                    Ok(MetricDataPoint {
+                        id: row.get(0)?,
+                        timestamp: DateTime::from_timestamp_millis(timestamp_ms)
+                            .unwrap_or_else(Utc::now),
+                        agent_id: row.get(2)?,
+                        metric_name: row.get(3)?,
+                        value: row.get(4)?,
+                        labels,
+                        created_at: DateTime::from_timestamp_millis(created_at_ms)
+                            .unwrap_or_else(Utc::now),
+                        updated_at: DateTime::from_timestamp_millis(updated_at_ms)
+                            .unwrap_or_else(Utc::now),
+                    })
+                })?;
+
+                for row in rows {
+                    let dp = row?;
+                    let key = (dp.metric_name.clone(), serde_json::to_string(&dp.labels).unwrap_or_default());
+                    // or_insert: keep the one from the most recent partition
+                    results.entry(key).or_insert(dp);
+                }
+                Ok(())
+            })?;
+        }
+
+        Ok(results.into_values().collect())
+    }
 }

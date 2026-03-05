@@ -601,6 +601,20 @@ async fn run_server(config_path: &str) -> Result<()> {
                 Err(e) => tracing::error!(error = %e, "Notification log cleanup failed"),
                 _ => {}
             }
+            // Clean up agent report logs
+            let agent_report_retention = cleanup_cert_store
+                .get_runtime_setting_u32("agent_report_log_retention", 7)
+                .await;
+            match cleanup_cert_store
+                .cleanup_agent_report_logs(agent_report_retention)
+                .await
+            {
+                Ok(removed) if removed > 0 => {
+                    tracing::info!(removed, "Cleaned up expired agent report logs")
+                }
+                Err(e) => tracing::error!(error = %e, "Agent report log cleanup failed"),
+                _ => {}
+            }
         }
     });
 

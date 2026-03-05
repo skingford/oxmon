@@ -15,7 +15,7 @@ pub mod store;
 pub use store::CertStore;
 pub use store::{
     AIAccountRow, AIAccountUpdate, AICheckJobRow, ActiveAlertFilter, AgentListFilter,
-    AgentWhitelistFilter, AlertRuleFilter, AlertRuleRow, AlertRuleUpdate, CertDomainSummary,
+    AgentReportLogRow, AgentWhitelistFilter, AlertRuleFilter, AlertRuleRow, AlertRuleUpdate, CertDomainSummary,
     CertHealthSummary, CertStatusFilter, CertStatusSummary, CloudAccountRow, CloudAccountSummary,
     CloudCollectionStateRow, CloudInstanceRow, CloudInstanceStatusSummary, DictTypeFilter,
     NotificationChannelFilter, NotificationChannelRow, NotificationChannelUpdate,
@@ -191,6 +191,18 @@ pub trait StorageEngine: Send + Sync {
         &self,
         agent_id: &str,
         metric_names: &[&str],
+        lookback_days: u32,
+    ) -> Result<Vec<MetricDataPoint>>;
+
+    /// Returns the latest (most recent) metric data point for each unique
+    /// (metric_name, labels) combination, scoped to a specific agent_id.
+    /// Searches the last `lookback_days` days.
+    /// Unlike `query_latest_metrics_for_agent`, this does NOT require a
+    /// pre-specified list of metric names and correctly handles labeled metrics
+    /// (e.g., per-mount disk metrics, per-interface network metrics).
+    fn query_all_latest_for_agent(
+        &self,
+        agent_id: &str,
         lookback_days: u32,
     ) -> Result<Vec<MetricDataPoint>>;
 }

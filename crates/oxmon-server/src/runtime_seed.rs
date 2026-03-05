@@ -52,6 +52,12 @@ const DEFAULT_RUNTIME_SETTINGS: &[RuntimeSettingDef] = &[
         description: "生成 AI 报告后是否自动发送通知",
         default_value: RuntimeValue::Bool(true),
     },
+    RuntimeSettingDef {
+        config_key: "agent_report_log_retention",
+        display_name: "Agent 上报日志保留天数",
+        description: "Agent 上报日志（agent_report_logs）的保留天数，超过该天数的记录将被自动清理",
+        default_value: RuntimeValue::U64(7),
+    },
 ];
 
 /// Initialize default runtime settings in the database (only when they don't exist).
