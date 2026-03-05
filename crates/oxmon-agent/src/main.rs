@@ -67,11 +67,24 @@ fn to_proto_batch(agent_id: &str, points: &[MetricDataPoint]) -> MetricBatchProt
 }
 
 async fn try_connect(endpoint: &str) -> Option<MetricServiceClient<Channel>> {
-    match MetricServiceClient::connect(endpoint.to_string()).await {
-        Ok(client) => {
+    let ep = match tonic::transport::Channel::from_shared(endpoint.to_string()) {
+        Ok(ep) => ep,
+        Err(e) => {
+            tracing::warn!(error = %e, "Invalid endpoint URL");
+            return None;
+        }
+    };
+    match ep
+        // Advertise 16 MiB as SETTINGS_MAX_FRAME_SIZE so nginx/proxies can
+        // send larger frames without triggering FRAME_SIZE_ERROR on our side.
+        .http2_max_frame_size(16 * 1024 * 1024)
+        .connect()
+        .await
+    {
+        Ok(channel) => {
             tracing::info!("Connected to server");
             Some(
-                client
+                MetricServiceClient::new(channel)
                     .max_encoding_message_size(32 * 1024 * 1024)
                     .max_decoding_message_size(32 * 1024 * 1024),
             )
