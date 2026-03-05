@@ -138,5 +138,3 @@ print_stderr = "warn"
 todo = "warn"
 
 
-[patch.crates-io]
-tonic = { path = "vendor/tonic" }
