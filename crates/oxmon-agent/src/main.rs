@@ -9,8 +9,9 @@ use oxmon_collector::memory::MemoryCollector;
 use oxmon_collector::network::NetworkCollector;
 use oxmon_collector::Collector;
 use oxmon_common::proto::metric_service_client::MetricServiceClient;
-use oxmon_common::proto::{MetricBatchProto, MetricDataPointProto};
+use oxmon_common::proto::{MetricBatchProto, MetricDataPointProto, SystemInfoProto};
 use oxmon_common::types::MetricDataPoint;
+use sysinfo::{Disks, System};
 use std::collections::VecDeque;
 use tokio::signal;
 use tokio::sync::Mutex;
@@ -49,7 +50,44 @@ impl MetricBuffer {
     }
 }
 
-fn to_proto_batch(agent_id: &str, points: &[MetricDataPoint]) -> MetricBatchProto {
+fn collect_system_info() -> SystemInfoProto {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    let hostname = System::host_name().unwrap_or_default();
+    let os = System::name().unwrap_or_default();
+    let os_version = System::os_version().unwrap_or_default();
+    let arch = System::cpu_arch();
+    let kernel_version = System::kernel_version().unwrap_or_default();
+    let cpu_cores = sys.cpus().len() as i32;
+    let memory_gb = sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
+
+    let disks = Disks::new_with_refreshed_list();
+    let disk_gb = disks
+        .iter()
+        .map(|d| d.total_space() as f64)
+        .sum::<f64>()
+        / 1024.0
+        / 1024.0
+        / 1024.0;
+
+    SystemInfoProto {
+        hostname,
+        os,
+        os_version,
+        arch,
+        kernel_version,
+        cpu_cores,
+        memory_gb,
+        disk_gb,
+    }
+}
+
+fn to_proto_batch(
+    agent_id: &str,
+    points: &[MetricDataPoint],
+    system_info: Option<SystemInfoProto>,
+) -> MetricBatchProto {
     MetricBatchProto {
         agent_id: agent_id.to_string(),
         timestamp_ms: Utc::now().timestamp_millis(),
@@ -63,6 +101,7 @@ fn to_proto_batch(agent_id: &str, points: &[MetricDataPoint]) -> MetricBatchProt
                 labels: dp.labels.clone(),
             })
             .collect(),
+        system_info,
     }
 }
 
@@ -110,6 +149,9 @@ async fn main() -> Result<()> {
 
     // Max points per gRPC request to avoid HTTP/2 FRAME_SIZE_ERROR
     const SEND_CHUNK_SIZE: usize = 500;
+    // 每隔多少 tick 重新上报一次系统信息（默认 60 次，约 10 分钟）
+    const SYSTEM_INFO_INTERVAL_TICKS: u64 = 60;
+    let mut tick_count: u64 = 0;
 
     tracing::info!(
         interval_secs = config.collection_interval_secs,
@@ -121,6 +163,8 @@ async fn main() -> Result<()> {
     loop {
         tokio::select! {
             _ = tick.tick() => {
+                tick_count += 1;
+
                 // Collect metrics
                 let mut all_points = Vec::new();
                 for collector in &mut collectors {
@@ -149,9 +193,20 @@ async fn main() -> Result<()> {
                         let total = to_send.len();
                         let mut failed_idx: Option<usize> = None;
 
+                        // 每 SYSTEM_INFO_INTERVAL_TICKS 次采集一次系统信息，附在第一个 chunk
+                        let should_send_sysinfo = tick_count == 1
+                            || tick_count % SYSTEM_INFO_INTERVAL_TICKS == 0;
+                        let sysinfo = if should_send_sysinfo {
+                            Some(collect_system_info())
+                        } else {
+                            None
+                        };
+
                         // Send in chunks to avoid oversized gRPC messages
                         for (chunk_idx, chunk) in to_send.chunks(SEND_CHUNK_SIZE).enumerate() {
-                            let batch = to_proto_batch(&config.agent_id, chunk);
+                            // 系统信息只附在第一个 chunk
+                            let si = if chunk_idx == 0 { sysinfo.clone() } else { None };
+                            let batch = to_proto_batch(&config.agent_id, chunk, si);
 
                             let mut request = tonic::Request::new(batch);
                             if let Some(ref token) = config.auth_token {

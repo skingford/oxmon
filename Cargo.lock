@@ -2586,6 +2586,7 @@ dependencies = [
  "oxmon-common",
  "prost",
  "serde",
+ "sysinfo",
  "tokio",
  "toml",
  "tonic",

@@ -50,6 +50,14 @@ fn agent_to_info(m: &agent::Model) -> AgentInfo {
         active,
         collection_interval_secs: m.collection_interval_secs.map(|v| v as u64),
         description: m.description.clone(),
+        hostname: m.hostname.clone(),
+        os: m.os.clone(),
+        os_version: m.os_version.clone(),
+        arch: m.arch.clone(),
+        kernel_version: m.kernel_version.clone(),
+        cpu_cores: m.cpu_cores,
+        memory_gb: m.memory_gb,
+        disk_gb: m.disk_gb,
     }
 }
 
@@ -100,13 +108,19 @@ impl CertStore {
         Ok(model.map(|m| m.token_hash))
     }
 
-    /// 返回 (encrypted_token, token_hash)
+    /// 返回 (decrypted_token, token_hash)
     pub async fn get_agent_auth(&self, agent_id: &str) -> Result<Option<(Option<String>, String)>> {
         let model = WhitelistEntity::find()
             .filter(WhitelistCol::AgentId.eq(agent_id))
             .one(self.db())
             .await?;
-        Ok(model.map(|m| (m.encrypted_token, m.token_hash)))
+        Ok(model.map(|m| {
+            let decrypted = m
+                .encrypted_token
+                .as_deref()
+                .and_then(|enc| self.token_encryptor.decrypt(enc).ok());
+            (decrypted, m.token_hash)
+        }))
     }
 
     pub async fn list_agents(
@@ -266,6 +280,14 @@ impl CertStore {
             last_seen: S(now),
             collection_interval_secs: Set(None),
             description: Set(None),
+            hostname: Set(None),
+            os: Set(None),
+            os_version: Set(None),
+            arch: Set(None),
+            kernel_version: Set(None),
+            cpu_cores: Set(None),
+            memory_gb: Set(None),
+            disk_gb: Set(None),
             created_at: S(now),
             updated_at: S(now),
         };
@@ -425,6 +447,57 @@ impl CertStore {
             .one(self.db())
             .await?;
         Ok(model.map(agent_to_entry))
+    }
+
+    /// 更新 agent 的系统信息（hostname, os, os_version 等），仅更新非 None 字段。
+    pub async fn update_agent_system_info(
+        &self,
+        agent_id: &str,
+        hostname: Option<&str>,
+        os: Option<&str>,
+        os_version: Option<&str>,
+        arch: Option<&str>,
+        kernel_version: Option<&str>,
+        cpu_cores: Option<i32>,
+        memory_gb: Option<f64>,
+        disk_gb: Option<f64>,
+    ) -> Result<()> {
+        use sea_orm::ActiveValue::Set;
+        let model = AgentEntity::find()
+            .filter(AgentCol::AgentId.eq(agent_id))
+            .one(self.db())
+            .await?;
+        if let Some(m) = model {
+            let now = Utc::now().fixed_offset();
+            let mut am: agent::ActiveModel = m.into();
+            if hostname.is_some() {
+                am.hostname = Set(hostname.map(|s| s.to_owned()));
+            }
+            if os.is_some() {
+                am.os = Set(os.map(|s| s.to_owned()));
+            }
+            if os_version.is_some() {
+                am.os_version = Set(os_version.map(|s| s.to_owned()));
+            }
+            if arch.is_some() {
+                am.arch = Set(arch.map(|s| s.to_owned()));
+            }
+            if kernel_version.is_some() {
+                am.kernel_version = Set(kernel_version.map(|s| s.to_owned()));
+            }
+            if cpu_cores.is_some() {
+                am.cpu_cores = Set(cpu_cores);
+            }
+            if memory_gb.is_some() {
+                am.memory_gb = Set(memory_gb);
+            }
+            if disk_gb.is_some() {
+                am.disk_gb = Set(disk_gb);
+            }
+            am.updated_at = Set(now);
+            am.update(self.db()).await?;
+        }
+        Ok(())
     }
 
     /// 获取所有本地 Agent（无上限），内部分批查询，用于报告生成等需要完整数据的场景。

@@ -123,6 +123,14 @@ pub struct AgentInfo {
     pub active: bool,
     pub collection_interval_secs: Option<u64>,
     pub description: Option<String>,
+    pub hostname: Option<String>,
+    pub os: Option<String>,
+    pub os_version: Option<String>,
+    pub arch: Option<String>,
+    pub kernel_version: Option<String>,
+    pub cpu_cores: Option<i32>,
+    pub memory_gb: Option<f64>,
+    pub disk_gb: Option<f64>,
 }
 
 /// Agent 完整记录（来自 agents 表）

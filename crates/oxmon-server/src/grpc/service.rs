@@ -175,6 +175,33 @@ impl MetricService for MetricServiceImpl {
             // 不返回错误，因为指标已经成功写入
         }
 
+        // Update system info if provided
+        if let Some(ref si) = proto.system_info {
+            let hostname = if si.hostname.is_empty() { None } else { Some(si.hostname.as_str()) };
+            let os = if si.os.is_empty() { None } else { Some(si.os.as_str()) };
+            let os_version = if si.os_version.is_empty() { None } else { Some(si.os_version.as_str()) };
+            let arch = if si.arch.is_empty() { None } else { Some(si.arch.as_str()) };
+            let kernel_version = if si.kernel_version.is_empty() { None } else { Some(si.kernel_version.as_str()) };
+            let cpu_cores = if si.cpu_cores > 0 { Some(si.cpu_cores) } else { None };
+            let memory_gb = if si.memory_gb > 0.0 { Some(si.memory_gb) } else { None };
+            let disk_gb = if si.disk_gb > 0.0 { Some(si.disk_gb) } else { None };
+            if let Err(e) = self.state.cert_store.update_agent_system_info(
+                &proto.agent_id,
+                hostname,
+                os,
+                os_version,
+                arch,
+                kernel_version,
+                cpu_cores,
+                memory_gb,
+                disk_gb,
+            ).await {
+                tracing::error!(error = %e, agent_id = %proto.agent_id, "Failed to update agent system info");
+            } else {
+                tracing::debug!(agent_id = %proto.agent_id, "Agent system info updated");
+            }
+        }
+
         // Feed metrics to alert engine
         {
             let locale = self

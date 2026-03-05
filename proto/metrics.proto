@@ -14,10 +14,22 @@ message MetricDataPointProto {
   map<string, string> labels = 5;
 }
 
+message SystemInfoProto {
+  string hostname = 1;
+  string os = 2;
+  string os_version = 3;
+  string arch = 4;
+  string kernel_version = 5;
+  int32 cpu_cores = 6;
+  double memory_gb = 7;
+  double disk_gb = 8;
+}
+
 message MetricBatchProto {
   string agent_id = 1;
   int64 timestamp_ms = 2;
   repeated MetricDataPointProto data_points = 3;
+  optional SystemInfoProto system_info = 4;
 }
 
 message ReportResponse {

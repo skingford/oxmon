@@ -40,6 +40,14 @@ impl AgentRegistry {
                     active: now - *last_seen < timeout,
                     collection_interval_secs: None, // 从数据库查询
                     description: None,              // 从数据库查询
+                    hostname: None,
+                    os: None,
+                    os_version: None,
+                    arch: None,
+                    kernel_version: None,
+                    cpu_cores: None,
+                    memory_gb: None,
+                    disk_gb: None,
                 }
             })
             .collect()
@@ -59,6 +67,14 @@ impl AgentRegistry {
             active: now - *last_seen < timeout,
             collection_interval_secs: None, // 从数据库查询
             description: None,              // 从数据库查询
+            hostname: None,
+            os: None,
+            os_version: None,
+            arch: None,
+            kernel_version: None,
+            cpu_cores: None,
+            memory_gb: None,
+            disk_gb: None,
         })
     }
 }

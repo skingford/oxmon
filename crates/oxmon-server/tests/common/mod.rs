@@ -326,6 +326,7 @@ pub async fn grpc_report_direct(
             value,
             labels: std::collections::HashMap::from([("k".to_string(), "v".to_string())]),
         }],
+        system_info: None,
     });
 
     if let Some(token) = token {

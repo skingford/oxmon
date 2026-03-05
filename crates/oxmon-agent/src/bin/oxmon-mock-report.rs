@@ -263,6 +263,7 @@ fn build_batch(agent_id: &str, data_points: Vec<MetricDataPointProto>) -> Metric
         agent_id: agent_id.to_string(),
         timestamp_ms: Utc::now().timestamp_millis(),
         data_points,
+        system_info: None,
     }
 }
 
