@@ -134,3 +134,4 @@ The scheduler checks every tick (default 60s) if the current time has reached th
 
 - 默认返回中文
 - python 默认使用 uv 管理环境
+- 所有SQL 的操作替换为 sea-orm ORM 方式，以便将来更容易迁移到 PostgreSQL 等其他数据库

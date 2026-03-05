@@ -668,6 +668,37 @@ async fn delete_agent_record(
     success_id_response(StatusCode::OK, &trace_id, agent_entry.id)
 }
 
+/// Agent 上报日志条目
+#[derive(Serialize, ToSchema)]
+struct AgentReportLogResponse {
+    /// 记录 ID
+    id: String,
+    /// Agent 唯一标识
+    agent_id: String,
+    /// 本次上报的指标点数量
+    metric_count: i32,
+    /// 主机名
+    hostname: Option<String>,
+    /// 操作系统类型
+    os: Option<String>,
+    /// 操作系统版本
+    os_version: Option<String>,
+    /// CPU 架构
+    arch: Option<String>,
+    /// 内核版本
+    kernel_version: Option<String>,
+    /// CPU 核心数
+    cpu_cores: Option<i32>,
+    /// 内存大小（GB）
+    memory_gb: Option<f64>,
+    /// 磁盘大小（GB）
+    disk_gb: Option<f64>,
+    /// 上报时间（来自 MetricBatch 时间戳）
+    reported_at: DateTime<Utc>,
+    /// 记录创建时间
+    created_at: DateTime<Utc>,
+}
+
 /// 最新指标数据
 #[derive(Serialize, ToSchema)]
 struct LatestMetric {
@@ -783,7 +814,7 @@ async fn agent_latest(
         ("offset" = Option<u64>, Query, description = "偏移量（默认 0）"),
     ),
     responses(
-        (status = 200, description = "Agent 上报日志列表"),
+        (status = 200, description = "Agent 上报日志列表", body = Vec<AgentReportLogResponse>),
         (status = 401, description = "未认证", body = ApiError),
         (status = 404, description = "Agent 不存在", body = ApiError)
     )
@@ -794,8 +825,6 @@ async fn agent_report_logs(
     Path(id): Path<String>,
     Query(params): Query<PaginationParams>,
 ) -> impl IntoResponse {
-    use oxmon_storage::AgentReportLogRow;
-
     let agent_entry = match state
         .cert_store
         .get_agent_by_id_or_agent_id(&id)
@@ -846,24 +875,22 @@ async fn agent_report_logs(
         }
     };
 
-    let items: Vec<Value> = rows
+    let items: Vec<AgentReportLogResponse> = rows
         .into_iter()
-        .map(|r: AgentReportLogRow| {
-            serde_json::json!({
-                "id": r.id,
-                "agent_id": r.agent_id,
-                "metric_count": r.metric_count,
-                "hostname": r.hostname,
-                "os": r.os,
-                "os_version": r.os_version,
-                "arch": r.arch,
-                "kernel_version": r.kernel_version,
-                "cpu_cores": r.cpu_cores,
-                "memory_gb": r.memory_gb,
-                "disk_gb": r.disk_gb,
-                "reported_at": r.reported_at,
-                "created_at": r.created_at,
-            })
+        .map(|r| AgentReportLogResponse {
+            id: r.id,
+            agent_id: r.agent_id,
+            metric_count: r.metric_count,
+            hostname: r.hostname,
+            os: r.os,
+            os_version: r.os_version,
+            arch: r.arch,
+            kernel_version: r.kernel_version,
+            cpu_cores: r.cpu_cores,
+            memory_gb: r.memory_gb,
+            disk_gb: r.disk_gb,
+            reported_at: r.reported_at,
+            created_at: r.created_at,
         })
         .collect();
 
