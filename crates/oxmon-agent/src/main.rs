@@ -67,19 +67,11 @@ fn to_proto_batch(agent_id: &str, points: &[MetricDataPoint]) -> MetricBatchProt
 }
 
 async fn try_connect(endpoint: &str) -> Option<MetricServiceClient<Channel>> {
-    let ep = match tonic::transport::Channel::from_shared(endpoint.to_string()) {
-        Ok(ep) => ep,
-        Err(e) => {
-            tracing::warn!(error = %e, "Invalid endpoint URL");
-            return None;
-        }
-    };
-    match ep.connect().await {
-        Ok(channel) => {
+    match MetricServiceClient::connect(endpoint.to_string()).await {
+        Ok(client) => {
             tracing::info!("Connected to server");
-            // Increase message size limits to handle large buffered batches
             Some(
-                MetricServiceClient::new(channel)
+                client
                     .max_encoding_message_size(32 * 1024 * 1024)
                     .max_decoding_message_size(32 * 1024 * 1024),
             )
