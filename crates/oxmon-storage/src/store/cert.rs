@@ -5,8 +5,8 @@ use oxmon_common::types::{
     UpdateDomainRequest,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, EntityTrait, Order, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Select,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Order, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect,
 };
 use serde::{Deserialize, Serialize};
 
@@ -158,75 +158,63 @@ fn model_to_details(m: certificate_detail::Model) -> CertificateDetails {
     }
 }
 
-fn unix_seconds_to_fixed_offset(ts: i64) -> Option<DateTime<chrono::FixedOffset>> {
-    DateTime::<Utc>::from_timestamp(ts, 0).map(|dt| dt.fixed_offset())
+fn escape_sql_literal(s: &str) -> String {
+    s.replace('\'', "''")
 }
 
-fn apply_certificate_details_filters(
-    mut query: Select<DetailEntity>,
-    filter: &CertificateDetailsFilter,
-) -> Select<DetailEntity> {
+fn build_certificate_details_where_sql(filter: &CertificateDetailsFilter) -> String {
+    let mut sql = String::from(" WHERE 1=1");
+
     if let Some(ref s) = filter.domain_contains {
-        query = query.filter(DetailCol::Domain.contains(s.as_str()));
+        let escaped = escape_sql_like(s);
+        sql.push_str(&format!(" AND domain LIKE '%{escaped}%' ESCAPE '\\'"));
     }
     if let Some(ts) = filter.not_after_lte {
-        if let Some(dt) = unix_seconds_to_fixed_offset(ts) {
-            query = query.filter(DetailCol::NotAfter.lte(dt));
-        }
+        sql.push_str(&format!(" AND not_after <= {ts}"));
     }
     if let Some(ts) = filter.not_after_gte {
-        if let Some(dt) = unix_seconds_to_fixed_offset(ts) {
-            query = query.filter(DetailCol::NotAfter.gte(dt));
-        }
+        sql.push_str(&format!(" AND not_after >= {ts}"));
     }
     if let Some(chain_valid) = filter.chain_valid_eq {
-        query = query.filter(DetailCol::ChainValid.eq(chain_valid));
+        sql.push_str(&format!(
+            " AND chain_valid = {}",
+            if chain_valid { 1 } else { 0 }
+        ));
     }
     if let Some(is_valid) = filter.is_valid_eq {
-        let now = Utc::now().fixed_offset();
-
+        let now = Utc::now().timestamp();
         if is_valid {
-            query = query
-                .filter(DetailCol::ChainValid.eq(true))
-                .filter(DetailCol::NotAfter.gte(now));
+            sql.push_str(&format!(" AND chain_valid = 1 AND not_after >= {now}"));
         } else {
-            query = query.filter(
-                Condition::any()
-                    .add(DetailCol::ChainValid.eq(false))
-                    .add(DetailCol::NotAfter.lt(now)),
-            );
+            sql.push_str(&format!(" AND (chain_valid = 0 OR not_after < {now})"));
         }
     }
     if let Some(ref chain_error) = filter.chain_error_eq {
-        query = query.filter(DetailCol::ChainError.eq(chain_error.as_str()));
+        let escaped = escape_sql_literal(chain_error);
+        sql.push_str(&format!(" AND chain_error = '{escaped}'"));
     }
     if let Some(ts) = filter.last_checked_gte {
-        if let Some(dt) = unix_seconds_to_fixed_offset(ts) {
-            query = query.filter(DetailCol::LastChecked.gte(dt));
-        }
+        sql.push_str(&format!(" AND last_checked >= {ts}"));
     }
     if let Some(ts) = filter.last_checked_lte {
-        if let Some(dt) = unix_seconds_to_fixed_offset(ts) {
-            query = query.filter(DetailCol::LastChecked.lte(dt));
-        }
+        sql.push_str(&format!(" AND last_checked <= {ts}"));
     }
     if let Some(ref ip) = filter.ip_address_contains {
-        query = query.filter(DetailCol::IpAddresses.contains(ip.as_str()));
+        let escaped = escape_sql_like(ip);
+        sql.push_str(&format!(" AND ip_addresses LIKE '%{escaped}%' ESCAPE '\\'"));
     }
     if let Some(ref issuer) = filter.issuer_contains {
-        query = query.filter(
-            Condition::any()
-                .add(DetailCol::IssuerCn.contains(issuer.as_str()))
-                .add(DetailCol::IssuerO.contains(issuer.as_str()))
-                .add(DetailCol::IssuerOu.contains(issuer.as_str()))
-                .add(DetailCol::IssuerC.contains(issuer.as_str())),
-        );
+        let escaped = escape_sql_like(issuer);
+        sql.push_str(&format!(
+            " AND (issuer_cn LIKE '%{escaped}%' ESCAPE '\\' OR issuer_o LIKE '%{escaped}%' ESCAPE '\\' OR issuer_ou LIKE '%{escaped}%' ESCAPE '\\' OR issuer_c LIKE '%{escaped}%' ESCAPE '\\')"
+        ));
     }
     if let Some(ref tls_version) = filter.tls_version_eq {
-        query = query.filter(DetailCol::TlsVersion.eq(tls_version.as_str()));
+        let escaped = escape_sql_literal(tls_version);
+        sql.push_str(&format!(" AND tls_version = '{escaped}'"));
     }
 
-    query
+    sql
 }
 
 impl CertStore {
@@ -588,19 +576,8 @@ impl CertStore {
 
     pub async fn cert_summary(&self) -> Result<CertHealthSummary> {
         use sea_orm::{ConnectionTrait, Statement};
-        let total: u64 = DomainEntity::find()
-            .filter(DomainCol::Enabled.eq(true))
-            .count(self.db())
-            .await?;
-
-        let sql = "SELECT r.is_valid, r.days_until_expiry
-             FROM cert_check_results r
-             INNER JOIN (
-                 SELECT domain_id, MAX(checked_at) AS max_checked
-                 FROM cert_check_results
-                 GROUP BY domain_id
-             ) latest ON r.domain_id = latest.domain_id AND r.checked_at = latest.max_checked
-             INNER JOIN cert_domains d ON d.id = r.domain_id AND d.enabled = 1";
+        let sql = "SELECT chain_valid, not_after
+             FROM certificate_details";
 
         let rows = self
             .db()
@@ -613,16 +590,19 @@ impl CertStore {
         let mut valid: u64 = 0;
         let mut invalid: u64 = 0;
         let mut expiring_soon: u64 = 0;
+        let now = Utc::now().timestamp();
+        let soon_upper = now + 30 * 24 * 3600;
+        let total = rows.len() as u64;
 
         for row in rows {
-            let is_valid: bool = row.try_get("", "is_valid")?;
-            let days: Option<i32> = row.try_get("", "days_until_expiry")?;
+            let chain_valid: bool = row.try_get("", "chain_valid")?;
+            let not_after: i64 = row.try_get("", "not_after")?;
+            let is_valid = chain_valid && not_after >= now;
+
             if is_valid {
                 valid += 1;
-                if let Some(d) = days {
-                    if d <= 30 {
-                        expiring_soon += 1;
-                    }
+                if not_after <= soon_upper {
+                    expiring_soon += 1;
                 }
             } else {
                 invalid += 1;
@@ -855,22 +835,99 @@ impl CertStore {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<CertificateDetails>> {
-        let q = apply_certificate_details_filters(DetailEntity::find(), filter);
-        let rows = q
-            .order_by(DetailCol::Domain, Order::Asc)
-            .limit(limit as u64)
-            .offset(offset as u64)
-            .all(self.db())
+        use sea_orm::{ConnectionTrait, Statement};
+
+        let where_sql = build_certificate_details_where_sql(filter);
+        let sql = format!(
+            "SELECT
+                id, domain, not_before, not_after, ip_addresses,
+                issuer_cn, issuer_o, issuer_ou, issuer_c,
+                subject_alt_names, chain_valid, chain_error, last_checked,
+                serial_number, fingerprint_sha256, version, signature_algorithm,
+                public_key_algorithm, public_key_bits, subject_cn, subject_o,
+                key_usage, extended_key_usage, is_ca, is_wildcard, ocsp_urls,
+                crl_urls, ca_issuer_urls, sct_count, tls_version, cipher_suite,
+                chain_depth, created_at, updated_at
+             FROM certificate_details
+             {where_sql}
+             ORDER BY domain ASC
+             LIMIT {limit} OFFSET {offset}"
+        );
+
+        let rows = self
+            .db()
+            .query_all_raw(Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                sql,
+            ))
             .await?;
-        Ok(rows.into_iter().map(model_to_details).collect())
+
+        let mut result = Vec::with_capacity(rows.len());
+        for row in rows {
+            let model = certificate_detail::Model {
+                id: row.try_get("", "id")?,
+                domain: row.try_get("", "domain")?,
+                not_before: row.try_get("", "not_before")?,
+                not_after: row.try_get("", "not_after")?,
+                ip_addresses: row.try_get("", "ip_addresses")?,
+                issuer_cn: row.try_get("", "issuer_cn")?,
+                issuer_o: row.try_get("", "issuer_o")?,
+                issuer_ou: row.try_get("", "issuer_ou")?,
+                issuer_c: row.try_get("", "issuer_c")?,
+                subject_alt_names: row.try_get("", "subject_alt_names")?,
+                chain_valid: row.try_get("", "chain_valid")?,
+                chain_error: row.try_get("", "chain_error")?,
+                last_checked: row.try_get("", "last_checked")?,
+                serial_number: row.try_get("", "serial_number")?,
+                fingerprint_sha256: row.try_get("", "fingerprint_sha256")?,
+                version: row.try_get("", "version")?,
+                signature_algorithm: row.try_get("", "signature_algorithm")?,
+                public_key_algorithm: row.try_get("", "public_key_algorithm")?,
+                public_key_bits: row.try_get("", "public_key_bits")?,
+                subject_cn: row.try_get("", "subject_cn")?,
+                subject_o: row.try_get("", "subject_o")?,
+                key_usage: row.try_get("", "key_usage")?,
+                extended_key_usage: row.try_get("", "extended_key_usage")?,
+                is_ca: row.try_get("", "is_ca")?,
+                is_wildcard: row.try_get("", "is_wildcard")?,
+                ocsp_urls: row.try_get("", "ocsp_urls")?,
+                crl_urls: row.try_get("", "crl_urls")?,
+                ca_issuer_urls: row.try_get("", "ca_issuer_urls")?,
+                sct_count: row.try_get("", "sct_count")?,
+                tls_version: row.try_get("", "tls_version")?,
+                cipher_suite: row.try_get("", "cipher_suite")?,
+                chain_depth: row.try_get("", "chain_depth")?,
+                created_at: row.try_get("", "created_at")?,
+                updated_at: row.try_get("", "updated_at")?,
+            };
+            result.push(model_to_details(model));
+        }
+
+        Ok(result)
     }
 
     pub async fn count_certificate_details(
         &self,
         filter: &CertificateDetailsFilter,
     ) -> Result<u64> {
-        let q = apply_certificate_details_filters(DetailEntity::find(), filter);
-        Ok(q.count(self.db()).await?)
+        use sea_orm::{ConnectionTrait, Statement};
+
+        let where_sql = build_certificate_details_where_sql(filter);
+        let sql = format!("SELECT COUNT(*) AS cnt FROM certificate_details {where_sql}");
+        let rows = self
+            .db()
+            .query_all_raw(Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                sql,
+            ))
+            .await?;
+
+        if let Some(row) = rows.into_iter().next() {
+            let cnt: i64 = row.try_get("", "cnt")?;
+            Ok(cnt as u64)
+        } else {
+            Ok(0)
+        }
     }
 
     // ---- missing domain sync ----

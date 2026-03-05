@@ -124,13 +124,19 @@ impl AIReportScheduler {
             .get_latest_ai_report_by_account(config_key)
             .await?;
 
-        let now = chrono::Utc::now();
+        let now_utc = chrono::Utc::now();
+        // 使用服务器本地时间进行日期和时刻比较，确保 schedule_time 与本地时区一致
+        let now_local = now_utc.with_timezone(&chrono::Local);
 
         let Some(last_report) = last_report else {
             return Ok(true);
         };
-        let last_report_date = last_report.created_at.date_naive();
-        let today = now.date_naive();
+        // last_report.created_at 存储为 UTC，也转为本地时间再取日期
+        let last_report_date = last_report
+            .created_at
+            .with_timezone(&chrono::Local)
+            .date_naive();
+        let today = now_local.date_naive();
 
         if last_report_date == today {
             return Ok(false);
@@ -144,12 +150,12 @@ impl AIReportScheduler {
                     schedule_time = %schedule_time,
                     "Failed to parse schedule time, using interval mode"
                 );
-                let elapsed = now.timestamp() - last_report.created_at.timestamp();
+                let elapsed = now_utc.timestamp() - last_report.created_at.timestamp();
                 return Ok(elapsed >= interval_secs);
             }
         };
 
-        let current_time = now.time();
+        let current_time = now_local.time();
         let target_time = chrono::NaiveTime::from_hms_opt(target_hour, target_minute, 0)
             .ok_or_else(|| anyhow::anyhow!("Invalid time components"))?;
 

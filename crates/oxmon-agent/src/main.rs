@@ -67,10 +67,22 @@ fn to_proto_batch(agent_id: &str, points: &[MetricDataPoint]) -> MetricBatchProt
 }
 
 async fn try_connect(endpoint: &str) -> Option<MetricServiceClient<Channel>> {
-    match MetricServiceClient::connect(endpoint.to_string()).await {
-        Ok(client) => {
+    let ep = match tonic::transport::Channel::from_shared(endpoint.to_string()) {
+        Ok(ep) => ep,
+        Err(e) => {
+            tracing::warn!(error = %e, "Invalid endpoint URL");
+            return None;
+        }
+    };
+    match ep.connect().await {
+        Ok(channel) => {
             tracing::info!("Connected to server");
-            Some(client)
+            // Increase message size limits to handle large buffered batches
+            Some(
+                MetricServiceClient::new(channel)
+                    .max_encoding_message_size(32 * 1024 * 1024)
+                    .max_decoding_message_size(32 * 1024 * 1024),
+            )
         }
         Err(e) => {
             tracing::warn!(error = %e, "Failed to connect to server");
@@ -104,6 +116,9 @@ async fn main() -> Result<()> {
     let mut tick = interval(Duration::from_secs(config.collection_interval_secs));
     let mut client: Option<MetricServiceClient<Channel>> = None;
 
+    // Max points per gRPC request to avoid HTTP/2 FRAME_SIZE_ERROR
+    const SEND_CHUNK_SIZE: usize = 500;
+
     tracing::info!(
         interval_secs = config.collection_interval_secs,
         buffer_max = config.buffer_max_size,
@@ -131,6 +146,7 @@ async fn main() -> Result<()> {
                 }
 
                 // Try to send (current batch + buffered)
+                let mut connection_failed = false;
                 if let Some(ref mut c) = client {
                     // Drain any previously buffered data and combine with current batch
                     let mut buf = buffer.lock().await;
@@ -138,34 +154,47 @@ async fn main() -> Result<()> {
                     to_send.extend(all_points);
 
                     if !to_send.is_empty() {
-                        let batch = to_proto_batch(&config.agent_id, &to_send);
+                        let total = to_send.len();
+                        let mut failed_idx: Option<usize> = None;
 
-                        // Create request with authentication metadata if token is configured
-                        let mut request = tonic::Request::new(batch);
-                        if let Some(ref token) = config.auth_token {
-                            if let Ok(auth_val) = format!("Bearer {}", token).parse() {
-                                request.metadata_mut().insert("authorization", auth_val);
+                        // Send in chunks to avoid oversized gRPC messages
+                        for (chunk_idx, chunk) in to_send.chunks(SEND_CHUNK_SIZE).enumerate() {
+                            let batch = to_proto_batch(&config.agent_id, chunk);
+
+                            let mut request = tonic::Request::new(batch);
+                            if let Some(ref token) = config.auth_token {
+                                if let Ok(auth_val) = format!("Bearer {}", token).parse() {
+                                    request.metadata_mut().insert("authorization", auth_val);
+                                }
+                                if let Ok(agent_val) = config.agent_id.parse() {
+                                    request.metadata_mut().insert("agent-id", agent_val);
+                                }
                             }
-                            if let Ok(agent_val) = config.agent_id.parse() {
-                                request.metadata_mut().insert("agent-id", agent_val);
+
+                            match c.report_metrics(request).await {
+                                Ok(resp) => {
+                                    let resp = resp.into_inner();
+                                    if resp.success {
+                                        tracing::info!(count = chunk.len(), "Metrics chunk reported");
+                                    } else {
+                                        tracing::warn!(message = %resp.message, "Server rejected batch chunk");
+                                        failed_idx = Some(chunk_idx * SEND_CHUNK_SIZE);
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "Failed to send metrics, buffering");
+                                    failed_idx = Some(chunk_idx * SEND_CHUNK_SIZE);
+                                    connection_failed = true;
+                                    break;
+                                }
                             }
                         }
 
-                        match c.report_metrics(request).await {
-                            Ok(resp) => {
-                                let resp = resp.into_inner();
-                                if resp.success {
-                                    tracing::info!(count = to_send.len(), "Metrics reported");
-                                } else {
-                                    tracing::warn!(message = %resp.message, "Server rejected batch");
-                                    buf.push_batch(to_send);
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "Failed to send metrics, buffering");
-                                buf.push_batch(to_send);
-                                client = None; // Force reconnect
-                            }
+                        if let Some(idx) = failed_idx {
+                            buf.push_batch(to_send[idx..].to_vec());
+                        } else {
+                            tracing::info!(total, "All metrics reported successfully");
                         }
                     }
                 } else {
@@ -174,6 +203,10 @@ async fn main() -> Result<()> {
                     let buffered = buf.len();
                     buf.push_batch(all_points);
                     tracing::debug!(buffered = buf.len(), "No connection, buffering metrics (was {buffered})");
+                }
+
+                if connection_failed {
+                    client = None; // Force reconnect next tick
                 }
             }
             _ = signal::ctrl_c() => {

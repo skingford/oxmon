@@ -157,24 +157,21 @@ const DEFAULT_RULES: &[RuleDef] = &[
     },
 ];
 
-/// Initialize default alert rules if the database has no rules yet.
-///
-/// This runs after TOML migration so that TOML-migrated rules take priority.
-/// Only seeds when `count_alert_rules() == 0`.
 pub async fn init_default_rules(cert_store: &CertStore) -> anyhow::Result<usize> {
-    let count = cert_store.count_alert_rules(None, None).await?;
-    if count > 0 {
-        tracing::debug!(
-            existing = count,
-            "Alert rules already exist, skipping seed initialization"
-        );
-        return Ok(0);
-    }
+    // 按规则名称判重：只插入不存在的规则，确保新增的默认规则（如云实例规则）
+    // 在已有旧规则的数据库中也能被正确补充。
+    let existing_rules = cert_store.list_alert_rules(None, None, 10000, 0).await?;
+    let existing_names: std::collections::HashSet<String> =
+        existing_rules.into_iter().map(|r| r.name).collect();
 
     let now = Utc::now();
     let mut inserted = 0usize;
 
     for def in DEFAULT_RULES {
+        if existing_names.contains(def.name) {
+            tracing::debug!(name = %def.name, "Alert rule already exists, skipping");
+            continue;
+        }
         let row = AlertRuleRow {
             id: oxmon_common::id::next_id(),
             name: def.name.to_string(),
@@ -200,10 +197,12 @@ pub async fn init_default_rules(cert_store: &CertStore) -> anyhow::Result<usize>
         }
     }
 
-    tracing::info!(
-        inserted,
-        total = DEFAULT_RULES.len(),
-        "Default alert rules initialized"
-    );
+    if inserted > 0 {
+        tracing::info!(
+            inserted,
+            total = DEFAULT_RULES.len(),
+            "Default alert rules initialized"
+        );
+    }
     Ok(inserted)
 }
