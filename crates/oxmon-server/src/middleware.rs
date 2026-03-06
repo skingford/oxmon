@@ -105,7 +105,7 @@ mod tests {
     use oxmon_alert::engine::AlertEngine;
     use oxmon_notify::manager::NotificationManager;
     use oxmon_notify::plugin::ChannelRegistry;
-    use oxmon_storage::engine::SqliteStorageEngine;
+    use oxmon_storage::engine::SeaOrmStorageEngine;
     use oxmon_storage::CertStore;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
@@ -113,12 +113,12 @@ mod tests {
 
     async fn build_mock_state(app_id_config: AppIdConfig) -> Result<(AppState, TempDir)> {
         let temp_dir = tempfile::tempdir()?;
-        let storage = Arc::new(SqliteStorageEngine::new(temp_dir.path())?);
         let data_dir_str = temp_dir.path().to_string_lossy().to_string();
         let mut db_cfg = crate::config::DatabaseConfig::default();
         db_cfg.data_dir = data_dir_str;
         let db_url = db_cfg.connection_url();
         let cert_store = Arc::new(CertStore::new(&db_url, temp_dir.path()).await?);
+        let storage = Arc::new(SeaOrmStorageEngine::new(cert_store.db().clone()));
         let alert_engine = Arc::new(Mutex::new(AlertEngine::new(vec![])));
         let notifier = Arc::new(NotificationManager::new(
             ChannelRegistry::default(),

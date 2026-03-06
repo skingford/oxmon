@@ -17,7 +17,7 @@ use oxmon_server::config::ServerConfig;
 use oxmon_server::grpc;
 use oxmon_server::state::{AgentRegistry, AppState};
 use oxmon_storage::auth::{hash_token, PasswordEncryptor};
-use oxmon_storage::engine::SqliteStorageEngine;
+use oxmon_storage::engine::SeaOrmStorageEngine;
 use oxmon_storage::CertStore;
 use rsa::sha2::Sha256;
 use rsa::{Oaep, RsaPublicKey};
@@ -61,12 +61,12 @@ pub async fn build_test_context() -> Result<TestContext> {
     ensure_rustls_provider();
 
     let temp_dir = tempfile::tempdir()?;
-    let storage = Arc::new(SqliteStorageEngine::new(temp_dir.path())?);
     let data_dir_str = temp_dir.path().to_string_lossy().to_string();
     let mut db_cfg = oxmon_server::config::DatabaseConfig::default();
     db_cfg.data_dir = data_dir_str;
     let db_url = db_cfg.connection_url();
     let cert_store = Arc::new(CertStore::new(&db_url, temp_dir.path()).await?);
+    let storage = Arc::new(SeaOrmStorageEngine::new(cert_store.db().clone()));
 
     let password_hash = hash_token("changeme")?;
     let _ = cert_store.create_user("admin", &password_hash).await?;

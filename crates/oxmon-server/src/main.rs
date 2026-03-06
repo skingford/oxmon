@@ -4,9 +4,8 @@ use oxmon_alert::engine::AlertEngine;
 use oxmon_common::proto::metric_service_server::MetricServiceServer;
 use oxmon_notify::manager::NotificationManager;
 use oxmon_notify::plugin::ChannelRegistry;
-use oxmon_storage::engine::SqliteStorageEngine;
-use oxmon_storage::StorageEngine;
-use oxmon_storage::{AlertRuleRow, CertStore};
+use oxmon_storage::engine::SeaOrmStorageEngine;
+use oxmon_storage::{AlertRuleRow, CertStore, StorageEngine};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -404,12 +403,10 @@ async fn run_server(config_path: &str) -> Result<()> {
         "oxmon-server starting"
     );
 
-    // Build components
-    let storage = Arc::new(SqliteStorageEngine::new(Path::new(
-        &config.database.data_dir,
-    ))?);
+    // Build components：先初始化管理数据库（含迁移），再共享连接池给时序存储
     let db_url = config.database.connection_url();
     let cert_store = Arc::new(CertStore::new(&db_url, Path::new(&config.database.data_dir)).await?);
+    let storage = Arc::new(SeaOrmStorageEngine::new(cert_store.db().clone()));
     let agent_registry = Arc::new(Mutex::new(AgentRegistry::new(
         config.agent_collection_interval_secs,
     )));
@@ -580,9 +577,9 @@ async fn run_server(config_path: &str) -> Result<()> {
         let mut tick = interval(Duration::from_secs(3600)); // Every hour
         loop {
             tick.tick().await;
-            match cleanup_storage.cleanup(retention_days) {
+            match cleanup_storage.cleanup(retention_days).await {
                 Ok(removed) if removed > 0 => {
-                    tracing::info!(removed, "Cleaned up expired partitions")
+                    tracing::info!(removed, "Cleaned up expired data")
                 }
                 Err(e) => tracing::error!(error = %e, "Cleanup failed"),
                 _ => {}

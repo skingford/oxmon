@@ -1,14 +1,19 @@
-use crate::engine::SqliteStorageEngine;
-use crate::{MetricQuery, StorageEngine};
+use crate::engine::SeaOrmStorageEngine;
+use crate::{CertStore, MetricQuery, StorageEngine};
 use chrono::{Duration, Utc};
 use oxmon_common::types::{AlertEvent, MetricBatch, MetricDataPoint, Severity};
 use std::collections::HashMap;
 use tempfile::TempDir;
 
-fn setup() -> (TempDir, SqliteStorageEngine) {
+async fn setup() -> (TempDir, SeaOrmStorageEngine) {
     oxmon_common::id::init(1, 1);
     let dir = TempDir::new().unwrap();
-    let engine = SqliteStorageEngine::new(dir.path()).unwrap();
+    let db_url = format!(
+        "sqlite://{}?mode=rwc",
+        dir.path().join("test.db").display()
+    );
+    let cert_store = CertStore::new(&db_url, dir.path()).await.unwrap();
+    let engine = SeaOrmStorageEngine::new(cert_store.db().clone());
     (dir, engine)
 }
 
@@ -36,12 +41,12 @@ fn make_batch(agent: &str, metric: &str, values: &[(f64, i64)]) -> MetricBatch {
     }
 }
 
-#[test]
-fn write_and_query_metrics() {
-    let (_dir, engine) = setup();
+#[tokio::test]
+async fn write_and_query_metrics() {
+    let (_dir, engine) = setup().await;
 
     let batch = make_batch("web-01", "cpu.usage", &[(95.0, 10), (90.0, 5), (85.0, 0)]);
-    engine.write_batch(&batch).unwrap();
+    engine.write_batch(&batch).await.unwrap();
 
     let query = MetricQuery {
         agent_id: "web-01".to_string(),
@@ -50,14 +55,14 @@ fn write_and_query_metrics() {
         to: Utc::now() + Duration::seconds(1),
     };
 
-    let results = engine.query(&query).unwrap();
+    let results = engine.query(&query).await.unwrap();
     assert_eq!(results.len(), 3);
     assert!(results[0].timestamp <= results[1].timestamp);
 }
 
-#[test]
-fn query_empty_result() {
-    let (_dir, engine) = setup();
+#[tokio::test]
+async fn query_empty_result() {
+    let (_dir, engine) = setup().await;
 
     let query = MetricQuery {
         agent_id: "nonexistent".to_string(),
@@ -66,13 +71,13 @@ fn query_empty_result() {
         to: Utc::now(),
     };
 
-    let results = engine.query(&query).unwrap();
+    let results = engine.query(&query).await.unwrap();
     assert!(results.is_empty());
 }
 
-#[test]
-fn write_and_query_alert_events() {
-    let (_dir, engine) = setup();
+#[tokio::test]
+async fn write_and_query_alert_events() {
+    let (_dir, engine) = setup().await;
 
     let now = Utc::now();
     let event = AlertEvent {
@@ -94,7 +99,7 @@ fn write_and_query_alert_events() {
         updated_at: now,
     };
 
-    engine.write_alert_event(&event).unwrap();
+    engine.write_alert_event(&event).await.unwrap();
 
     let results = engine
         .query_alert_history(
@@ -105,15 +110,16 @@ fn write_and_query_alert_events() {
             100,
             0,
         )
+        .await
         .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id, "test-alert-1");
     assert_eq!(results[0].severity, Severity::Critical);
 }
 
-#[test]
-fn query_alert_history_filters() {
-    let (_dir, engine) = setup();
+#[tokio::test]
+async fn query_alert_history_filters() {
+    let (_dir, engine) = setup().await;
 
     let now = Utc::now();
     for i in 0..3 {
@@ -140,7 +146,7 @@ fn query_alert_history_filters() {
             created_at: ts,
             updated_at: ts,
         };
-        engine.write_alert_event(&event).unwrap();
+        engine.write_alert_event(&event).await.unwrap();
     }
 
     // Filter by severity
@@ -153,6 +159,7 @@ fn query_alert_history_filters() {
             100,
             0,
         )
+        .await
         .unwrap();
     assert_eq!(critical.len(), 1);
 
@@ -166,29 +173,27 @@ fn query_alert_history_filters() {
             100,
             0,
         )
+        .await
         .unwrap();
     assert_eq!(db_alerts.len(), 1);
 }
 
-#[test]
-fn retention_cleanup() {
-    let (_dir, engine) = setup();
+#[tokio::test]
+async fn retention_cleanup() {
+    let (_dir, engine) = setup().await;
 
     // Write data for "today"
     let batch = make_batch("web-01", "cpu.usage", &[(50.0, 0)]);
-    engine.write_batch(&batch).unwrap();
+    engine.write_batch(&batch).await.unwrap();
 
-    // Cleanup with 0 retention should remove today's partition
-    let removed = engine.cleanup(0).unwrap();
-    // Today's partition might or might not be removed (depends on cutoff)
-    // With retention_days=0, only partitions strictly before today are removed
-    // so current day data should survive
+    // Cleanup with 0 retention removes data older than cutoff
+    let removed = engine.cleanup(0).await.unwrap();
     assert!(removed == 0 || removed == 1);
 }
 
-#[test]
-fn pagination() {
-    let (_dir, engine) = setup();
+#[tokio::test]
+async fn pagination() {
+    let (_dir, engine) = setup().await;
 
     let now = Utc::now();
     for i in 0..10 {
@@ -211,7 +216,7 @@ fn pagination() {
             created_at: ts,
             updated_at: ts,
         };
-        engine.write_alert_event(&event).unwrap();
+        engine.write_alert_event(&event).await.unwrap();
     }
 
     let page1 = engine
@@ -223,6 +228,7 @@ fn pagination() {
             3,
             0,
         )
+        .await
         .unwrap();
     assert_eq!(page1.len(), 3);
 
@@ -235,6 +241,7 @@ fn pagination() {
             3,
             3,
         )
+        .await
         .unwrap();
     assert_eq!(page2.len(), 3);
 
@@ -242,9 +249,9 @@ fn pagination() {
     assert_ne!(page1[0].id, page2[0].id);
 }
 
-#[test]
-fn query_metrics_paginated() {
-    let (_dir, engine) = setup();
+#[tokio::test]
+async fn query_metrics_paginated() {
+    let (_dir, engine) = setup().await;
 
     let now = Utc::now();
     for i in 0..30 {
@@ -263,7 +270,7 @@ fn query_metrics_paginated() {
                 updated_at: ts,
             }],
         };
-        engine.write_batch(&batch).unwrap();
+        engine.write_batch(&batch).await.unwrap();
     }
 
     let page1 = engine
@@ -275,6 +282,7 @@ fn query_metrics_paginated() {
             20,
             0,
         )
+        .await
         .unwrap();
     assert_eq!(page1.len(), 20);
 
@@ -287,6 +295,7 @@ fn query_metrics_paginated() {
             20,
             20,
         )
+        .await
         .unwrap();
     assert_eq!(page2.len(), 10);
 

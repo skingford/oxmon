@@ -1,105 +1,195 @@
-use crate::partition::PartitionManager;
+use crate::entities::alert_event::{Column as AeCol, Entity as AeEntity};
+use crate::entities::metric::{Column as MCol, Entity as MEntity};
 use crate::{AlertSummary, MetricQuery, MetricSummary, PartitionInfo, StorageEngine};
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use oxmon_common::types::{AlertEvent, MetricBatch, MetricDataPoint, Severity};
+use sea_orm::{
+    ActiveValue::Set, ColumnTrait, Condition, DatabaseConnection, EntityTrait,
+    FromQueryResult, Order, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement, Value,
+    sea_query::OnConflict,
+};
 use std::collections::HashMap;
-use std::path::Path;
 
-pub struct SqliteStorageEngine {
-    partitions: PartitionManager,
+// ---- 辅助转换函数 ----
+
+fn model_to_dp(m: crate::entities::metric::Model) -> Result<MetricDataPoint> {
+    let labels: HashMap<String, String> =
+        serde_json::from_str(&m.labels).unwrap_or_default();
+    let timestamp = DateTime::from_timestamp_millis(m.timestamp).unwrap_or_default();
+    let created_at = DateTime::from_timestamp_millis(m.created_at).unwrap_or_default();
+    let updated_at = DateTime::from_timestamp_millis(m.updated_at).unwrap_or_default();
+    Ok(MetricDataPoint {
+        id: m.id,
+        timestamp,
+        agent_id: m.agent_id,
+        metric_name: m.metric_name,
+        value: m.value,
+        labels,
+        created_at,
+        updated_at,
+    })
 }
 
-impl SqliteStorageEngine {
-    pub fn new(data_dir: &Path) -> Result<Self> {
-        Ok(Self {
-            partitions: PartitionManager::new(data_dir)?,
-        })
+fn ae_model_to_event(m: crate::entities::alert_event::Model) -> AlertEvent {
+    let labels: HashMap<String, String> =
+        serde_json::from_str(&m.labels).unwrap_or_default();
+    let timestamp = DateTime::from_timestamp_millis(m.timestamp).unwrap_or_default();
+    let predicted_breach = m.predicted_breach.and_then(DateTime::from_timestamp_millis);
+    let first_triggered_at =
+        m.first_triggered_at.and_then(DateTime::from_timestamp_millis);
+    let created_at = DateTime::from_timestamp_millis(m.created_at).unwrap_or_default();
+    let updated_at = DateTime::from_timestamp_millis(m.updated_at).unwrap_or_default();
+    let severity: Severity = m.severity.parse().unwrap_or(Severity::Info);
+    let status = match m.status.as_deref() {
+        Some("acknowledged") => 2,
+        Some("resolved") => 3,
+        _ => 1,
+    };
+    AlertEvent {
+        id: m.id,
+        rule_id: m.rule_id,
+        rule_name: m.rule_name,
+        agent_id: m.agent_id,
+        metric_name: m.metric_name,
+        severity,
+        message: m.message,
+        value: m.value,
+        threshold: m.threshold,
+        timestamp,
+        predicted_breach,
+        labels,
+        first_triggered_at,
+        status,
+        created_at,
+        updated_at,
     }
 }
 
-impl StorageEngine for SqliteStorageEngine {
-    fn write_batch(&self, batch: &MetricBatch) -> Result<()> {
-        let key = self.partitions.get_or_create(batch.timestamp)?;
-        self.partitions.with_partition(&key, |conn| {
-            let tx = conn.unchecked_transaction()?;
-            {
-                let mut stmt = tx.prepare_cached(
-                    "INSERT INTO metrics (id, timestamp, agent_id, metric_name, value, labels, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                )?;
-                for dp in &batch.data_points {
-                    let labels_json = serde_json::to_string(&dp.labels)?;
-                    let now = chrono::Utc::now().timestamp();
-                    stmt.execute(rusqlite::params![
-                        dp.id,
-                        dp.timestamp.timestamp_millis(),
-                        &dp.agent_id,
-                        &dp.metric_name,
-                        dp.value,
-                        labels_json,
-                        now,
-                        now,
-                    ])?;
+// ---- 聚合查询结果结构（模块级别，供 FromQueryResult 派生） ----
+
+#[derive(Debug, FromQueryResult)]
+struct MetricNameRow {
+    metric_name: String,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct AgentIdRow {
+    agent_id: String,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct SummaryRow {
+    min_val: Option<f64>,
+    max_val: Option<f64>,
+    avg_val: Option<f64>,
+    cnt: i64,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct AlertGroupRow {
+    severity: String,
+    rule_id: String,
+    agent_id: String,
+    metric_name: String,
+    status: Option<String>,
+    cnt: i64,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct CountRow {
+    cnt: i64,
+}
+
+// ---- SeaOrmStorageEngine ----
+
+pub struct SeaOrmStorageEngine {
+    pub(crate) db: DatabaseConnection,
+}
+
+impl SeaOrmStorageEngine {
+    pub fn new(db: DatabaseConnection) -> Self {
+        Self { db }
+    }
+
+    async fn update_alert_status(&self, event_id: &str, new_status: &str) -> Result<bool> {
+        let now = Utc::now().timestamp_millis();
+        let result = AeEntity::update_many()
+            .col_expr(
+                AeCol::Status,
+                sea_orm::sea_query::Expr::value(new_status),
+            )
+            .col_expr(
+                AeCol::UpdatedAt,
+                sea_orm::sea_query::Expr::value(now),
+            )
+            .filter(AeCol::Id.eq(event_id))
+            .exec(&self.db)
+            .await?;
+        Ok(result.rows_affected > 0)
+    }
+}
+
+#[async_trait]
+impl StorageEngine for SeaOrmStorageEngine {
+    // ---- 指标写入 ----
+
+    async fn write_batch(&self, batch: &MetricBatch) -> Result<()> {
+        if batch.data_points.is_empty() {
+            return Ok(());
+        }
+        let now = Utc::now().timestamp_millis();
+        let models: Vec<crate::entities::metric::ActiveModel> = batch
+            .data_points
+            .iter()
+            .map(|dp| {
+                let labels_json =
+                    serde_json::to_string(&dp.labels).unwrap_or_else(|_| "{}".to_string());
+                crate::entities::metric::ActiveModel {
+                    id: Set(dp.id.clone()),
+                    timestamp: Set(dp.timestamp.timestamp_millis()),
+                    agent_id: Set(dp.agent_id.clone()),
+                    metric_name: Set(dp.metric_name.clone()),
+                    value: Set(dp.value),
+                    labels: Set(labels_json),
+                    created_at: Set(now),
+                    updated_at: Set(now),
                 }
-            }
-            tx.commit()?;
-            Ok(())
-        })
+            })
+            .collect();
+
+        MEntity::insert_many(models)
+            .on_conflict(
+                OnConflict::column(MCol::Id)
+                    .do_nothing()
+                    .to_owned(),
+            )
+            .exec_without_returning(&self.db)
+            .await?;
+
+        Ok(())
     }
 
-    fn query(&self, query: &MetricQuery) -> Result<Vec<MetricDataPoint>> {
-        let keys = self.partitions.partitions_in_range(query.from, query.to)?;
-        let mut results = Vec::new();
+    // ---- 指标查询 ----
+
+    async fn query(&self, query: &MetricQuery) -> Result<Vec<MetricDataPoint>> {
         let from_ms = query.from.timestamp_millis();
         let to_ms = query.to.timestamp_millis();
 
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                let mut stmt = conn.prepare_cached(
-                    "SELECT id, timestamp, agent_id, metric_name, value, labels, created_at, updated_at FROM metrics
-                     WHERE agent_id = ?1 AND metric_name = ?2 AND timestamp >= ?3 AND timestamp <= ?4
-                     ORDER BY timestamp ASC",
-                )?;
-                let rows = stmt.query_map(
-                    rusqlite::params![&query.agent_id, &query.metric_name, from_ms, to_ms],
-                    |row| {
-                        let id: String = row.get(0)?;
-                        let ts_ms: i64 = row.get(1)?;
-                        let agent_id: String = row.get(2)?;
-                        let metric_name: String = row.get(3)?;
-                        let value: f64 = row.get(4)?;
-                        let labels_str: String = row.get(5)?;
-                        let created_at: i64 = row.get(6)?;
-                        let updated_at: i64 = row.get(7)?;
-                        Ok((id, ts_ms, agent_id, metric_name, value, labels_str, created_at, updated_at))
-                    },
-                )?;
-                for row in rows {
-                    let (id, ts_ms, agent_id, metric_name, value, labels_str, created_at, updated_at) = row?;
-                    let timestamp = DateTime::from_timestamp_millis(ts_ms)
-                        .unwrap_or_default();
-                    let labels: HashMap<String, String> =
-                        serde_json::from_str(&labels_str).unwrap_or_default();
-                    results.push(MetricDataPoint {
-                        id,
-                        timestamp,
-                        agent_id,
-                        metric_name,
-                        value,
-                        labels,
-                        created_at: DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
-                        updated_at: DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
-                    });
-                }
-                Ok(())
-            })?;
-        }
+        let models = MEntity::find()
+            .filter(MCol::AgentId.eq(&query.agent_id))
+            .filter(MCol::MetricName.eq(&query.metric_name))
+            .filter(MCol::Timestamp.gte(from_ms))
+            .filter(MCol::Timestamp.lte(to_ms))
+            .order_by(MCol::Timestamp, Order::Asc)
+            .all(&self.db)
+            .await?;
 
-        results.sort_by_key(|dp| dp.timestamp);
-        Ok(results)
+        models.into_iter().map(model_to_dp).collect()
     }
 
-    fn query_metrics_paginated(
+    async fn query_metrics_paginated(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
@@ -108,117 +198,112 @@ impl StorageEngine for SqliteStorageEngine {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<MetricDataPoint>> {
-        let keys = self.partitions.partitions_in_range(from, to)?;
-        let mut results = Vec::new();
         let from_ms = from.timestamp_millis();
         let to_ms = to.timestamp_millis();
 
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                let mut sql = String::from(
-                    "SELECT id, timestamp, agent_id, metric_name, value, labels, created_at, updated_at
-                     FROM metrics WHERE timestamp >= ?1 AND timestamp <= ?2",
-                );
-                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
-                    Box::new(from_ms),
-                    Box::new(to_ms),
-                ];
+        let mut q = MEntity::find()
+            .filter(MCol::Timestamp.gte(from_ms))
+            .filter(MCol::Timestamp.lte(to_ms));
 
-                if let Some(agent) = agent_id {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND agent_id = ?{idx}"));
-                    params.push(Box::new(agent.to_string()));
-                }
-
-                if let Some(metric) = metric_name {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND metric_name = ?{idx}"));
-                    params.push(Box::new(metric.to_string()));
-                }
-
-                sql.push_str(" ORDER BY created_at DESC, timestamp DESC");
-
-                let mut stmt = conn.prepare(&sql)?;
-                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-                    params.iter().map(|p| p.as_ref()).collect();
-                let rows = stmt.query_map(param_refs.as_slice(), |row| {
-                    let id: String = row.get(0)?;
-                    let ts_ms: i64 = row.get(1)?;
-                    let agent_id: String = row.get(2)?;
-                    let metric_name: String = row.get(3)?;
-                    let value: f64 = row.get(4)?;
-                    let labels_str: String = row.get(5)?;
-                    let created_at: i64 = row.get(6)?;
-                    let updated_at: i64 = row.get(7)?;
-                    Ok((id, ts_ms, agent_id, metric_name, value, labels_str, created_at, updated_at))
-                })?;
-
-                for row in rows {
-                    let (id, ts_ms, row_agent_id, row_metric_name, value, labels_str, created_at, updated_at) = row?;
-                    let timestamp = DateTime::from_timestamp_millis(ts_ms)
-                        .unwrap_or_default();
-                    let labels: HashMap<String, String> =
-                        serde_json::from_str(&labels_str).unwrap_or_default();
-                    results.push(MetricDataPoint {
-                        id,
-                        timestamp,
-                        agent_id: row_agent_id,
-                        metric_name: row_metric_name,
-                        value,
-                        labels,
-                        created_at: DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
-                        updated_at: DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
-                    });
-                }
-
-                Ok(())
-            })?;
+        if let Some(aid) = agent_id {
+            q = q.filter(MCol::AgentId.eq(aid));
+        }
+        if let Some(mn) = metric_name {
+            q = q.filter(MCol::MetricName.eq(mn));
         }
 
-        results.sort_by(|a, b| {
-            b.created_at
-                .cmp(&a.created_at)
-                .then_with(|| b.timestamp.cmp(&a.timestamp))
-        });
-        let results = results.into_iter().skip(offset).take(limit).collect();
-        Ok(results)
+        let models = q
+            .order_by(MCol::CreatedAt, Order::Desc)
+            .order_by(MCol::Timestamp, Order::Desc)
+            .limit(limit as u64)
+            .offset(offset as u64)
+            .all(&self.db)
+            .await?;
+
+        models.into_iter().map(model_to_dp).collect()
     }
 
-    fn cleanup(&self, retention_days: u32) -> Result<u32> {
-        self.partitions.cleanup_older_than(retention_days)
+    // ---- 数据清理 ----
+
+    async fn cleanup(&self, retention_days: u32) -> Result<u32> {
+        let cutoff_ms = (Utc::now() - chrono::Duration::days(retention_days as i64))
+            .timestamp_millis();
+
+        let metric_result = MEntity::delete_many()
+            .filter(MCol::Timestamp.lt(cutoff_ms))
+            .exec(&self.db)
+            .await?;
+
+        let alert_result = AeEntity::delete_many()
+            .filter(AeCol::Timestamp.lt(cutoff_ms))
+            .exec(&self.db)
+            .await?;
+
+        Ok((metric_result.rows_affected + alert_result.rows_affected) as u32)
     }
 
-    fn write_alert_event(&self, event: &AlertEvent) -> Result<()> {
-        let key = self.partitions.get_or_create(event.timestamp)?;
-        self.partitions.with_partition(&key, |conn| {
-            let now = chrono::Utc::now().timestamp();
-            let labels_json = serde_json::to_string(&event.labels)?;
-            conn.execute(
-                "INSERT OR REPLACE INTO alert_events (id, rule_id, rule_name, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach, labels, first_triggered_at, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-                rusqlite::params![
-                    &event.id,
-                    &event.rule_id,
-                    &event.rule_name,
-                    &event.agent_id,
-                    &event.metric_name,
-                    event.severity.to_string(),
-                    &event.message,
-                    event.value,
-                    event.threshold,
-                    event.timestamp.timestamp_millis(),
-                    event.predicted_breach.map(|t| t.timestamp_millis()),
-                    labels_json,
-                    event.first_triggered_at.map(|t| t.timestamp_millis()),
-                    now,
-                    now,
-                ],
-            )?;
-            Ok(())
-        })
+    // ---- 告警事件写入 ----
+
+    async fn write_alert_event(&self, event: &AlertEvent) -> Result<()> {
+        let now = Utc::now().timestamp_millis();
+        let labels_json = serde_json::to_string(&event.labels)?;
+        let status_str = match event.status {
+            2 => Some("acknowledged".to_string()),
+            3 => Some("resolved".to_string()),
+            _ => None,
+        };
+
+        let am = crate::entities::alert_event::ActiveModel {
+            id: Set(event.id.clone()),
+            rule_id: Set(event.rule_id.clone()),
+            rule_name: Set(event.rule_name.clone()),
+            agent_id: Set(event.agent_id.clone()),
+            metric_name: Set(event.metric_name.clone()),
+            severity: Set(event.severity.to_string()),
+            message: Set(event.message.clone()),
+            value: Set(event.value),
+            threshold: Set(event.threshold),
+            timestamp: Set(event.timestamp.timestamp_millis()),
+            predicted_breach: Set(event.predicted_breach.map(|t| t.timestamp_millis())),
+            labels: Set(labels_json),
+            first_triggered_at: Set(
+                event.first_triggered_at.map(|t| t.timestamp_millis()),
+            ),
+            status: Set(status_str),
+            created_at: Set(now),
+            updated_at: Set(now),
+        };
+
+        AeEntity::insert(am)
+            .on_conflict(
+                OnConflict::column(AeCol::Id)
+                    .update_columns([
+                        AeCol::RuleId,
+                        AeCol::RuleName,
+                        AeCol::AgentId,
+                        AeCol::MetricName,
+                        AeCol::Severity,
+                        AeCol::Message,
+                        AeCol::Value,
+                        AeCol::Threshold,
+                        AeCol::Timestamp,
+                        AeCol::PredictedBreach,
+                        AeCol::Labels,
+                        AeCol::FirstTriggeredAt,
+                        AeCol::Status,
+                        AeCol::UpdatedAt,
+                    ])
+                    .to_owned(),
+            )
+            .exec(&self.db)
+            .await?;
+
+        Ok(())
     }
 
-    fn query_alert_history(
+    // ---- 告警历史查询 ----
+
+    async fn query_alert_history(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
@@ -227,243 +312,155 @@ impl StorageEngine for SqliteStorageEngine {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<AlertEvent>> {
-        let keys = self.partitions.partitions_in_range(from, to)?;
-        let mut results = Vec::new();
         let from_ms = from.timestamp_millis();
         let to_ms = to.timestamp_millis();
 
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                let mut sql = String::from(
-                    "SELECT id, rule_id, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach, created_at, updated_at, status, rule_name, labels, first_triggered_at
-                     FROM alert_events WHERE timestamp >= ?1 AND timestamp <= ?2",
-                );
-                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
-                    Box::new(from_ms),
-                    Box::new(to_ms),
-                ];
+        let mut q = AeEntity::find()
+            .filter(AeCol::Timestamp.gte(from_ms))
+            .filter(AeCol::Timestamp.lte(to_ms));
 
-                if let Some(sev) = severity {
-                    sql.push_str(" AND severity = ?3");
-                    params.push(Box::new(sev.to_string()));
-                }
-                if let Some(aid) = agent_id {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND agent_id = ?{idx}"));
-                    params.push(Box::new(aid.to_string()));
-                }
-
-                sql.push_str(" ORDER BY created_at DESC");
-
-                let mut stmt = conn.prepare(&sql)?;
-                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-                    params.iter().map(|p| p.as_ref()).collect();
-                let rows = stmt.query_map(param_refs.as_slice(), |row| {
-                    let ts_ms: i64 = row.get(8)?;
-                    let predicted_ms: Option<i64> = row.get(9)?;
-                    let sev_str: String = row.get(4)?;
-                    let created_at: i64 = row.get(10)?;
-                    let updated_at: i64 = row.get(11)?;
-                    let status_str: Option<String> = row.get(12)?;
-                    let rule_name: String = row.get(13)?;
-                    let labels_str: String = row.get(14)?;
-                    let first_triggered_ms: Option<i64> = row.get(15)?;
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        sev_str,
-                        row.get::<_, String>(5)?,
-                        row.get::<_, f64>(6)?,
-                        row.get::<_, f64>(7)?,
-                        ts_ms,
-                        predicted_ms,
-                        created_at,
-                        updated_at,
-                        status_str,
-                        rule_name,
-                        labels_str,
-                        first_triggered_ms,
-                    ))
-                })?;
-
-                for row in rows {
-                    let (id, rule_id, agent_id, metric_name, sev_str, message, value, threshold, ts_ms, predicted_ms, created_at, updated_at, status_str, rule_name, labels_str, first_triggered_ms) = row?;
-                    let timestamp = DateTime::from_timestamp_millis(ts_ms)
-                        .unwrap_or_default();
-                    let predicted_breach = predicted_ms
-                        .and_then(DateTime::from_timestamp_millis);
-                    let severity_val: Severity = sev_str.parse().unwrap_or(Severity::Info);
-                    let status = match status_str.as_deref() {
-                        Some("acknowledged") => 2,
-                        Some("resolved") => 3,
-                        _ => 1,
-                    };
-                    let labels: HashMap<String, String> = serde_json::from_str(&labels_str)
-                        .unwrap_or_default();
-                    let first_triggered_at = first_triggered_ms
-                        .and_then(DateTime::from_timestamp_millis);
-                    results.push(AlertEvent {
-                        id,
-                        rule_id,
-                        rule_name,
-                        agent_id,
-                        metric_name,
-                        severity: severity_val,
-                        message,
-                        value,
-                        threshold,
-                        timestamp,
-                        predicted_breach,
-                        status,
-                        labels,
-                        first_triggered_at,
-                        created_at: DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
-                        updated_at: DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
-                    });
-                }
-                Ok(())
-            })?;
+        if let Some(sev) = severity {
+            q = q.filter(AeCol::Severity.eq(sev));
+        }
+        if let Some(aid) = agent_id {
+            q = q.filter(AeCol::AgentId.eq(aid));
         }
 
-        results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        let results = results.into_iter().skip(offset).take(limit).collect();
-        Ok(results)
+        let models = q
+            .order_by(AeCol::CreatedAt, Order::Desc)
+            .limit(limit as u64)
+            .offset(offset as u64)
+            .all(&self.db)
+            .await?;
+
+        Ok(models.into_iter().map(ae_model_to_event).collect())
     }
 
-    fn query_distinct_metric_names(
+    // ---- DISTINCT 查询 ----
+
+    async fn query_distinct_metric_names(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<String>> {
-        let keys = self.partitions.partitions_in_range(from, to)?;
         let from_ms = from.timestamp_millis();
         let to_ms = to.timestamp_millis();
-        let mut names = std::collections::HashSet::new();
 
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                let mut stmt = conn.prepare_cached(
-                    "SELECT DISTINCT metric_name FROM metrics WHERE timestamp >= ?1 AND timestamp <= ?2",
-                )?;
-                let rows = stmt.query_map(rusqlite::params![from_ms, to_ms], |row| {
-                    row.get::<_, String>(0)
-                })?;
-                for row in rows {
-                    names.insert(row?);
-                }
-                Ok(())
-            })?;
-        }
+        let rows = MetricNameRow::find_by_statement(Statement::from_sql_and_values(
+            self.db.get_database_backend(),
+            "SELECT DISTINCT metric_name FROM metrics
+             WHERE timestamp >= $1 AND timestamp <= $2
+             ORDER BY metric_name
+             LIMIT $3 OFFSET $4",
+            vec![
+                Value::BigInt(Some(from_ms)),
+                Value::BigInt(Some(to_ms)),
+                Value::BigInt(Some(limit as i64)),
+                Value::BigInt(Some(offset as i64)),
+            ],
+        ))
+        .all(&self.db)
+        .await?;
 
-        let mut result: Vec<String> = names.into_iter().collect();
-        result.sort();
-        let result = result.into_iter().skip(offset).take(limit).collect();
-        Ok(result)
+        Ok(rows.into_iter().map(|r| r.metric_name).collect())
     }
 
-    fn query_distinct_agent_ids(
+    async fn query_distinct_agent_ids(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<String>> {
-        let keys = self.partitions.partitions_in_range(from, to)?;
         let from_ms = from.timestamp_millis();
         let to_ms = to.timestamp_millis();
-        let mut ids = std::collections::HashSet::new();
 
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                let mut stmt = conn.prepare_cached(
-                    "SELECT DISTINCT agent_id FROM metrics WHERE timestamp >= ?1 AND timestamp <= ?2",
-                )?;
-                let rows = stmt.query_map(rusqlite::params![from_ms, to_ms], |row| {
-                    row.get::<_, String>(0)
-                })?;
-                for row in rows {
-                    ids.insert(row?);
-                }
-                Ok(())
-            })?;
-        }
+        let rows = AgentIdRow::find_by_statement(Statement::from_sql_and_values(
+            self.db.get_database_backend(),
+            "SELECT DISTINCT agent_id FROM metrics
+             WHERE timestamp >= $1 AND timestamp <= $2
+             ORDER BY agent_id
+             LIMIT $3 OFFSET $4",
+            vec![
+                Value::BigInt(Some(from_ms)),
+                Value::BigInt(Some(to_ms)),
+                Value::BigInt(Some(limit as i64)),
+                Value::BigInt(Some(offset as i64)),
+            ],
+        ))
+        .all(&self.db)
+        .await?;
 
-        let mut result: Vec<String> = ids.into_iter().collect();
-        result.sort();
-        let result = result.into_iter().skip(offset).take(limit).collect();
-        Ok(result)
+        Ok(rows.into_iter().map(|r| r.agent_id).collect())
     }
 
-    fn query_metric_summary(
+    // ---- 聚合统计 ----
+
+    async fn query_metric_summary(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         agent_id: &str,
         metric_name: &str,
     ) -> Result<MetricSummary> {
-        let keys = self.partitions.partitions_in_range(from, to)?;
         let from_ms = from.timestamp_millis();
         let to_ms = to.timestamp_millis();
 
-        let mut total_sum: f64 = 0.0;
-        let mut total_count: u64 = 0;
-        let mut global_min: f64 = f64::MAX;
-        let mut global_max: f64 = f64::MIN;
-
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                let mut stmt = conn.prepare_cached(
-                    "SELECT MIN(value), MAX(value), AVG(value), COUNT(*) FROM metrics
-                     WHERE agent_id = ?1 AND metric_name = ?2 AND timestamp >= ?3 AND timestamp <= ?4",
-                )?;
-                let row = stmt.query_row(
-                    rusqlite::params![agent_id, metric_name, from_ms, to_ms],
-                    |row| {
-                        Ok((
-                            row.get::<_, Option<f64>>(0)?,
-                            row.get::<_, Option<f64>>(1)?,
-                            row.get::<_, Option<f64>>(2)?,
-                            row.get::<_, i64>(3)?,
-                        ))
-                    },
-                )?;
-                let (min_val, max_val, avg_val, count) = row;
-                if count > 0 {
-                    if let Some(mn) = min_val {
-                        global_min = global_min.min(mn);
-                    }
-                    if let Some(mx) = max_val {
-                        global_max = global_max.max(mx);
-                    }
-                    if let Some(av) = avg_val {
-                        total_sum += av * count as f64;
-                    }
-                    total_count += count as u64;
-                }
-                Ok(())
-            })?;
-        }
+        let row = SummaryRow::find_by_statement(Statement::from_sql_and_values(
+            self.db.get_database_backend(),
+            "SELECT MIN(value) AS min_val, MAX(value) AS max_val,
+                    AVG(value) AS avg_val, COUNT(*) AS cnt
+             FROM metrics
+             WHERE agent_id = $1 AND metric_name = $2
+               AND timestamp >= $3 AND timestamp <= $4",
+            vec![
+                Value::String(Some(agent_id.to_string())),
+                Value::String(Some(metric_name.to_string())),
+                Value::BigInt(Some(from_ms)),
+                Value::BigInt(Some(to_ms)),
+            ],
+        ))
+        .one(&self.db)
+        .await?
+        .unwrap_or(SummaryRow {
+            min_val: None,
+            max_val: None,
+            avg_val: None,
+            cnt: 0,
+        });
 
         Ok(MetricSummary {
-            min: if total_count > 0 { global_min } else { 0.0 },
-            max: if total_count > 0 { global_max } else { 0.0 },
-            avg: if total_count > 0 {
-                total_sum / total_count as f64
-            } else {
-                0.0
-            },
-            count: total_count,
+            min: row.min_val.unwrap_or(0.0),
+            max: row.max_val.unwrap_or(0.0),
+            avg: row.avg_val.unwrap_or(0.0),
+            count: row.cnt as u64,
         })
     }
 
-    fn query_alert_summary(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<AlertSummary> {
-        let keys = self.partitions.partitions_in_range(from, to)?;
+    async fn query_alert_summary(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<AlertSummary> {
         let from_ms = from.timestamp_millis();
         let to_ms = to.timestamp_millis();
+
+        let rows = AlertGroupRow::find_by_statement(Statement::from_sql_and_values(
+            self.db.get_database_backend(),
+            "SELECT severity, rule_id, agent_id, metric_name, status,
+                    COUNT(*) AS cnt
+             FROM alert_events
+             WHERE timestamp >= $1 AND timestamp <= $2
+             GROUP BY severity, rule_id, agent_id, metric_name, status",
+            vec![
+                Value::BigInt(Some(from_ms)),
+                Value::BigInt(Some(to_ms)),
+            ],
+        ))
+        .all(&self.db)
+        .await?;
 
         let mut total: u64 = 0;
         let mut by_severity: HashMap<String, u64> = HashMap::new();
@@ -473,38 +470,17 @@ impl StorageEngine for SqliteStorageEngine {
         let mut active_count: u64 = 0;
         let mut recovered_count: u64 = 0;
 
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                let mut stmt = conn.prepare_cached(
-                    "SELECT severity, rule_id, agent_id, metric_name, status, COUNT(*) FROM alert_events
-                     WHERE timestamp >= ?1 AND timestamp <= ?2
-                     GROUP BY severity, rule_id, agent_id, metric_name, status",
-                )?;
-                let rows = stmt.query_map(rusqlite::params![from_ms, to_ms], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, Option<String>>(4)?,
-                        row.get::<_, i64>(5)?,
-                    ))
-                })?;
-                for row in rows {
-                    let (sev, rule, agent, metric, status, count) = row?;
-                    let count = count as u64;
-                    total += count;
-                    *by_severity.entry(sev).or_insert(0) += count;
-                    *by_rule.entry(rule).or_insert(0) += count;
-                    *by_agent.entry(agent).or_insert(0) += count;
-                    *by_metric.entry(metric).or_insert(0) += count;
-                    match status.as_deref() {
-                        Some("resolved") => recovered_count += count,
-                        _ => active_count += count,
-                    }
-                }
-                Ok(())
-            })?;
+        for r in rows {
+            let cnt = r.cnt as u64;
+            total += cnt;
+            *by_severity.entry(r.severity).or_insert(0) += cnt;
+            *by_rule.entry(r.rule_id).or_insert(0) += cnt;
+            *by_agent.entry(r.agent_id).or_insert(0) += cnt;
+            *by_metric.entry(r.metric_name).or_insert(0) += cnt;
+            match r.status.as_deref() {
+                Some("resolved") => recovered_count += cnt,
+                _ => active_count += cnt,
+            }
         }
 
         Ok(AlertSummary {
@@ -518,91 +494,30 @@ impl StorageEngine for SqliteStorageEngine {
         })
     }
 
-    fn list_partitions(&self) -> Result<Vec<PartitionInfo>> {
-        self.partitions.list_partition_info()
+    // ---- 分区信息（已废弃，返回空列表） ----
+
+    async fn list_partitions(&self) -> Result<Vec<PartitionInfo>> {
+        Ok(vec![])
     }
 
-    fn acknowledge_alert(&self, event_id: &str) -> Result<bool> {
-        self.partitions
-            .update_alert_status(event_id, "acknowledged")
+    // ---- 告警状态更新 ----
+
+    async fn acknowledge_alert(&self, event_id: &str) -> Result<bool> {
+        self.update_alert_status(event_id, "acknowledged").await
     }
 
-    fn resolve_alert(&self, event_id: &str) -> Result<bool> {
-        self.partitions.update_alert_status(event_id, "resolved")
+    async fn resolve_alert(&self, event_id: &str) -> Result<bool> {
+        self.update_alert_status(event_id, "resolved").await
     }
 
-    fn get_alert_event_by_id(&self, event_id: &str) -> Result<Option<AlertEvent>> {
-        // Search last 30 days for the alert event
-        let to = Utc::now();
-        let from = to - chrono::Duration::days(30);
-        let keys = self.partitions.partitions_in_range(from, to)?;
-
-        for key in keys {
-            let found = self.partitions.with_partition(&key, |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, rule_id, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach, created_at, updated_at, status, rule_name, labels, first_triggered_at
-                     FROM alert_events WHERE id = ?1",
-                )?;
-                let row = stmt.query_row(rusqlite::params![event_id], |row| {
-                    let ts_ms: i64 = row.get(8)?;
-                    let predicted_ms: Option<i64> = row.get(9)?;
-                    let sev_str: String = row.get(4)?;
-                    let created_at: i64 = row.get(10)?;
-                    let updated_at: i64 = row.get(11)?;
-                    let status_str: Option<String> = row.get(12)?;
-                    let rule_name: String = row.get(13)?;
-                    let labels_str: String = row.get(14)?;
-                    let first_triggered_ms: Option<i64> = row.get(15)?;
-
-                    let timestamp = DateTime::from_timestamp_millis(ts_ms).unwrap_or_default();
-                    let predicted_breach = predicted_ms.and_then(DateTime::from_timestamp_millis);
-                    let severity_val: Severity = sev_str.parse().unwrap_or(Severity::Info);
-                    let status = match status_str.as_deref() {
-                        Some("acknowledged") => 2,
-                        Some("resolved") => 3,
-                        _ => 1,
-                    };
-                    let labels: std::collections::HashMap<String, String> =
-                        serde_json::from_str(&labels_str).unwrap_or_default();
-                    let first_triggered_at =
-                        first_triggered_ms.and_then(DateTime::from_timestamp_millis);
-
-                    Ok(AlertEvent {
-                        id: row.get(0)?,
-                        rule_id: row.get(1)?,
-                        agent_id: row.get(2)?,
-                        metric_name: row.get(3)?,
-                        severity: severity_val,
-                        message: row.get(5)?,
-                        value: row.get(6)?,
-                        threshold: row.get(7)?,
-                        timestamp,
-                        predicted_breach,
-                        created_at: DateTime::from_timestamp_millis(created_at).unwrap_or_default(),
-                        updated_at: DateTime::from_timestamp_millis(updated_at).unwrap_or_default(),
-                        status,
-                        rule_name,
-                        labels,
-                        first_triggered_at,
-                    })
-                });
-
-                match row {
-                    Ok(event) => Ok(Some(event)),
-                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-                    Err(e) => Err(e.into()),
-                }
-            })?;
-
-            if found.is_some() {
-                return Ok(found);
-            }
-        }
-
-        Ok(None)
+    async fn get_alert_event_by_id(&self, event_id: &str) -> Result<Option<AlertEvent>> {
+        let model = AeEntity::find_by_id(event_id).one(&self.db).await?;
+        Ok(model.map(ae_model_to_event))
     }
 
-    fn query_active_alerts(
+    // ---- 活跃告警查询 ----
+
+    async fn query_active_alerts(
         &self,
         agent_id_contains: Option<&str>,
         severity: Option<&str>,
@@ -611,446 +526,259 @@ impl StorageEngine for SqliteStorageEngine {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<AlertEvent>> {
-        // Query last 7 days for active alerts
         let to = Utc::now();
         let from = to - chrono::Duration::days(7);
-        let keys = self.partitions.partitions_in_range(from, to)?;
         let from_ms = from.timestamp_millis();
         let to_ms = to.timestamp_millis();
-        let mut results = Vec::new();
 
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                let mut sql = String::from(
-                    "SELECT id, rule_id, agent_id, metric_name, severity, message, value, threshold, timestamp, predicted_breach, created_at, updated_at, status, rule_name, labels, first_triggered_at
-                     FROM alert_events
-                     WHERE timestamp >= ?1 AND timestamp <= ?2
-                       AND (status IS NULL OR status NOT IN ('resolved'))",
-                );
-                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
-                    vec![Box::new(from_ms), Box::new(to_ms)];
-                if let Some(v) = agent_id_contains {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND agent_id LIKE ?{idx}"));
-                    params.push(Box::new(format!("%{v}%")));
-                }
-                if let Some(v) = severity {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND severity = ?{idx}"));
-                    params.push(Box::new(v.to_string()));
-                }
-                if let Some(v) = rule_id {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND rule_id = ?{idx}"));
-                    params.push(Box::new(v.to_string()));
-                }
-                if let Some(v) = metric_name {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND metric_name = ?{idx}"));
-                    params.push(Box::new(v.to_string()));
-                }
-                sql.push_str(" ORDER BY created_at DESC");
-                let mut stmt = conn.prepare(&sql)?;
-                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-                    params.iter().map(|p| p.as_ref()).collect();
-                let rows = stmt.query_map(param_refs.as_slice(), |row| {
-                    let ts_ms: i64 = row.get(8)?;
-                    let predicted_ms: Option<i64> = row.get(9)?;
-                    let sev_str: String = row.get(4)?;
-                    let created_at: i64 = row.get(10)?;
-                    let updated_at: i64 = row.get(11)?;
-                    let status_str: Option<String> = row.get(12)?;
-                    let rule_name: String = row.get(13)?;
-                    let labels_str: String = row.get(14)?;
-                    let first_triggered_ms: Option<i64> = row.get(15)?;
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        sev_str,
-                        row.get::<_, String>(5)?,
-                        row.get::<_, f64>(6)?,
-                        row.get::<_, f64>(7)?,
-                        ts_ms,
-                        predicted_ms,
-                        created_at,
-                        updated_at,
-                        status_str,
-                        rule_name,
-                        labels_str,
-                        first_triggered_ms,
-                    ))
-                })?;
-                for row in rows {
-                    let (id, rule_id, agent_id, metric_name, sev_str, message, value, threshold, ts_ms, predicted_ms, created_at, updated_at, status_str, rule_name, labels_str, first_triggered_ms) = row?;
-                    let timestamp = DateTime::from_timestamp_millis(ts_ms).unwrap_or_default();
-                    let predicted_breach = predicted_ms.and_then(DateTime::from_timestamp_millis);
-                    let severity_val: Severity = sev_str.parse().unwrap_or(Severity::Info);
-                    let status = match status_str.as_deref() {
-                        Some("acknowledged") => 2,
-                        Some("resolved") => 3,
-                        _ => 1,
-                    };
-                    let labels: HashMap<String, String> = serde_json::from_str(&labels_str)
-                        .unwrap_or_default();
-                    let first_triggered_at = first_triggered_ms
-                        .and_then(DateTime::from_timestamp_millis);
-                    results.push(AlertEvent {
-                        id, rule_id, rule_name, agent_id, metric_name,
-                        severity: severity_val, message, value, threshold, timestamp,
-                        predicted_breach, status, labels, first_triggered_at,
-                        created_at: DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
-                        updated_at: DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
-                    });
-                }
-                Ok(())
-            })?;
+        let not_resolved = Condition::any()
+            .add(AeCol::Status.is_null())
+            .add(AeCol::Status.ne("resolved"));
+
+        let mut q = AeEntity::find()
+            .filter(AeCol::Timestamp.gte(from_ms))
+            .filter(AeCol::Timestamp.lte(to_ms))
+            .filter(not_resolved);
+
+        if let Some(v) = agent_id_contains {
+            q = q.filter(AeCol::AgentId.contains(v));
+        }
+        if let Some(v) = severity {
+            q = q.filter(AeCol::Severity.eq(v));
+        }
+        if let Some(v) = rule_id {
+            q = q.filter(AeCol::RuleId.eq(v));
+        }
+        if let Some(v) = metric_name {
+            q = q.filter(AeCol::MetricName.eq(v));
         }
 
-        results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        let results = results.into_iter().skip(offset).take(limit).collect();
-        Ok(results)
+        let models = q
+            .order_by(AeCol::CreatedAt, Order::Desc)
+            .limit(limit as u64)
+            .offset(offset as u64)
+            .all(&self.db)
+            .await?;
+
+        Ok(models.into_iter().map(ae_model_to_event).collect())
     }
 
-    fn count_metrics(
+    // ---- COUNT 查询 ----
+
+    async fn count_metrics(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         agent_id: Option<&str>,
         metric_name: Option<&str>,
     ) -> Result<u64> {
-        let keys = self.partitions.partitions_in_range(from, to)?;
         let from_ms = from.timestamp_millis();
         let to_ms = to.timestamp_millis();
-        let mut total: u64 = 0;
 
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                let mut sql = String::from(
-                    "SELECT COUNT(*) FROM metrics WHERE timestamp >= ?1 AND timestamp <= ?2",
-                );
-                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
-                    vec![Box::new(from_ms), Box::new(to_ms)];
-                if let Some(agent) = agent_id {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND agent_id = ?{idx}"));
-                    params.push(Box::new(agent.to_string()));
-                }
-                if let Some(metric) = metric_name {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND metric_name = ?{idx}"));
-                    params.push(Box::new(metric.to_string()));
-                }
-                let mut stmt = conn.prepare(&sql)?;
-                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-                    params.iter().map(|p| p.as_ref()).collect();
-                let count: i64 = stmt.query_row(param_refs.as_slice(), |row| row.get(0))?;
-                total += count as u64;
-                Ok(())
-            })?;
+        let mut q = MEntity::find()
+            .filter(MCol::Timestamp.gte(from_ms))
+            .filter(MCol::Timestamp.lte(to_ms));
+        if let Some(aid) = agent_id {
+            q = q.filter(MCol::AgentId.eq(aid));
         }
-        Ok(total)
+        if let Some(mn) = metric_name {
+            q = q.filter(MCol::MetricName.eq(mn));
+        }
+
+        let count = q.count(&self.db).await?;
+        Ok(count)
     }
 
-    fn count_alert_history(
+    async fn count_alert_history(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         severity: Option<&str>,
         agent_id: Option<&str>,
     ) -> Result<u64> {
-        let keys = self.partitions.partitions_in_range(from, to)?;
         let from_ms = from.timestamp_millis();
         let to_ms = to.timestamp_millis();
-        let mut total: u64 = 0;
 
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                let mut sql = String::from(
-                    "SELECT COUNT(*) FROM alert_events WHERE timestamp >= ?1 AND timestamp <= ?2",
-                );
-                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
-                    vec![Box::new(from_ms), Box::new(to_ms)];
-                if let Some(sev) = severity {
-                    sql.push_str(" AND severity = ?3");
-                    params.push(Box::new(sev.to_string()));
-                }
-                if let Some(aid) = agent_id {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND agent_id = ?{idx}"));
-                    params.push(Box::new(aid.to_string()));
-                }
-                let mut stmt = conn.prepare(&sql)?;
-                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-                    params.iter().map(|p| p.as_ref()).collect();
-                let count: i64 = stmt.query_row(param_refs.as_slice(), |row| row.get(0))?;
-                total += count as u64;
-                Ok(())
-            })?;
+        let mut q = AeEntity::find()
+            .filter(AeCol::Timestamp.gte(from_ms))
+            .filter(AeCol::Timestamp.lte(to_ms));
+        if let Some(sev) = severity {
+            q = q.filter(AeCol::Severity.eq(sev));
         }
-        Ok(total)
+        if let Some(aid) = agent_id {
+            q = q.filter(AeCol::AgentId.eq(aid));
+        }
+
+        let count = q.count(&self.db).await?;
+        Ok(count)
     }
 
-    fn count_distinct_metric_names(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<u64> {
-        let keys = self.partitions.partitions_in_range(from, to)?;
-        let from_ms = from.timestamp_millis();
-        let to_ms = to.timestamp_millis();
-        let mut all_names = std::collections::HashSet::new();
-
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT DISTINCT metric_name FROM metrics WHERE timestamp >= ?1 AND timestamp <= ?2",
-                )?;
-                let rows = stmt.query_map(rusqlite::params![from_ms, to_ms], |row| {
-                    row.get::<_, String>(0)
-                })?;
-                for row in rows {
-                    all_names.insert(row?);
-                }
-                Ok(())
-            })?;
-        }
-        Ok(all_names.len() as u64)
+    async fn count_distinct_metric_names(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<u64> {
+        let row = CountRow::find_by_statement(Statement::from_sql_and_values(
+            self.db.get_database_backend(),
+            "SELECT COUNT(DISTINCT metric_name) AS cnt FROM metrics
+             WHERE timestamp >= $1 AND timestamp <= $2",
+            vec![
+                Value::BigInt(Some(from.timestamp_millis())),
+                Value::BigInt(Some(to.timestamp_millis())),
+            ],
+        ))
+        .one(&self.db)
+        .await?;
+        Ok(row.map(|r| r.cnt as u64).unwrap_or(0))
     }
 
-    fn count_distinct_agent_ids(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<u64> {
-        let keys = self.partitions.partitions_in_range(from, to)?;
-        let from_ms = from.timestamp_millis();
-        let to_ms = to.timestamp_millis();
-        let mut all_ids = std::collections::HashSet::new();
-
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT DISTINCT agent_id FROM metrics WHERE timestamp >= ?1 AND timestamp <= ?2",
-                )?;
-                let rows = stmt.query_map(rusqlite::params![from_ms, to_ms], |row| {
-                    row.get::<_, String>(0)
-                })?;
-                for row in rows {
-                    all_ids.insert(row?);
-                }
-                Ok(())
-            })?;
-        }
-        Ok(all_ids.len() as u64)
+    async fn count_distinct_agent_ids(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<u64> {
+        let row = CountRow::find_by_statement(Statement::from_sql_and_values(
+            self.db.get_database_backend(),
+            "SELECT COUNT(DISTINCT agent_id) AS cnt FROM metrics
+             WHERE timestamp >= $1 AND timestamp <= $2",
+            vec![
+                Value::BigInt(Some(from.timestamp_millis())),
+                Value::BigInt(Some(to.timestamp_millis())),
+            ],
+        ))
+        .one(&self.db)
+        .await?;
+        Ok(row.map(|r| r.cnt as u64).unwrap_or(0))
     }
 
-    fn count_active_alerts(
+    async fn count_active_alerts(
         &self,
         agent_id_contains: Option<&str>,
         severity: Option<&str>,
         rule_id: Option<&str>,
         metric_name: Option<&str>,
     ) -> Result<u64> {
-        // Query last 7 days for active alerts
         let to = Utc::now();
         let from = to - chrono::Duration::days(7);
-        let keys = self.partitions.partitions_in_range(from, to)?;
         let from_ms = from.timestamp_millis();
         let to_ms = to.timestamp_millis();
-        let mut total: u64 = 0;
 
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                let mut sql = String::from(
-                    "SELECT COUNT(*) FROM alert_events WHERE timestamp >= ?1 AND timestamp <= ?2 AND (status IS NULL OR status NOT IN ('resolved'))",
-                );
-                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
-                    vec![Box::new(from_ms), Box::new(to_ms)];
-                if let Some(v) = agent_id_contains {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND agent_id LIKE ?{idx}"));
-                    params.push(Box::new(format!("%{v}%")));
-                }
-                if let Some(v) = severity {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND severity = ?{idx}"));
-                    params.push(Box::new(v.to_string()));
-                }
-                if let Some(v) = rule_id {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND rule_id = ?{idx}"));
-                    params.push(Box::new(v.to_string()));
-                }
-                if let Some(v) = metric_name {
-                    let idx = params.len() + 1;
-                    sql.push_str(&format!(" AND metric_name = ?{idx}"));
-                    params.push(Box::new(v.to_string()));
-                }
-                let mut stmt = conn.prepare(&sql)?;
-                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-                    params.iter().map(|p| p.as_ref()).collect();
-                let count: i64 = stmt.query_row(param_refs.as_slice(), |row| row.get(0))?;
-                total += count as u64;
-                Ok(())
-            })?;
+        let not_resolved = Condition::any()
+            .add(AeCol::Status.is_null())
+            .add(AeCol::Status.ne("resolved"));
+
+        let mut q = AeEntity::find()
+            .filter(AeCol::Timestamp.gte(from_ms))
+            .filter(AeCol::Timestamp.lte(to_ms))
+            .filter(not_resolved);
+
+        if let Some(v) = agent_id_contains {
+            q = q.filter(AeCol::AgentId.contains(v));
         }
-        Ok(total)
+        if let Some(v) = severity {
+            q = q.filter(AeCol::Severity.eq(v));
+        }
+        if let Some(v) = rule_id {
+            q = q.filter(AeCol::RuleId.eq(v));
+        }
+        if let Some(v) = metric_name {
+            q = q.filter(AeCol::MetricName.eq(v));
+        }
+
+        let count = q.count(&self.db).await?;
+        Ok(count)
     }
 
-    fn query_latest_metrics_for_agent(
+    // ---- 最新指标查询 ----
+
+    async fn query_latest_metrics_for_agent(
         &self,
         agent_id: &str,
         metric_names: &[&str],
         lookback_days: u32,
     ) -> Result<Vec<MetricDataPoint>> {
-        let to = Utc::now();
-        let from = to - chrono::Duration::days(lookback_days as i64);
-        let mut keys = self.partitions.partitions_in_range(from, to)?;
-        keys.reverse(); // Search most recent partitions first
-
-        let mut results: std::collections::HashMap<String, MetricDataPoint> =
-            std::collections::HashMap::new();
-        let wanted: std::collections::HashSet<&str> = metric_names.iter().copied().collect();
-
-        for key in keys {
-            if results.len() == wanted.len() {
-                break; // Found all requested metrics
-            }
-
-            self.partitions.with_partition(&key, |conn| {
-                // Build query with IN clause for remaining metric names
-                let remaining: Vec<&str> = wanted
-                    .iter()
-                    .filter(|n| !results.contains_key(**n))
-                    .copied()
-                    .collect();
-
-                if remaining.is_empty() {
-                    return Ok(());
-                }
-
-                // Use a subquery: for each metric_name, get the row with MAX(timestamp)
-                let placeholders: Vec<String> = remaining
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _)| format!("?{}", i + 2))
-                    .collect();
-                let in_clause = placeholders.join(", ");
-
-                let sql = format!(
-                    "SELECT m.id, m.timestamp, m.agent_id, m.metric_name, m.value, m.labels, m.created_at, m.updated_at
-                     FROM metrics m
-                     INNER JOIN (
-                         SELECT metric_name, MAX(timestamp) as max_ts
-                         FROM metrics
-                         WHERE agent_id = ?1 AND metric_name IN ({})
-                         GROUP BY metric_name
-                     ) latest ON m.agent_id = ?1 AND m.metric_name = latest.metric_name AND m.timestamp = latest.max_ts",
-                    in_clause
-                );
-
-                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-                params.push(Box::new(agent_id.to_string()));
-                for name in &remaining {
-                    params.push(Box::new(name.to_string()));
-                }
-
-                let mut stmt = conn.prepare(&sql)?;
-                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-                    params.iter().map(|p| p.as_ref()).collect();
-                let rows = stmt.query_map(param_refs.as_slice(), |row| {
-                    let timestamp_ms: i64 = row.get(1)?;
-                    let labels_json: String = row.get(5)?;
-                    let created_at_ms: i64 = row.get(6)?;
-                    let updated_at_ms: i64 = row.get(7)?;
-
-                    let labels: std::collections::HashMap<String, String> =
-                        serde_json::from_str(&labels_json).unwrap_or_default();
-
-                    Ok(MetricDataPoint {
-                        id: row.get(0)?,
-                        timestamp: DateTime::from_timestamp_millis(timestamp_ms)
-                            .unwrap_or_else(Utc::now),
-                        agent_id: row.get(2)?,
-                        metric_name: row.get(3)?,
-                        value: row.get(4)?,
-                        labels,
-                        created_at: DateTime::from_timestamp_millis(created_at_ms)
-                            .unwrap_or_else(Utc::now),
-                        updated_at: DateTime::from_timestamp_millis(updated_at_ms)
-                            .unwrap_or_else(Utc::now),
-                    })
-                })?;
-
-                for row in rows {
-                    let dp = row?;
-                    results.entry(dp.metric_name.clone()).or_insert(dp);
-                }
-                Ok(())
-            })?;
+        if metric_names.is_empty() {
+            return Ok(vec![]);
         }
 
-        Ok(results.into_values().collect())
+        let to = Utc::now();
+        let from = to - chrono::Duration::days(lookback_days as i64);
+        let from_ms = from.timestamp_millis();
+
+        let placeholders: String = metric_names
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", i + 3))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let sql = format!(
+            "SELECT m.id, m.timestamp, m.agent_id, m.metric_name, m.value,
+                    m.labels, m.created_at, m.updated_at
+             FROM metrics m
+             INNER JOIN (
+                 SELECT metric_name, MAX(timestamp) AS max_ts
+                 FROM metrics
+                 WHERE agent_id = $1 AND timestamp >= $2
+                   AND metric_name IN ({placeholders})
+                 GROUP BY metric_name
+             ) latest
+               ON m.agent_id = $1
+              AND m.metric_name = latest.metric_name
+              AND m.timestamp = latest.max_ts"
+        );
+
+        let mut values: Vec<Value> = vec![
+            Value::String(Some(agent_id.to_string())),
+            Value::BigInt(Some(from_ms)),
+        ];
+        for name in metric_names {
+            values.push(Value::String(Some((*name).to_string())));
+        }
+
+        let models = crate::entities::metric::Model::find_by_statement(
+            Statement::from_sql_and_values(self.db.get_database_backend(), &sql, values),
+        )
+        .all(&self.db)
+        .await?;
+
+        models.into_iter().map(model_to_dp).collect()
     }
 
-    fn query_all_latest_for_agent(
+    async fn query_all_latest_for_agent(
         &self,
         agent_id: &str,
         lookback_days: u32,
     ) -> Result<Vec<MetricDataPoint>> {
         let to = Utc::now();
         let from = to - chrono::Duration::days(lookback_days as i64);
-        let mut keys = self.partitions.partitions_in_range(from, to)?;
-        keys.reverse(); // Search most recent partitions first
+        let from_ms = from.timestamp_millis();
 
-        // Key = (metric_name, labels_json) to correctly handle labeled metrics
-        let mut results: std::collections::HashMap<(String, String), MetricDataPoint> =
-            std::collections::HashMap::new();
+        let models = crate::entities::metric::Model::find_by_statement(
+            Statement::from_sql_and_values(
+                self.db.get_database_backend(),
+                "SELECT m.id, m.timestamp, m.agent_id, m.metric_name, m.value,
+                        m.labels, m.created_at, m.updated_at
+                 FROM metrics m
+                 INNER JOIN (
+                     SELECT metric_name, labels, MAX(timestamp) AS max_ts
+                     FROM metrics
+                     WHERE agent_id = $1 AND timestamp >= $2
+                     GROUP BY metric_name, labels
+                 ) latest
+                   ON m.agent_id = $1
+                  AND m.metric_name = latest.metric_name
+                  AND m.labels = latest.labels
+                  AND m.timestamp = latest.max_ts",
+                vec![
+                    Value::String(Some(agent_id.to_string())),
+                    Value::BigInt(Some(from_ms)),
+                ],
+            ),
+        )
+        .all(&self.db)
+        .await?;
 
-        for key in keys {
-            self.partitions.with_partition(&key, |conn| {
-                // For each (metric_name, labels) combo, get the row with MAX(timestamp)
-                let sql = "SELECT m.id, m.timestamp, m.agent_id, m.metric_name, m.value, m.labels, m.created_at, m.updated_at \
-                           FROM metrics m \
-                           INNER JOIN ( \
-                               SELECT metric_name, labels, MAX(timestamp) as max_ts \
-                               FROM metrics \
-                               WHERE agent_id = ?1 \
-                               GROUP BY metric_name, labels \
-                           ) latest ON m.agent_id = ?1 \
-                               AND m.metric_name = latest.metric_name \
-                               AND m.labels = latest.labels \
-                               AND m.timestamp = latest.max_ts";
-
-                let mut stmt = conn.prepare(sql)?;
-                let rows = stmt.query_map([agent_id], |row| {
-                    let timestamp_ms: i64 = row.get(1)?;
-                    let labels_json: String = row.get(5)?;
-                    let created_at_ms: i64 = row.get(6)?;
-                    let updated_at_ms: i64 = row.get(7)?;
-
-                    let labels: std::collections::HashMap<String, String> =
-                        serde_json::from_str(&labels_json).unwrap_or_default();
-
-                    Ok(MetricDataPoint {
-                        id: row.get(0)?,
-                        timestamp: DateTime::from_timestamp_millis(timestamp_ms)
-                            .unwrap_or_else(Utc::now),
-                        agent_id: row.get(2)?,
-                        metric_name: row.get(3)?,
-                        value: row.get(4)?,
-                        labels,
-                        created_at: DateTime::from_timestamp_millis(created_at_ms)
-                            .unwrap_or_else(Utc::now),
-                        updated_at: DateTime::from_timestamp_millis(updated_at_ms)
-                            .unwrap_or_else(Utc::now),
-                    })
-                })?;
-
-                for row in rows {
-                    let dp = row?;
-                    let key = (dp.metric_name.clone(), serde_json::to_string(&dp.labels).unwrap_or_default());
-                    // or_insert: keep the one from the most recent partition
-                    results.entry(key).or_insert(dp);
-                }
-                Ok(())
-            })?;
-        }
-
-        Ok(results.into_values().collect())
+        models.into_iter().map(model_to_dp).collect()
     }
 }

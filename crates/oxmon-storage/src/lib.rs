@@ -1,53 +1,32 @@
-//! Time-series storage layer for metrics and alert events.
-//!
-//! The default implementation ([`engine::SqliteStorageEngine`]) uses daily
-//! time-partitioned SQLite databases with WAL mode for concurrent reads.
-//! Certificate and agent-whitelist data are stored in a separate
-//! [`store::CertStore`] database backed by SeaORM.
+//! 存储层：时序指标与告警事件统一使用 SeaORM 管理，与管理数据库（oxmon.db）共享同一连接池。
 
 pub mod auth;
 pub mod engine;
 pub mod entities;
 pub mod error;
-pub mod partition;
 pub mod store;
-
-pub use store::CertStore;
-pub use store::{
-    AIAccountRow, AIAccountUpdate, AICheckJobRow, ActiveAlertFilter, AgentListFilter,
-    AgentReportLogRow, AgentWhitelistFilter, AlertRuleFilter, AlertRuleRow, AlertRuleUpdate, CertDomainSummary,
-    CertHealthSummary, CertStatusFilter, CertStatusSummary, CloudAccountRow, CloudAccountSummary,
-    CloudCollectionStateRow, CloudInstanceRow, CloudInstanceStatusSummary, DictTypeFilter,
-    NotificationChannelFilter, NotificationChannelRow, NotificationChannelUpdate,
-    NotificationLogFilter, NotificationLogRow, NotificationRecipientRow, SilenceWindowFilter,
-    SilenceWindowRow, SystemConfigFilter, SystemConfigRow, SystemConfigUpdate,
-};
 
 #[cfg(test)]
 mod tests;
 
+pub use engine::SeaOrmStorageEngine;
+pub use store::CertStore;
+pub use store::{
+    AIAccountRow, AIAccountUpdate, AICheckJobRow, ActiveAlertFilter, AgentListFilter,
+    AgentReportLogRow, AgentWhitelistFilter, AlertRuleFilter, AlertRuleRow, AlertRuleUpdate,
+    CertDomainSummary, CertHealthSummary, CertStatusFilter, CertStatusSummary, CloudAccountRow,
+    CloudAccountSummary, CloudCollectionStateRow, CloudInstanceRow, CloudInstanceStatusSummary,
+    DictTypeFilter, NotificationChannelFilter, NotificationChannelRow, NotificationChannelUpdate,
+    NotificationLogFilter, NotificationLogRow, NotificationRecipientRow, SilenceWindowFilter,
+    SilenceWindowRow, SystemConfigFilter, SystemConfigRow, SystemConfigUpdate,
+};
+
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use oxmon_common::types::{AlertEvent, MetricBatch, MetricDataPoint};
 
-/// Parameters for a time-range metric query, scoped to a single agent and
-/// metric name.
-///
-/// # Examples
-///
-/// ```
-/// use oxmon_storage::MetricQuery;
-/// use chrono::{Duration, Utc};
-///
-/// let now = Utc::now();
-/// let query = MetricQuery {
-///     agent_id: "prod-web-01".into(),
-///     metric_name: "cpu.usage".into(),
-///     from: now - Duration::hours(1),
-///     to: now,
-/// };
-/// assert_eq!(query.metric_name, "cpu.usage");
-/// ```
+/// 单 agent、单指标名的时间范围查询参数。
 pub struct MetricQuery {
     pub agent_id: String,
     pub metric_name: String,
@@ -55,21 +34,16 @@ pub struct MetricQuery {
     pub to: DateTime<Utc>,
 }
 
-/// Persistence backend for metrics and alert events.
+/// 时序存储后端 trait（全异步）。
 ///
-/// Implementations must be safe to share across threads (`Send + Sync`)
-/// because the storage is accessed from both the gRPC ingestion handler
-/// and the REST API concurrently.
+/// 所有实现均需 `Send + Sync`，以便在 axum/gRPC handler 中并发访问。
+#[async_trait]
 pub trait StorageEngine: Send + Sync {
-    /// Writes a batch of metric data points, typically received from an agent.
-    fn write_batch(&self, batch: &MetricBatch) -> Result<()>;
+    async fn write_batch(&self, batch: &MetricBatch) -> Result<()>;
 
-    /// Queries metric data points matching the given agent, metric name, and
-    /// time range.
-    fn query(&self, query: &MetricQuery) -> Result<Vec<MetricDataPoint>>;
+    async fn query(&self, query: &MetricQuery) -> Result<Vec<MetricDataPoint>>;
 
-    /// Queries metric data points with optional filters and pagination.
-    fn query_metrics_paginated(
+    async fn query_metrics_paginated(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
@@ -79,15 +53,11 @@ pub trait StorageEngine: Send + Sync {
         offset: usize,
     ) -> Result<Vec<MetricDataPoint>>;
 
-    /// Removes partitions older than `retention_days`. Returns the number of
-    /// partitions removed.
-    fn cleanup(&self, retention_days: u32) -> Result<u32>;
+    async fn cleanup(&self, retention_days: u32) -> Result<u32>;
 
-    /// Persists a fired alert event for historical queries.
-    fn write_alert_event(&self, event: &AlertEvent) -> Result<()>;
+    async fn write_alert_event(&self, event: &AlertEvent) -> Result<()>;
 
-    /// Queries historical alert events with optional severity and agent filters.
-    fn query_alert_history(
+    async fn query_alert_history(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
@@ -97,8 +67,7 @@ pub trait StorageEngine: Send + Sync {
         offset: usize,
     ) -> Result<Vec<AlertEvent>>;
 
-    /// Returns distinct metric names observed in the given time range.
-    fn query_distinct_metric_names(
+    async fn query_distinct_metric_names(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
@@ -106,8 +75,7 @@ pub trait StorageEngine: Send + Sync {
         offset: usize,
     ) -> Result<Vec<String>>;
 
-    /// Returns distinct agent IDs observed in the given time range.
-    fn query_distinct_agent_ids(
+    async fn query_distinct_agent_ids(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
@@ -115,9 +83,7 @@ pub trait StorageEngine: Send + Sync {
         offset: usize,
     ) -> Result<Vec<String>>;
 
-    /// Returns aggregated metric statistics (min, max, avg, count) for the
-    /// given agent, metric, and time range.
-    fn query_metric_summary(
+    async fn query_metric_summary(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
@@ -125,23 +91,21 @@ pub trait StorageEngine: Send + Sync {
         metric_name: &str,
     ) -> Result<MetricSummary>;
 
-    /// Returns alert event counts grouped by severity in the given time range.
-    fn query_alert_summary(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<AlertSummary>;
+    async fn query_alert_summary(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<AlertSummary>;
 
-    /// Returns partition (daily database) information.
-    fn list_partitions(&self) -> Result<Vec<PartitionInfo>>;
+    async fn list_partitions(&self) -> Result<Vec<PartitionInfo>>;
 
-    /// Acknowledges an alert event by ID. Returns true if found and updated.
-    fn acknowledge_alert(&self, event_id: &str) -> Result<bool>;
+    async fn acknowledge_alert(&self, event_id: &str) -> Result<bool>;
 
-    /// Resolves an alert event by ID. Returns true if found and updated.
-    fn resolve_alert(&self, event_id: &str) -> Result<bool>;
+    async fn resolve_alert(&self, event_id: &str) -> Result<bool>;
 
-    /// Gets a single alert event by ID.
-    fn get_alert_event_by_id(&self, event_id: &str) -> Result<Option<AlertEvent>>;
+    async fn get_alert_event_by_id(&self, event_id: &str) -> Result<Option<AlertEvent>>;
 
-    /// Queries active (non-resolved) alert events.
-    fn query_active_alerts(
+    async fn query_active_alerts(
         &self,
         agent_id_contains: Option<&str>,
         severity: Option<&str>,
@@ -151,8 +115,7 @@ pub trait StorageEngine: Send + Sync {
         offset: usize,
     ) -> Result<Vec<AlertEvent>>;
 
-    /// Returns total count for paginated metrics query.
-    fn count_metrics(
+    async fn count_metrics(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
@@ -160,8 +123,7 @@ pub trait StorageEngine: Send + Sync {
         metric_name: Option<&str>,
     ) -> Result<u64>;
 
-    /// Returns total count for paginated alert history.
-    fn count_alert_history(
+    async fn count_alert_history(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
@@ -169,14 +131,19 @@ pub trait StorageEngine: Send + Sync {
         agent_id: Option<&str>,
     ) -> Result<u64>;
 
-    /// Returns total count of distinct metric names in the given time range.
-    fn count_distinct_metric_names(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<u64>;
+    async fn count_distinct_metric_names(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<u64>;
 
-    /// Returns total count of distinct agent IDs in the given time range.
-    fn count_distinct_agent_ids(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<u64>;
+    async fn count_distinct_agent_ids(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<u64>;
 
-    /// Returns total count of active (non-resolved) alert events.
-    fn count_active_alerts(
+    async fn count_active_alerts(
         &self,
         agent_id_contains: Option<&str>,
         severity: Option<&str>,
@@ -184,30 +151,21 @@ pub trait StorageEngine: Send + Sync {
         metric_name: Option<&str>,
     ) -> Result<u64>;
 
-    /// Returns the latest (most recent) metric data point for each given metric name,
-    /// scoped to a specific agent_id. Searches the last `lookback_days` days.
-    /// Returns at most one data point per metric name (the one with the largest timestamp).
-    fn query_latest_metrics_for_agent(
+    async fn query_latest_metrics_for_agent(
         &self,
         agent_id: &str,
         metric_names: &[&str],
         lookback_days: u32,
     ) -> Result<Vec<MetricDataPoint>>;
 
-    /// Returns the latest (most recent) metric data point for each unique
-    /// (metric_name, labels) combination, scoped to a specific agent_id.
-    /// Searches the last `lookback_days` days.
-    /// Unlike `query_latest_metrics_for_agent`, this does NOT require a
-    /// pre-specified list of metric names and correctly handles labeled metrics
-    /// (e.g., per-mount disk metrics, per-interface network metrics).
-    fn query_all_latest_for_agent(
+    async fn query_all_latest_for_agent(
         &self,
         agent_id: &str,
         lookback_days: u32,
     ) -> Result<Vec<MetricDataPoint>>;
 }
 
-/// Aggregated metric statistics.
+/// 聚合指标统计结果。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MetricSummary {
     pub min: f64,
@@ -216,7 +174,7 @@ pub struct MetricSummary {
     pub count: u64,
 }
 
-/// Alert summary with counts by severity.
+/// 告警事件按维度统计结果。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AlertSummary {
     pub total: u64,
@@ -228,7 +186,7 @@ pub struct AlertSummary {
     pub recovered_count: u64,
 }
 
-/// Information about a storage partition (daily SQLite database).
+/// 分区信息（已废弃，兼容保留）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PartitionInfo {
     pub date: String,

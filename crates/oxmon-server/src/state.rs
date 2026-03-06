@@ -4,7 +4,7 @@ use oxmon_alert::engine::AlertEngine;
 use oxmon_common::types::AgentInfo;
 use oxmon_notify::manager::NotificationManager;
 use oxmon_storage::auth::PasswordEncryptor;
-use oxmon_storage::engine::SqliteStorageEngine;
+use oxmon_storage::engine::SeaOrmStorageEngine;
 use oxmon_storage::CertStore;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -38,8 +38,8 @@ impl AgentRegistry {
                     agent_id: id.clone(),
                     last_seen: *last_seen,
                     active: now - *last_seen < timeout,
-                    collection_interval_secs: None, // 从数据库查询
-                    description: None,              // 从数据库查询
+                    collection_interval_secs: None,
+                    description: None,
                     hostname: None,
                     os: None,
                     os_version: None,
@@ -65,8 +65,8 @@ impl AgentRegistry {
             agent_id: agent_id.to_string(),
             last_seen: *last_seen,
             active: now - *last_seen < timeout,
-            collection_interval_secs: None, // 从数据库查询
-            description: None,              // 从数据库查询
+            collection_interval_secs: None,
+            description: None,
             hostname: None,
             os: None,
             os_version: None,
@@ -81,7 +81,7 @@ impl AgentRegistry {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub storage: Arc<SqliteStorageEngine>,
+    pub storage: Arc<SeaOrmStorageEngine>,
     pub alert_engine: Arc<Mutex<AlertEngine>>,
     pub notifier: Arc<NotificationManager>,
     pub agent_registry: Arc<Mutex<AgentRegistry>>,

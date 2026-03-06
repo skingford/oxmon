@@ -1,6 +1,6 @@
 use anyhow::Result;
 use oxmon_notify::manager::NotificationManager;
-use oxmon_storage::engine::SqliteStorageEngine;
+use oxmon_storage::engine::SeaOrmStorageEngine;
 use oxmon_storage::CertStore;
 use std::sync::Arc;
 use std::time::Duration;
@@ -9,7 +9,7 @@ use tokio::time;
 use super::report::generate_report_for_account;
 
 pub struct AIReportScheduler {
-    storage: Arc<SqliteStorageEngine>,
+    storage: Arc<SeaOrmStorageEngine>,
     cert_store: Arc<CertStore>,
     notifier: Arc<NotificationManager>,
     tick_interval: Duration,
@@ -19,7 +19,7 @@ pub struct AIReportScheduler {
 
 impl AIReportScheduler {
     pub fn new(
-        storage: Arc<SqliteStorageEngine>,
+        storage: Arc<SeaOrmStorageEngine>,
         cert_store: Arc<CertStore>,
         notifier: Arc<NotificationManager>,
         tick_interval: Duration,

@@ -175,7 +175,7 @@ impl CertCheckScheduler {
                 };
 
                 // 告警评估：返回 Option<CertAlertDetail>
-                let alert_detail = if let Err(e) = storage.write_batch(&batch) {
+                let alert_detail = if let Err(e) = storage.write_batch(&batch).await {
                     tracing::error!(domain = %domain.domain, error = %e, "Failed to write cert metrics");
                     None
                 } else {
@@ -259,39 +259,47 @@ async fn evaluate_alerts_for_cert(
         .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
         .await;
 
-    let mut engine = alert_engine
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // 先在 Mutex 内同步收集所有告警事件，再释放锁做异步操作
+    let all_events: Vec<oxmon_common::types::AlertEvent> = {
+        let mut engine = alert_engine
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        data_points
+            .iter()
+            .flat_map(|dp| {
+                engine
+                    .ingest_with_locale(dp, &locale)
+                    .into_iter()
+                    .map(|o| o.event().clone())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    };
 
     let mut triggered_alerts: Vec<oxmon_common::types::AlertEvent> = Vec::new();
 
-    for dp in data_points {
-        let outputs = engine.ingest_with_locale(dp, &locale);
-        for output in outputs {
-            let event = output.event().clone();
+    for event in all_events {
+        // 总是写入存储（用于历史查询）
+        if let Err(e) = storage.write_alert_event(&event).await {
+            tracing::error!(error = %e, "Failed to write cert alert event");
+        }
 
-            // 总是写入存储（用于历史查询）
-            if let Err(e) = storage.write_alert_event(&event) {
-                tracing::error!(error = %e, "Failed to write cert alert event");
-            }
-
-            if event.status == 3 {
-                // 恢复事件：立即单独通知
-                tracing::info!(
-                    rule_id = %event.rule_id,
-                    agent_id = %event.agent_id,
-                    domain = ?event.labels.get("domain"),
-                    "Cert alert auto-recovered"
-                );
-                let notifier_clone = notifier.clone();
-                let ev = event.clone();
-                tokio::spawn(async move {
-                    notifier_clone.notify(&ev).await;
-                });
-            } else {
-                // 普通告警：收集后批量发送
-                triggered_alerts.push(event);
-            }
+        if event.status == 3 {
+            // 恢复事件：立即单独通知
+            tracing::info!(
+                rule_id = %event.rule_id,
+                agent_id = %event.agent_id,
+                domain = ?event.labels.get("domain"),
+                "Cert alert auto-recovered"
+            );
+            let notifier_clone = notifier.clone();
+            let ev = event.clone();
+            tokio::spawn(async move {
+                notifier_clone.notify(&ev).await;
+            });
+        } else {
+            // 普通告警：收集后批量发送
+            triggered_alerts.push(event);
         }
     }
 

@@ -73,8 +73,8 @@ impl CertStore {
         })
     }
 
-    /// 返回底层数据库连接引用（供子模块使用）。
-    pub(crate) fn db(&self) -> &DatabaseConnection {
+    /// 返回底层数据库连接（供外部创建 SeaOrmStorageEngine 共享连接池）。
+    pub fn db(&self) -> &DatabaseConnection {
         &self.db
     }
 }

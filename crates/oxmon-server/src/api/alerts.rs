@@ -620,7 +620,7 @@ async fn alert_history(
         to,
         params.severity_eq.as_deref(),
         params.agent_id_eq.as_deref(),
-    ) {
+    ).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count alert history");
@@ -641,7 +641,7 @@ async fn alert_history(
         params.agent_id_eq.as_deref(),
         limit,
         offset,
-    ) {
+    ).await {
         Ok(events) => {
             let items: Vec<AlertEventResponse> = events
                 .into_iter()
@@ -693,7 +693,7 @@ async fn get_alert_event(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.storage.get_alert_event_by_id(&id) {
+    match state.storage.get_alert_event_by_id(&id).await {
         Ok(Some(e)) => {
             let response = AlertEventResponse {
                 id: e.id,
@@ -750,7 +750,7 @@ async fn acknowledge_alert(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.storage.acknowledge_alert(&id) {
+    match state.storage.acknowledge_alert(&id).await {
         Ok(true) => crate::api::success_id_response(StatusCode::OK, &trace_id, id),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
@@ -790,7 +790,7 @@ async fn resolve_alert(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.storage.resolve_alert(&id) {
+    match state.storage.resolve_alert(&id).await {
         Ok(true) => crate::api::success_id_response(StatusCode::OK, &trace_id, id),
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
@@ -875,7 +875,7 @@ async fn active_alerts(
     let total =
         match state
             .storage
-            .count_active_alerts(agent_id_contains, severity, rule_id, metric_name)
+            .count_active_alerts(agent_id_contains, severity, rule_id, metric_name).await
         {
             Ok(c) => c,
             Err(e) => {
@@ -897,7 +897,7 @@ async fn active_alerts(
         metric_name,
         limit,
         offset,
-    ) {
+    ).await {
         Ok(events) => {
             success_paginated_response(StatusCode::OK, &trace_id, events, total, limit, offset)
         }
@@ -941,7 +941,7 @@ async fn alert_summary(
         .unwrap_or(24);
     let to = Utc::now();
     let from = to - chrono::Duration::hours(hours as i64);
-    match state.storage.query_alert_summary(from, to) {
+    match state.storage.query_alert_summary(from, to).await {
         Ok(summary) => success_response(StatusCode::OK, &trace_id, summary),
         Err(e) => {
             tracing::error!(error = %e, "Failed to query alert summary");

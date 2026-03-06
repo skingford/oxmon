@@ -143,7 +143,7 @@ async fn get_storage_info(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    match state.storage.list_partitions() {
+    match state.storage.list_partitions().await {
         Ok(partitions) => {
             let total_size_bytes: u64 = partitions.iter().map(|p| p.size_bytes).sum();
             let total_partitions = partitions.len();
@@ -194,7 +194,7 @@ async fn trigger_cleanup(
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     let retention_days = state.config.retention_days;
-    match state.storage.cleanup(retention_days) {
+    match state.storage.cleanup(retention_days).await {
         Ok(removed) => success_response(
             StatusCode::OK,
             &trace_id,

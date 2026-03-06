@@ -293,6 +293,7 @@ impl CloudCheckScheduler {
         if !batch.data_points.is_empty() {
             self.storage
                 .write_batch(&batch)
+                .await
                 .context("Failed to write cloud metrics batch")?;
 
             // Feed cloud metrics to alert engine
@@ -477,50 +478,60 @@ impl CloudCheckScheduler {
             .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
             .await;
 
-        let mut engine = self
-            .alert_engine
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Collect all alert events while holding the lock, then drop the lock before awaiting
+        let alert_events: Vec<oxmon_common::types::AlertEvent> = {
+            let mut engine = self
+                .alert_engine
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        let rule_count = engine.rules().len();
-        tracing::debug!(
-            data_points = data_points.len(),
-            rules = rule_count,
-            "Evaluating cloud metrics against alert rules"
-        );
+            let rule_count = engine.rules().len();
+            tracing::debug!(
+                data_points = data_points.len(),
+                rules = rule_count,
+                "Evaluating cloud metrics against alert rules"
+            );
+
+            data_points
+                .iter()
+                .flat_map(|dp| {
+                    engine
+                        .ingest_with_locale(dp, &locale)
+                        .into_iter()
+                        .map(|o| o.event().clone())
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
 
         let mut fired_count = 0usize;
-        for dp in data_points {
-            let outputs = engine.ingest_with_locale(dp, &locale);
-            for output in outputs {
-                fired_count += 1;
-                let event = output.event().clone();
-                // Store alert event
-                if let Err(e) = self.storage.write_alert_event(&event) {
-                    tracing::error!(error = %e, "Failed to write cloud alert event");
-                }
-                // Log recovery
-                if event.status == 3 {
-                    tracing::info!(
-                        rule_id = %event.rule_id,
-                        agent_id = %event.agent_id,
-                        "Cloud alert auto-recovered"
-                    );
-                } else {
-                    tracing::info!(
-                        rule_id = %event.rule_id,
-                        agent_id = %event.agent_id,
-                        metric = %event.metric_name,
-                        value = event.value,
-                        "Cloud alert fired"
-                    );
-                }
-                // Send notification
-                let notifier = self.notifier.clone();
-                tokio::spawn(async move {
-                    notifier.notify(&event).await;
-                });
+        for event in alert_events {
+            fired_count += 1;
+            // Store alert event
+            if let Err(e) = self.storage.write_alert_event(&event).await {
+                tracing::error!(error = %e, "Failed to write cloud alert event");
             }
+            // Log recovery
+            if event.status == 3 {
+                tracing::info!(
+                    rule_id = %event.rule_id,
+                    agent_id = %event.agent_id,
+                    "Cloud alert auto-recovered"
+                );
+            } else {
+                tracing::info!(
+                    rule_id = %event.rule_id,
+                    agent_id = %event.agent_id,
+                    metric = %event.metric_name,
+                    value = event.value,
+                    "Cloud alert fired"
+                );
+            }
+            // Send notification
+            let notifier = self.notifier.clone();
+            tokio::spawn(async move {
+                notifier.notify(&event).await;
+            });
         }
 
         if fired_count > 0 {

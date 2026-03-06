@@ -5,7 +5,7 @@ use oxmon_ai::{AIAnalyzer, AnalysisInput, HistoryMetric, MetricSnapshot, ZhipuPr
 use oxmon_common::types::MetricDataPoint;
 use oxmon_notify::manager::NotificationManager;
 use oxmon_notify::report_template::{ReportParams, ReportRenderer};
-use oxmon_storage::engine::SqliteStorageEngine;
+use oxmon_storage::engine::SeaOrmStorageEngine;
 use oxmon_storage::{AIAccountRow, CertStore, StorageEngine};
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use std::sync::Arc;
 /// 返回生成的报告 ID。
 pub async fn generate_report_for_account(
     account: &AIAccountRow,
-    storage: &Arc<SqliteStorageEngine>,
+    storage: &Arc<SeaOrmStorageEngine>,
     cert_store: &Arc<CertStore>,
     notifier: &Arc<NotificationManager>,
 ) -> Result<String> {
@@ -188,7 +188,7 @@ pub async fn generate_report_for_account(
 /// 返回生成的报告 ID。
 pub async fn generate_report_for_cloud_instances(
     account: &AIAccountRow,
-    storage: &Arc<SqliteStorageEngine>,
+    storage: &Arc<SeaOrmStorageEngine>,
     cert_store: &Arc<CertStore>,
     notifier: &Arc<NotificationManager>,
 ) -> Result<String> {
@@ -337,7 +337,7 @@ pub async fn generate_report_for_cloud_instances(
 /// 返回生成的报告 ID。
 pub async fn generate_report_for_single_instance(
     account: &AIAccountRow,
-    storage: &Arc<SqliteStorageEngine>,
+    storage: &Arc<SeaOrmStorageEngine>,
     cert_store: &Arc<CertStore>,
     notifier: &Arc<NotificationManager>,
     cloud_instance_db_id: &str,
@@ -360,7 +360,7 @@ pub async fn generate_report_for_single_instance(
     let analyzer = build_analyzer(account)?;
 
     // 查询该实例的最新指标
-    let current_metric = if let Ok(Some(m)) = query_agent_latest_metrics(storage, &agent_id) {
+    let current_metric = if let Ok(Some(m)) = query_agent_latest_metrics(storage, &agent_id).await {
         m
     } else {
         // 无指标时也生成报告，指标全为 None
@@ -387,7 +387,7 @@ pub async fn generate_report_for_single_instance(
 
     let now = chrono::Utc::now();
     let from = now - chrono::Duration::days(7);
-    let history_metrics = vec![query_agent_history_average(storage, &from, &now, &agent_id)];
+    let history_metrics = vec![query_agent_history_average(storage, &from, &now, &agent_id).await];
 
     let history_map: std::collections::HashMap<&str, &HistoryAverage> = history_metrics
         .iter()
@@ -530,13 +530,13 @@ pub fn build_analyzer(account: &AIAccountRow) -> Result<Box<dyn AIAnalyzer>> {
 
 pub async fn query_latest_metrics(
     cert_store: &Arc<CertStore>,
-    storage: &Arc<SqliteStorageEngine>,
+    storage: &Arc<SeaOrmStorageEngine>,
 ) -> Result<Vec<LatestMetric>> {
     let agents = cert_store.list_all_agents().await?;
     let mut results = Vec::new();
 
     for agent in &agents {
-        if let Ok(Some(metrics)) = query_agent_latest_metrics(storage, &agent.agent_id) {
+        if let Ok(Some(metrics)) = query_agent_latest_metrics(storage, &agent.agent_id).await {
             results.push(metrics);
         }
     }
@@ -547,7 +547,7 @@ pub async fn query_latest_metrics(
     let now = chrono::Utc::now().timestamp();
     for instance in instances {
         let agent_id = format!("cloud:{}:{}", instance.provider, instance.instance_id);
-        if let Ok(Some(metrics)) = query_agent_latest_metrics(storage, &agent_id) {
+        if let Ok(Some(metrics)) = query_agent_latest_metrics(storage, &agent_id).await {
             results.push(metrics);
         } else {
             results.push(LatestMetric {
@@ -565,8 +565,8 @@ pub async fn query_latest_metrics(
     Ok(results)
 }
 
-fn query_agent_latest_metrics(
-    storage: &Arc<SqliteStorageEngine>,
+async fn query_agent_latest_metrics(
+    storage: &Arc<SeaOrmStorageEngine>,
     agent_id: &str,
 ) -> Result<Option<LatestMetric>> {
     let agent_type = if agent_id.starts_with("cloud:") {
@@ -577,7 +577,7 @@ fn query_agent_latest_metrics(
 
     let aliases = metric_aliases_for_agent(agent_id);
     let metric_names = metric_names_from_aliases(aliases);
-    let metrics = storage.query_latest_metrics_for_agent(agent_id, &metric_names, 7)?;
+    let metrics = storage.query_latest_metrics_for_agent(agent_id, &metric_names, 7).await?;
 
     if metrics.is_empty() {
         return Ok(None);
@@ -621,7 +621,7 @@ fn query_agent_latest_metrics(
 
 async fn query_history_averages(
     cert_store: &Arc<CertStore>,
-    storage: &Arc<SqliteStorageEngine>,
+    storage: &Arc<SeaOrmStorageEngine>,
 ) -> Result<Vec<HistoryAverage>> {
     let agents = cert_store.list_all_agents().await?;
     let instances = cert_store.list_all_cloud_instances().await?;
@@ -639,7 +639,7 @@ async fn query_history_averages(
 
     let mut results = Vec::new();
     for agent_id in agent_ids {
-        results.push(query_agent_history_average(storage, &from, &now, &agent_id));
+        results.push(query_agent_history_average(storage, &from, &now, &agent_id).await);
     }
 
     Ok(results)
@@ -647,7 +647,7 @@ async fn query_history_averages(
 
 async fn send_notifications(
     cert_store: &Arc<CertStore>,
-    storage: &Arc<SqliteStorageEngine>,
+    storage: &Arc<SeaOrmStorageEngine>,
     notifier: &Arc<NotificationManager>,
     report_id: &str,
 ) -> Result<()> {
@@ -695,7 +695,7 @@ async fn send_notifications(
         score_b.cmp(&score_a)
     });
 
-    let history_metrics = query_history_averages_for_metrics(storage, &latest_metrics);
+    let history_metrics = query_history_averages_for_metrics(storage, &latest_metrics).await;
     let history_map: std::collections::HashMap<&str, &HistoryAverage> = history_metrics
         .iter()
         .map(|h| (h.agent_id.as_str(), h))
@@ -741,7 +741,7 @@ async fn send_notifications(
 /// 只查询云实例的最新指标（不含本地 Agent）。
 async fn query_cloud_instances_latest_metrics(
     cert_store: &Arc<CertStore>,
-    storage: &Arc<SqliteStorageEngine>,
+    storage: &Arc<SeaOrmStorageEngine>,
 ) -> Result<Vec<LatestMetric>> {
     let instances = cert_store.list_all_cloud_instances().await?;
 
@@ -750,7 +750,7 @@ async fn query_cloud_instances_latest_metrics(
 
     for instance in instances {
         let agent_id = format!("cloud:{}:{}", instance.provider, instance.instance_id);
-        if let Ok(Some(metrics)) = query_agent_latest_metrics(storage, &agent_id) {
+        if let Ok(Some(metrics)) = query_agent_latest_metrics(storage, &agent_id).await {
             results.push(metrics);
         } else {
             results.push(LatestMetric {
@@ -771,7 +771,7 @@ async fn query_cloud_instances_latest_metrics(
 /// 只查询云实例的 7 天历史均值（不含本地 Agent）。
 async fn query_cloud_instances_history_averages(
     cert_store: &Arc<CertStore>,
-    storage: &Arc<SqliteStorageEngine>,
+    storage: &Arc<SeaOrmStorageEngine>,
 ) -> Result<Vec<HistoryAverage>> {
     let instances = cert_store.list_all_cloud_instances().await?;
 
@@ -781,7 +781,7 @@ async fn query_cloud_instances_history_averages(
     let mut results = Vec::new();
     for instance in instances {
         let agent_id = format!("cloud:{}:{}", instance.provider, instance.instance_id);
-        results.push(query_agent_history_average(storage, &from, &now, &agent_id));
+        results.push(query_agent_history_average(storage, &from, &now, &agent_id).await);
     }
 
     Ok(results)
@@ -1114,15 +1114,15 @@ fn pick_metric_value(metrics: &[MetricDataPoint], aliases: &[&str]) -> Option<(f
     None
 }
 
-fn query_avg_with_aliases(
-    storage: &Arc<SqliteStorageEngine>,
+async fn query_avg_with_aliases(
+    storage: &Arc<SeaOrmStorageEngine>,
     from: &chrono::DateTime<chrono::Utc>,
     to: &chrono::DateTime<chrono::Utc>,
     agent_id: &str,
     aliases: &[&str],
 ) -> f64 {
     for metric_name in aliases {
-        match storage.query_metric_summary(from.to_owned(), to.to_owned(), agent_id, metric_name) {
+        match storage.query_metric_summary(from.to_owned(), to.to_owned(), agent_id, metric_name).await {
             Ok(summary) if summary.count > 0 => return summary.avg,
             _ => {}
         }
@@ -1130,16 +1130,16 @@ fn query_avg_with_aliases(
     0.0
 }
 
-fn query_agent_history_average(
-    storage: &Arc<SqliteStorageEngine>,
+async fn query_agent_history_average(
+    storage: &Arc<SeaOrmStorageEngine>,
     from: &chrono::DateTime<chrono::Utc>,
     to: &chrono::DateTime<chrono::Utc>,
     agent_id: &str,
 ) -> HistoryAverage {
     let aliases = metric_aliases_for_agent(agent_id);
-    let avg_cpu = query_avg_with_aliases(storage, from, to, agent_id, aliases.cpu);
-    let avg_memory = query_avg_with_aliases(storage, from, to, agent_id, aliases.memory);
-    let avg_disk = query_avg_with_aliases(storage, from, to, agent_id, aliases.disk);
+    let avg_cpu = query_avg_with_aliases(storage, from, to, agent_id, aliases.cpu).await;
+    let avg_memory = query_avg_with_aliases(storage, from, to, agent_id, aliases.memory).await;
+    let avg_disk = query_avg_with_aliases(storage, from, to, agent_id, aliases.disk).await;
     HistoryAverage {
         agent_id: agent_id.to_string(),
         avg_cpu,
@@ -1148,8 +1148,8 @@ fn query_agent_history_average(
     }
 }
 
-fn query_history_averages_for_metrics(
-    storage: &Arc<SqliteStorageEngine>,
+async fn query_history_averages_for_metrics(
+    storage: &Arc<SeaOrmStorageEngine>,
     metrics: &[LatestMetric],
 ) -> Vec<HistoryAverage> {
     let now = chrono::Utc::now();
@@ -1164,7 +1164,7 @@ fn query_history_averages_for_metrics(
                 &from,
                 &now,
                 &metric.agent_id,
-            ));
+            ).await);
         }
     }
 

@@ -91,7 +91,7 @@ async fn dashboard_overview(
     // Alert summary for last 24h
     let to = Utc::now();
     let from = to - chrono::Duration::days(1);
-    let (alerts_24h, alerts_by_severity) = match state.storage.query_alert_summary(from, to) {
+    let (alerts_24h, alerts_by_severity) = match state.storage.query_alert_summary(from, to).await {
         Ok(summary) => (summary.total, summary.by_severity),
         Err(e) => {
             tracing::error!(error = %e, "Failed to get alert summary for dashboard");
@@ -155,7 +155,7 @@ async fn dashboard_overview(
     };
 
     // Storage info
-    let (partition_count, storage_total_bytes) = match state.storage.list_partitions() {
+    let (partition_count, storage_total_bytes) = match state.storage.list_partitions().await {
         Ok(partitions) => {
             let count = partitions.len();
             let total: u64 = partitions.iter().map(|p| p.size_bytes).sum();

@@ -865,7 +865,7 @@ async fn store_check_result(
         data_points,
     };
 
-    state.storage.write_batch(&batch)?;
+    state.storage.write_batch(&batch).await?;
     Ok(())
 }
 

@@ -1035,7 +1035,7 @@ async fn trigger_cloud_account_collection(
                             data_points,
                         };
 
-                        if let Err(e) = state.storage.write_batch(&batch) {
+                        if let Err(e) = state.storage.write_batch(&batch).await {
                             tracing::error!(error = %e, "Failed to write cloud metrics batch");
                             return error_response(
                                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1250,7 +1250,7 @@ async fn get_cloud_instance_detail(
         &agent_id,
         CLOUD_METRIC_NAMES,
         2,
-    ) {
+    ).await {
         Ok(m) => m,
         Err(e) => {
             tracing::warn!(error = %e, agent_id = %agent_id, "Failed to query latest cloud metrics, returning instance info without metrics");
@@ -1691,7 +1691,7 @@ async fn cloud_instance_metrics(
             metric_name: metric_name.clone(),
             from: from_time,
             to: to_time,
-        }) {
+        }).await {
             Ok(dps) => dps
                 .into_iter()
                 .map(|dp| MetricPoint {
@@ -1894,6 +1894,7 @@ async fn cloud_instances_chart(
         let latest = state
             .storage
             .query_latest_metrics_for_agent(&agent_id, &metric_names_refs, 2)
+            .await
             .unwrap_or_default();
 
         let latest_map: std::collections::HashMap<&str, f64> = latest

@@ -154,7 +154,7 @@ async fn metrics_alerts_and_history_should_return_paginated_data() {
         }],
     };
     must_ok(
-        ctx.state.storage.write_batch(&batch),
+        ctx.state.storage.write_batch(&batch).await,
         "write metric batch should succeed",
     );
     must_ok(

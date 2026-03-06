@@ -154,7 +154,7 @@ impl MetricService for MetricServiceImpl {
         };
 
         // Write to storage
-        if let Err(e) = self.state.storage.write_batch(&batch) {
+        if let Err(e) = self.state.storage.write_batch(&batch).await {
             tracing::error!(error = %e, "Failed to write metric batch");
             return Ok(Response::new(ReportResponse {
                 success: false,
@@ -253,34 +253,40 @@ impl MetricService for MetricServiceImpl {
                 .cert_store
                 .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
                 .await;
-            let mut engine = self
-                .state
-                .alert_engine
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            for dp in &batch.data_points {
-                let outputs = engine.ingest_with_locale(dp, &locale);
-                for output in outputs {
-                    let event = output.event().clone();
-                    // Store alert event
-                    if let Err(e) = self.state.storage.write_alert_event(&event) {
-                        tracing::error!(error = %e, "Failed to write alert event");
-                    }
-                    // For recovered events, also resolve any matching active alerts
-                    if event.status == 3 {
-                        // Auto-resolve: best effort
-                        tracing::info!(
-                            rule_id = %event.rule_id,
-                            agent_id = %event.agent_id,
-                            "Alert auto-recovered"
-                        );
-                    }
-                    // Send notification
-                    let notifier = self.state.notifier.clone();
-                    tokio::spawn(async move {
-                        notifier.notify(&event).await;
-                    });
+            // 先在 Mutex 内收集所有告警事件，然后释放锁再做异步操作
+            let alert_events: Vec<oxmon_common::types::AlertEvent> = {
+                let mut engine = self
+                    .state
+                    .alert_engine
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                batch
+                    .data_points
+                    .iter()
+                    .flat_map(|dp| {
+                        engine
+                            .ingest_with_locale(dp, &locale)
+                            .into_iter()
+                            .map(|o| o.event().clone())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect()
+            };
+            for event in alert_events {
+                if let Err(e) = self.state.storage.write_alert_event(&event).await {
+                    tracing::error!(error = %e, "Failed to write alert event");
                 }
+                if event.status == 3 {
+                    tracing::info!(
+                        rule_id = %event.rule_id,
+                        agent_id = %event.agent_id,
+                        "Alert auto-recovered"
+                    );
+                }
+                let notifier = self.state.notifier.clone();
+                tokio::spawn(async move {
+                    notifier.notify(&event).await;
+                });
             }
         }
 

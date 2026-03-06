@@ -762,7 +762,7 @@ async fn agent_latest(
 
     let rows = match state
         .storage
-        .query_all_latest_for_agent(&agent_entry.agent_id, 2)
+        .query_all_latest_for_agent(&agent_entry.agent_id, 2).await
     {
         Ok(rows) => rows,
         Err(err) => {
@@ -983,7 +983,7 @@ async fn query_all_metrics(
         to,
         params.agent_id_eq.as_deref(),
         params.metric_name_eq.as_deref(),
-    ) {
+    ).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Count metrics failed");
@@ -1004,7 +1004,7 @@ async fn query_all_metrics(
         params.metric_name_eq.as_deref(),
         limit,
         offset,
-    ) {
+    ).await {
         Ok(points) => {
             let items: Vec<MetricDataPointResponse> = points
                 .into_iter()
@@ -1128,7 +1128,7 @@ async fn metric_names(
         .timestamp_gte
         .unwrap_or_else(|| to - chrono::Duration::days(1));
 
-    let total = match state.storage.count_distinct_metric_names(from, to) {
+    let total = match state.storage.count_distinct_metric_names(from, to).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count metric names");
@@ -1147,7 +1147,7 @@ async fn metric_names(
         to,
         pagination.limit(),
         pagination.offset(),
-    ) {
+    ).await {
         Ok(names) => success_paginated_response(
             StatusCode::OK,
             &trace_id,
@@ -1192,7 +1192,7 @@ async fn metric_agents(
         .timestamp_gte
         .unwrap_or_else(|| to - chrono::Duration::days(1));
 
-    let total = match state.storage.count_distinct_agent_ids(from, to) {
+    let total = match state.storage.count_distinct_agent_ids(from, to).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count agent ids");
@@ -1208,7 +1208,7 @@ async fn metric_agents(
 
     match state
         .storage
-        .query_distinct_agent_ids(from, to, pagination.limit(), pagination.offset())
+        .query_distinct_agent_ids(from, to, pagination.limit(), pagination.offset()).await
     {
         Ok(ids) => success_paginated_response(
             StatusCode::OK,
@@ -1457,7 +1457,7 @@ async fn metric_summary(
         .unwrap_or_else(|| to - chrono::Duration::hours(1));
     match state
         .storage
-        .query_metric_summary(from, to, &params.agent_id, &params.metric_name)
+        .query_metric_summary(from, to, &params.agent_id, &params.metric_name).await
     {
         Ok(summary) => success_response(StatusCode::OK, &trace_id, summary),
         Err(e) => {
