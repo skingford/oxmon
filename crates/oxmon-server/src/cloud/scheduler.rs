@@ -120,7 +120,9 @@ impl CloudCheckScheduler {
         }
 
         // Build providers for ALL enabled accounts to always sync instance status/metadata.
-        let mut providers_for_sync: Vec<Arc<dyn oxmon_cloud::CloudProvider>> = Vec::new();
+        // providers_for_sync 携带 (config_key, provider_type, provider) 以便后续标记消失实例
+        let mut providers_for_sync: Vec<(String, String, Arc<dyn oxmon_cloud::CloudProvider>)> =
+            Vec::new();
         let mut account_config_key_map: HashMap<(String, String), String> = HashMap::new();
         for (config_key, provider_type, account_name, account_config) in &all_accounts {
             account_config_key_map.insert(
@@ -129,7 +131,11 @@ impl CloudCheckScheduler {
             );
             match build_provider(provider_type, account_name, account_config.clone()) {
                 Ok(provider) => {
-                    providers_for_sync.push(Arc::from(provider));
+                    providers_for_sync.push((
+                        config_key.clone(),
+                        provider_type.clone(),
+                        Arc::from(provider),
+                    ));
                 }
                 Err(e) => {
                     tracing::error!(
@@ -149,10 +155,15 @@ impl CloudCheckScheduler {
 
         // First, discover and save all instances from all enabled providers.
         // This keeps cloud_instances status fresh even when metric collection is not due.
+        // successful_synced: config_key -> 本次 API 返回的实例 ID 列表（仅成功调用的账号）
+        let mut successful_synced: HashMap<String, Vec<String>> = HashMap::new();
         let mut all_instances = Vec::new();
-        for provider in &providers_for_sync {
+        for (config_key, _provider_type, provider) in &providers_for_sync {
             match provider.list_instances().await {
                 Ok(instances) => {
+                    let ids: Vec<String> =
+                        instances.iter().map(|i| i.instance_id.clone()).collect();
+                    successful_synced.insert(config_key.clone(), ids);
                     all_instances.extend(instances);
                 }
                 Err(e) => {
@@ -257,6 +268,34 @@ impl CloudCheckScheduler {
             instances = all_instances.len(),
             "Saved cloud instances to database"
         );
+
+        // 将本次 API 未返回的实例标记为 Unknown（仅针对成功完成 API 调用的账号）
+        // 这解决了实例被释放后数据库状态停留在"运行中"的问题
+        for (config_key, provider_type, _provider) in &providers_for_sync {
+            if let Some(known_ids) = successful_synced.get(config_key.as_str()) {
+                match self
+                    .cert_store
+                    .mark_missing_cloud_instances(provider_type, config_key, known_ids)
+                    .await
+                {
+                    Ok(count) if count > 0 => {
+                        tracing::info!(
+                            config_key = config_key,
+                            count = count,
+                            "Marked released/missing cloud instances as Unknown"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::error!(
+                            config_key = config_key,
+                            error = %e,
+                            "Failed to mark missing cloud instances"
+                        );
+                    }
+                }
+            }
+        }
 
         if due_accounts.is_empty() {
             tracing::info!("No due cloud accounts for metrics collection; status sync only");

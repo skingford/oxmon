@@ -488,7 +488,7 @@ async fn run_server(config_path: &str) -> Result<()> {
         Ok(0) => {
             let password_hash = oxmon_storage::auth::hash_token(&config.auth.default_password)?;
             match cert_store
-                .create_user(&config.auth.default_username, &password_hash)
+                .create_user(&config.auth.default_username, &password_hash, None, None, None, None)
                 .await
             {
                 Ok(_) => {

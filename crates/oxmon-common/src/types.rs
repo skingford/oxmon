@@ -470,6 +470,14 @@ pub struct User {
     /// Token 版本（用于密码修改后的 JWT 失效）
     #[serde(skip_serializing)]
     pub token_version: i64,
+    /// 账号状态：active / disabled
+    pub status: String,
+    /// 头像 URL
+    pub avatar: Option<String>,
+    /// 手机号
+    pub phone: Option<String>,
+    /// 邮箱
+    pub email: Option<String>,
     /// 创建时间
     pub created_at: DateTime<Utc>,
     /// 更新时间
@@ -521,6 +529,14 @@ pub struct AdminUserResponse {
     pub id: String,
     /// 登录用户名
     pub username: String,
+    /// 账号状态：active / disabled
+    pub status: String,
+    /// 头像 URL
+    pub avatar: Option<String>,
+    /// 手机号
+    pub phone: Option<String>,
+    /// 邮箱
+    pub email: Option<String>,
     /// 创建时间
     pub created_at: DateTime<Utc>,
     /// 更新时间
@@ -534,6 +550,14 @@ pub struct CreateAdminUserRequest {
     pub username: String,
     /// RSA-OAEP 加密后的密码（Base64 编码，必填）
     pub encrypted_password: String,
+    /// 账号状态：active / disabled（默认 active）
+    pub status: Option<String>,
+    /// 头像 URL
+    pub avatar: Option<String>,
+    /// 手机号
+    pub phone: Option<String>,
+    /// 邮箱
+    pub email: Option<String>,
 }
 
 /// 重置管理员密码请求
@@ -541,6 +565,19 @@ pub struct CreateAdminUserRequest {
 pub struct ResetAdminPasswordRequest {
     /// RSA-OAEP 加密后的新密码（Base64 编码，必填）
     pub encrypted_new_password: String,
+}
+
+/// 更新管理员用户信息请求（所有字段均可选，仅更新传入的字段）
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct UpdateAdminUserRequest {
+    /// 账号状态：active / disabled
+    pub status: Option<String>,
+    /// 头像 URL
+    pub avatar: Option<String>,
+    /// 手机号
+    pub phone: Option<String>,
+    /// 邮箱
+    pub email: Option<String>,
 }
 
 // ---- System dictionary types ----

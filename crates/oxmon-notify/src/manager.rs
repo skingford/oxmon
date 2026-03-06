@@ -996,8 +996,34 @@ impl NotificationManager {
             .resolve_agent_display_names(&unique_agent_ids)
             .await;
 
+        // 按 (agent_id, metric_name, labels) 去重，保留严重级别最高的事件。
+        // 同一实例同一指标（如 CPU）可能被"告警"和"严重告警"两条规则同时触发，
+        // 仅保留最高级别，避免在汇总报告中重复出现同一实例。
+        let deduped_events: Vec<&AlertEvent> = {
+            // key: (agent_id, metric_name, labels_canonical)
+            let mut best: HashMap<(String, String, String), &AlertEvent> = HashMap::new();
+            for e in events.iter() {
+                let mut label_pairs: Vec<String> = e
+                    .labels
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect();
+                label_pairs.sort();
+                let label_key = label_pairs.join(",");
+                let key = (e.agent_id.clone(), e.metric_name.clone(), label_key);
+                let entry = best.entry(key).or_insert(e);
+                if e.severity > entry.severity {
+                    *entry = e;
+                }
+            }
+            // 按原始顺序输出，保持报告中的时间顺序
+            let mut result: Vec<&AlertEvent> = best.into_values().collect();
+            result.sort_by_key(|e| e.timestamp);
+            result
+        };
+
         // 将 AlertEvent 转换为渲染用的明细结构
-        let items: Vec<AlertReportDetail> = events
+        let items: Vec<AlertReportDetail> = deduped_events
             .iter()
             .map(|e| AlertReportDetail {
                 agent_id: e.agent_id.clone(),

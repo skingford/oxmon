@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use oxmon_common::types::{
-    AdminUserResponse, CreateAdminUserRequest, ResetAdminPasswordRequest,
+    AdminUserResponse, CreateAdminUserRequest, ResetAdminPasswordRequest, UpdateAdminUserRequest,
 };
 use oxmon_storage::auth::hash_token;
 use serde::Deserialize;
@@ -21,6 +21,10 @@ fn to_admin_user_response(user: oxmon_common::types::User) -> AdminUserResponse 
     AdminUserResponse {
         id: user.id,
         username: user.username,
+        status: user.status,
+        avatar: user.avatar,
+        phone: user.phone,
+        email: user.email,
         created_at: user.created_at,
         updated_at: user.updated_at,
     }
@@ -130,6 +134,18 @@ async fn create_admin_user(
         );
     }
 
+    // 校验 status 值
+    if let Some(ref s) = req.status {
+        if s != "active" && s != "disabled" {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "bad_request",
+                "status must be 'active' or 'disabled'",
+            );
+        }
+    }
+
     // 解密密码
     let password = match state
         .password_encryptor
@@ -193,7 +209,14 @@ async fn create_admin_user(
 
     match state
         .cert_store
-        .create_user(&req.username, &password_hash)
+        .create_user(
+            &req.username,
+            &password_hash,
+            req.status.as_deref(),
+            req.avatar.as_deref(),
+            req.phone.as_deref(),
+            req.email.as_deref(),
+        )
         .await
     {
         Ok(id) => success_id_response(StatusCode::CREATED, &trace_id, id),
@@ -244,6 +267,94 @@ async fn get_admin_user(
         ),
         Err(e) => {
             tracing::error!(error = %e, "Failed to get admin user");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "internal error",
+            )
+        }
+    }
+}
+
+/// 更新管理员用户信息（status / avatar / phone / email）。
+/// 鉴权：需要 Bearer Token。
+#[utoipa::path(
+    put,
+    path = "/v1/admin/users/{id}",
+    tag = "Admin",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "用户 ID")
+    ),
+    request_body = UpdateAdminUserRequest,
+    responses(
+        (status = 200, description = "更新成功", body = AdminUserResponse),
+        (status = 400, description = "请求参数错误", body = crate::api::ApiError),
+        (status = 401, description = "未认证", body = crate::api::ApiError),
+        (status = 404, description = "用户不存在", body = crate::api::ApiError)
+    )
+)]
+async fn update_admin_user(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateAdminUserRequest>,
+) -> impl IntoResponse {
+    // 校验 status 值
+    if let Some(ref s) = req.status {
+        if s != "active" && s != "disabled" {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &trace_id,
+                "bad_request",
+                "status must be 'active' or 'disabled'",
+            );
+        }
+    }
+
+    match state
+        .cert_store
+        .update_user(
+            &id,
+            req.status.as_deref(),
+            req.avatar.as_deref(),
+            req.phone.as_deref(),
+            req.email.as_deref(),
+        )
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                "user not found",
+            );
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to update admin user");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "internal error",
+            );
+        }
+    }
+
+    // 返回更新后的用户信息
+    match state.cert_store.get_user_by_id(&id).await {
+        Ok(Some(user)) => success_response(StatusCode::OK, &trace_id, to_admin_user_response(user)),
+        Ok(None) => error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "user not found",
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to fetch updated admin user");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &trace_id,
@@ -412,6 +523,6 @@ async fn delete_admin_user(
 pub fn admin_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_admin_users, create_admin_user))
-        .routes(routes!(get_admin_user, delete_admin_user))
+        .routes(routes!(get_admin_user, update_admin_user, delete_admin_user))
         .routes(routes!(reset_admin_user_password))
 }

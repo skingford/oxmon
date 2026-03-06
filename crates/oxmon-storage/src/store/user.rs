@@ -15,6 +15,10 @@ fn to_user(m: user::Model) -> User {
         username: m.username,
         password_hash: m.password_hash,
         token_version: m.token_version as i64,
+        status: m.status,
+        avatar: m.avatar,
+        phone: m.phone,
+        email: m.email,
         created_at: m.created_at.with_timezone(&Utc),
         updated_at: m.updated_at.with_timezone(&Utc),
     }
@@ -29,7 +33,15 @@ impl CertStore {
         Ok(model.map(to_user))
     }
 
-    pub async fn create_user(&self, username: &str, password_hash: &str) -> Result<String> {
+    pub async fn create_user(
+        &self,
+        username: &str,
+        password_hash: &str,
+        status: Option<&str>,
+        avatar: Option<&str>,
+        phone: Option<&str>,
+        email: Option<&str>,
+    ) -> Result<String> {
         let id = oxmon_common::id::next_id();
         let now = Utc::now().fixed_offset();
         let am = user::ActiveModel {
@@ -37,6 +49,10 @@ impl CertStore {
             username: Set(username.to_owned()),
             password_hash: Set(password_hash.to_owned()),
             token_version: Set(0),
+            status: Set(status.unwrap_or("active").to_owned()),
+            avatar: Set(avatar.map(|s| s.to_owned())),
+            phone: Set(phone.map(|s| s.to_owned())),
+            email: Set(email.map(|s| s.to_owned())),
             created_at: Set(now),
             updated_at: Set(now),
         };
@@ -49,17 +65,9 @@ impl CertStore {
         user_id: &str,
         password_hash: &str,
     ) -> Result<bool> {
-        let now = Utc::now().fixed_offset();
-        let am = user::ActiveModel {
-            id: Set(user_id.to_owned()),
-            password_hash: Set(password_hash.to_owned()),
-            token_version: sea_orm::ActiveValue::NotSet,
-            updated_at: Set(now),
-            ..Default::default()
-        };
-        // increment token_version
         let model = Entity::find_by_id(user_id).one(self.db()).await?;
         if let Some(m) = model {
+            let now = Utc::now().fixed_offset();
             let mut active: user::ActiveModel = m.into();
             active.password_hash = Set(password_hash.to_owned());
             active.token_version = Set(active.token_version.unwrap() + 1);
@@ -67,7 +75,39 @@ impl CertStore {
             active.update(self.db()).await?;
             Ok(true)
         } else {
-            drop(am);
+            Ok(false)
+        }
+    }
+
+    /// 更新用户基本信息（status / avatar / phone / email），仅更新传入的非 None 字段。
+    pub async fn update_user(
+        &self,
+        user_id: &str,
+        status: Option<&str>,
+        avatar: Option<&str>,
+        phone: Option<&str>,
+        email: Option<&str>,
+    ) -> Result<bool> {
+        let model = Entity::find_by_id(user_id).one(self.db()).await?;
+        if let Some(m) = model {
+            let now = Utc::now().fixed_offset();
+            let mut active: user::ActiveModel = m.into();
+            if let Some(s) = status {
+                active.status = Set(s.to_owned());
+            }
+            if let Some(a) = avatar {
+                active.avatar = Set(Some(a.to_owned()));
+            }
+            if let Some(p) = phone {
+                active.phone = Set(Some(p.to_owned()));
+            }
+            if let Some(e) = email {
+                active.email = Set(Some(e.to_owned()));
+            }
+            active.updated_at = Set(now);
+            active.update(self.db()).await?;
+            Ok(true)
+        } else {
             Ok(false)
         }
     }

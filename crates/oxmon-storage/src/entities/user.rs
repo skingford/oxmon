@@ -10,6 +10,10 @@ pub struct Model {
     pub username: String,
     pub password_hash: String,
     pub token_version: i32,
+    pub status: String,
+    pub avatar: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }

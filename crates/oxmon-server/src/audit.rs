@@ -1,11 +1,14 @@
 use axum::body::Body;
+use axum::extract::connect_info::ConnectInfo;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::http::Request;
 use axum::middleware::Next;
 use axum::response::Response;
 use chrono::Utc;
 use oxmon_common::id::next_id;
 use oxmon_storage::AuditLogRow;
+use std::net::SocketAddr;
 
 use crate::auth::Claims;
 use crate::logging::TraceId;
@@ -45,6 +48,59 @@ fn parse_resource(path: &str) -> (String, Option<String>) {
     (resource_type, resource_id)
 }
 
+fn first_non_empty_csv_value(raw: &str) -> Option<String> {
+    raw.split(',')
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn ip_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(first_non_empty_csv_value)
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            // RFC 7239: Forwarded: for=203.0.113.43;proto=http;by=...
+            // 这里只提取第一个 for= 值，尽量兼容代理链。
+            headers
+                .get("forwarded")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| {
+                    s.split(';').find_map(|part| {
+                        let kv = part.trim();
+                        let value = kv.strip_prefix("for=")?;
+                        let value = value
+                            .trim()
+                            .trim_matches('"')
+                            .trim_matches('[')
+                            .trim_matches(']');
+                        if value.is_empty() {
+                            None
+                        } else {
+                            Some(value.to_string())
+                        }
+                    })
+                })
+        })
+}
+
+fn extract_source_ip(req: &Request<Body>) -> Option<String> {
+    ip_from_headers(req.headers()).or_else(|| {
+        req.extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ci| ci.0.ip().to_string())
+    })
+}
+
 /// 审计日志中间件
 ///
 /// 仅记录写操作（POST/PUT/PATCH/DELETE）。
@@ -71,17 +127,9 @@ pub async fn audit_middleware(
 
     // 提取上下文信息
     let claims = req.extensions().get::<Claims>().cloned();
-    let trace_id = req
-        .extensions()
-        .get::<TraceId>()
-        .map(|t| t.0.clone());
+    let trace_id = req.extensions().get::<TraceId>().map(|t| t.0.clone());
 
-    let ip_address = req
-        .headers()
-        .get("x-forwarded-for")
-        .or_else(|| req.headers().get("x-real-ip"))
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+    let ip_address = extract_source_ip(&req);
 
     let user_agent = req
         .headers()
@@ -127,4 +175,28 @@ pub async fn audit_middleware(
     }
 
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_ip_prefers_first_xff_entry() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "198.51.100.10, 10.0.0.2".parse().expect("valid header"),
+        );
+        let ip = ip_from_headers(&headers);
+        assert_eq!(ip.as_deref(), Some("198.51.100.10"));
+    }
+
+    #[test]
+    fn extract_ip_falls_back_to_x_real_ip() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "203.0.113.7".parse().expect("valid header"));
+        let ip = ip_from_headers(&headers);
+        assert_eq!(ip.as_deref(), Some("203.0.113.7"));
+    }
 }

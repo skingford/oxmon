@@ -620,6 +620,50 @@ impl CertStore {
         Ok(model.map(model_to_instance))
     }
 
+    /// 将指定账号下不在 `known_ids` 中的实例状态标记为 Unknown。
+    /// 用于处理云端已释放但数据库仍保留旧状态（如"运行中"）的实例。
+    /// `known_ids` 为本次 API 返回的实例 ID 列表，不能为空（空列表视为 API 异常，跳过处理）。
+    pub async fn mark_missing_cloud_instances(
+        &self,
+        provider: &str,
+        account_config_key: &str,
+        known_ids: &[String],
+    ) -> Result<u64> {
+        use sea_orm::{ConnectionTrait, Statement};
+
+        if known_ids.is_empty() {
+            // API 未返回任何实例，可能是 API 异常或区域无实例，跳过以避免误标
+            return Ok(0);
+        }
+
+        let now = Utc::now().to_rfc3339();
+        let placeholders: String = known_ids
+            .iter()
+            .map(|id| format!("'{}'", id.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let sql = format!(
+            "UPDATE cloud_instances SET status = 'Unknown', updated_at = '{now}' \
+             WHERE provider = '{provider}' AND account_config_key = '{config_key}' \
+             AND COALESCE(status, '') != 'Unknown' AND instance_id NOT IN ({placeholders})",
+            now = now,
+            provider = provider.replace('\'', "''"),
+            config_key = account_config_key.replace('\'', "''"),
+            placeholders = placeholders,
+        );
+
+        let result = self
+            .db()
+            .execute_raw(Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                sql,
+            ))
+            .await?;
+
+        Ok(result.rows_affected())
+    }
+
     /// 获取所有云实例（无上限），内部分批查询，用于报告生成等需要完整数据的场景。
     pub async fn list_all_cloud_instances(&self) -> Result<Vec<CloudInstanceRow>> {
         const BATCH: usize = 500;
