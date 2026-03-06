@@ -195,7 +195,7 @@ async fn main() -> Result<()> {
 
                         // 每 SYSTEM_INFO_INTERVAL_TICKS 次采集一次系统信息，附在第一个 chunk
                         let should_send_sysinfo = tick_count == 1
-                            || tick_count % SYSTEM_INFO_INTERVAL_TICKS == 0;
+                            || tick_count.is_multiple_of(SYSTEM_INFO_INTERVAL_TICKS);
                         let sysinfo = if should_send_sysinfo {
                             Some(collect_system_info())
                         } else {

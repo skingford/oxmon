@@ -1,6 +1,13 @@
 //! 核心 AI 报告生成逻辑，供调度器和手动触发端点共用。
 
 use anyhow::{Context, Result};
+
+/// 返回 UTC+8 固定偏移时区。28800 秒始终在合法范围内。
+#[allow(clippy::unwrap_used)]
+fn utc8() -> chrono::FixedOffset {
+    chrono::FixedOffset::east_opt(8 * 3600).unwrap()
+}
+
 use oxmon_ai::{AIAnalyzer, AnalysisInput, HistoryMetric, MetricSnapshot, ZhipuProvider};
 use oxmon_common::types::MetricDataPoint;
 use oxmon_notify::manager::NotificationManager;
@@ -60,7 +67,7 @@ pub async fn generate_report_for_account(
 
     // 6. 构建分析输入
     let report_date = chrono::Utc::now()
-        .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+        .with_timezone(&utc8())
         .format("%Y-%m-%d")
         .to_string();
     let history_map: std::collections::HashMap<&str, &HistoryAverage> = history_metrics
@@ -73,6 +80,7 @@ pub async fn generate_report_for_account(
             .iter()
             .map(|m| MetricSnapshot {
                 agent_id: m.agent_id.clone(),
+                instance_name: m.instance_name.clone(),
                 agent_type: m.agent_type.clone(),
                 cpu_usage: m.cpu_usage,
                 memory_usage: m.memory_usage,
@@ -130,7 +138,7 @@ pub async fn generate_report_for_account(
         ai_analysis: &analysis_result.content,
         instance_table_html: &instance_table_html,
         created_at: &chrono::Utc::now()
-            .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+            .with_timezone(&utc8())
             .to_rfc3339(),
         locale: &locale,
     })?;
@@ -221,7 +229,7 @@ pub async fn generate_report_for_cloud_instances(
     });
 
     let report_date = chrono::Utc::now()
-        .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+        .with_timezone(&utc8())
         .format("%Y-%m-%d")
         .to_string();
     let history_map: std::collections::HashMap<&str, &HistoryAverage> = history_metrics
@@ -234,6 +242,7 @@ pub async fn generate_report_for_cloud_instances(
             .iter()
             .map(|m| MetricSnapshot {
                 agent_id: m.agent_id.clone(),
+                instance_name: m.instance_name.clone(),
                 agent_type: m.agent_type.clone(),
                 cpu_usage: m.cpu_usage,
                 memory_usage: m.memory_usage,
@@ -282,7 +291,7 @@ pub async fn generate_report_for_cloud_instances(
         ai_analysis: &analysis_result.content,
         instance_table_html: &instance_table_html,
         created_at: &chrono::Utc::now()
-            .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+            .with_timezone(&utc8())
             .to_rfc3339(),
         locale: &locale,
     })?;
@@ -387,7 +396,7 @@ pub async fn generate_report_for_single_instance(
 
     let now = chrono::Utc::now();
     let from = now - chrono::Duration::days(7);
-    let history_metrics = vec![query_agent_history_average(storage, &from, &now, &agent_id).await];
+    let history_metrics = [query_agent_history_average(storage, &from, &now, &agent_id).await];
 
     let history_map: std::collections::HashMap<&str, &HistoryAverage> = history_metrics
         .iter()
@@ -395,7 +404,7 @@ pub async fn generate_report_for_single_instance(
         .collect();
 
     let report_date = chrono::Utc::now()
-        .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+        .with_timezone(&utc8())
         .format("%Y-%m-%d")
         .to_string();
 
@@ -404,6 +413,7 @@ pub async fn generate_report_for_single_instance(
             .iter()
             .map(|m| MetricSnapshot {
                 agent_id: m.agent_id.clone(),
+                instance_name: m.instance_name.clone(),
                 agent_type: m.agent_type.clone(),
                 cpu_usage: m.cpu_usage,
                 memory_usage: m.memory_usage,
@@ -451,7 +461,7 @@ pub async fn generate_report_for_single_instance(
         ai_analysis: &analysis_result.content,
         instance_table_html: &instance_table_html,
         created_at: &chrono::Utc::now()
-            .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+            .with_timezone(&utc8())
             .to_rfc3339(),
         locale: &locale,
     })?;
@@ -559,6 +569,28 @@ pub async fn query_latest_metrics(
                 disk_usage: None,
                 timestamp: now,
             });
+        }
+    }
+
+    // 对 instance_name 仍为 None 的条目，批量查询 agents 表 hostname 或云实例名称补充。
+    // 这覆盖了：普通 Agent（hostname）以及有指标但 labels 中无 instance_name 的云实例。
+    let ids_needing_names: Vec<String> = results
+        .iter()
+        .filter(|m| m.instance_name.is_none())
+        .map(|m| m.agent_id.clone())
+        .collect();
+
+    if !ids_needing_names.is_empty() {
+        let name_map = cert_store.resolve_agent_display_names(&ids_needing_names).await;
+        for metric in &mut results {
+            if metric.instance_name.is_none() {
+                if let Some(name) = name_map.get(&metric.agent_id) {
+                    // 仅当解析结果与 agent_id 本身不同时才设置，避免冗余显示
+                    if name != &metric.agent_id {
+                        metric.instance_name = Some(name.clone());
+                    }
+                }
+            }
         }
     }
 

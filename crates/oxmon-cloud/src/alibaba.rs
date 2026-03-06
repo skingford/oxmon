@@ -689,6 +689,37 @@ impl AlibabaCloudProvider {
 
         Ok(None)
     }
+
+    /// Get CMS metric with explicit diagnostics instead of silently swallowing errors.
+    async fn get_cms_metric_with_diagnostics(
+        &self,
+        namespace: &str,
+        metric_name: &str,
+        instance_id: &str,
+        region: &str,
+    ) -> Option<f64> {
+        match self.get_cms_metric(namespace, metric_name, instance_id).await {
+            Ok(v) => v,
+            Err(e) => {
+                let err = e.to_string();
+                let err_lc = err.to_ascii_lowercase();
+                let permission_suspect = err_lc.contains("forbidden")
+                    || err_lc.contains("nopermission")
+                    || err_lc.contains("unauthorized")
+                    || err_lc.contains("no permission")
+                    || err_lc.contains("ram");
+                tracing::warn!(
+                    instance_id = instance_id,
+                    region = region,
+                    metric_name = metric_name,
+                    permission_suspect = permission_suspect,
+                    error = %e,
+                    "Failed to fetch Alibaba CMS metric"
+                );
+                None
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -723,59 +754,83 @@ impl CloudProvider for AlibabaCloudProvider {
 
         // Get CPU usage
         let cpu_usage = self
-            .get_cms_metric("acs_ecs_dashboard", "cpu_total", instance_id)
-            .await
-            .ok()
-            .flatten();
+            .get_cms_metric_with_diagnostics(
+                "acs_ecs_dashboard",
+                "cpu_total",
+                instance_id,
+                region,
+            )
+            .await;
 
         // Get memory usage
         let memory_usage = self
-            .get_cms_metric("acs_ecs_dashboard", "memory_usedutilization", instance_id)
-            .await
-            .ok()
-            .flatten();
+            .get_cms_metric_with_diagnostics(
+                "acs_ecs_dashboard",
+                "memory_usedutilization",
+                instance_id,
+                region,
+            )
+            .await;
 
         // Get disk usage
         let disk_usage = self
-            .get_cms_metric("acs_ecs_dashboard", "diskusage_utilization", instance_id)
-            .await
-            .ok()
-            .flatten();
+            .get_cms_metric_with_diagnostics(
+                "acs_ecs_dashboard",
+                "diskusage_utilization",
+                instance_id,
+                region,
+            )
+            .await;
 
         // Get network in traffic (bytes per second)
         let network_in_bytes = self
-            .get_cms_metric("acs_ecs_dashboard", "networkin_rate", instance_id)
-            .await
-            .ok()
-            .flatten();
+            .get_cms_metric_with_diagnostics(
+                "acs_ecs_dashboard",
+                "networkin_rate",
+                instance_id,
+                region,
+            )
+            .await;
 
         // Get network out traffic (bytes per second)
         let network_out_bytes = self
-            .get_cms_metric("acs_ecs_dashboard", "networkout_rate", instance_id)
-            .await
-            .ok()
-            .flatten();
+            .get_cms_metric_with_diagnostics(
+                "acs_ecs_dashboard",
+                "networkout_rate",
+                instance_id,
+                region,
+            )
+            .await;
 
         // Get disk read IOPS
         let disk_iops_read = self
-            .get_cms_metric("acs_ecs_dashboard", "disk_readiops", instance_id)
-            .await
-            .ok()
-            .flatten();
+            .get_cms_metric_with_diagnostics(
+                "acs_ecs_dashboard",
+                "disk_readiops",
+                instance_id,
+                region,
+            )
+            .await;
 
         // Get disk write IOPS
         let disk_iops_write = self
-            .get_cms_metric("acs_ecs_dashboard", "disk_writeiops", instance_id)
-            .await
-            .ok()
-            .flatten();
+            .get_cms_metric_with_diagnostics(
+                "acs_ecs_dashboard",
+                "disk_writeiops",
+                instance_id,
+                region,
+            )
+            .await;
 
         // Get TCP connection count
         let connections = self
-            .get_cms_metric("acs_ecs_dashboard", "tcp_total", instance_id)
-            .await
-            .ok()
-            .flatten();
+            .get_cms_metric_with_diagnostics(
+                "acs_ecs_dashboard",
+                "tcp_total",
+                instance_id,
+                region,
+            )
+            .await;
 
         Ok(CloudMetrics {
             instance_id: instance_id.to_string(),

@@ -14,11 +14,12 @@ pub use store::CertStore;
 pub use store::{
     AIAccountRow, AIAccountUpdate, AICheckJobRow, ActiveAlertFilter, AgentListFilter,
     AgentReportLogRow, AgentWhitelistFilter, AlertRuleFilter, AlertRuleRow, AlertRuleUpdate,
-    CertDomainSummary, CertHealthSummary, CertStatusFilter, CertStatusSummary, CloudAccountRow,
-    CloudAccountSummary, CloudCollectionStateRow, CloudInstanceRow, CloudInstanceStatusSummary,
-    DictTypeFilter, NotificationChannelFilter, NotificationChannelRow, NotificationChannelUpdate,
-    NotificationLogFilter, NotificationLogRow, NotificationRecipientRow, SilenceWindowFilter,
-    SilenceWindowRow, SystemConfigFilter, SystemConfigRow, SystemConfigUpdate,
+    AuditLogFilter, AuditLogRow, CertDomainSummary, CertHealthSummary, CertStatusFilter,
+    CertStatusSummary, CloudAccountRow, CloudAccountSummary, CloudCollectionStateRow,
+    CloudInstanceRow, CloudInstanceStatusSummary, DictTypeFilter, NotificationChannelFilter,
+    NotificationChannelRow, NotificationChannelUpdate, NotificationLogFilter, NotificationLogRow,
+    NotificationRecipientRow, SilenceWindowFilter, SilenceWindowRow, SystemConfigFilter,
+    SystemConfigRow, SystemConfigUpdate,
 };
 
 use anyhow::Result;

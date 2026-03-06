@@ -2,7 +2,8 @@ use anyhow::Result;
 use chrono::Utc;
 use oxmon_common::types::User;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Order, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect,
 };
 
 use crate::entities::user::{self, Column, Entity};
@@ -74,5 +75,43 @@ impl CertStore {
     pub async fn count_users(&self) -> Result<i64> {
         let count = Entity::find().count(self.db()).await?;
         Ok(count as i64)
+    }
+
+    pub async fn list_users(
+        &self,
+        username_contains: Option<&str>,
+        limit: u64,
+        offset: u64,
+    ) -> Result<Vec<User>> {
+        let mut query = Entity::find();
+        if let Some(name) = username_contains {
+            query = query.filter(Column::Username.contains(name));
+        }
+        let models = query
+            .order_by(Column::CreatedAt, Order::Asc)
+            .limit(limit)
+            .offset(offset)
+            .all(self.db())
+            .await?;
+        Ok(models.into_iter().map(to_user).collect())
+    }
+
+    pub async fn count_users_filtered(&self, username_contains: Option<&str>) -> Result<i64> {
+        let mut query = Entity::find();
+        if let Some(name) = username_contains {
+            query = query.filter(Column::Username.contains(name));
+        }
+        let count = query.count(self.db()).await?;
+        Ok(count as i64)
+    }
+
+    pub async fn get_user_by_id(&self, id: &str) -> Result<Option<User>> {
+        let model = Entity::find_by_id(id).one(self.db()).await?;
+        Ok(model.map(to_user))
+    }
+
+    pub async fn delete_user(&self, id: &str) -> Result<bool> {
+        let result = Entity::delete_by_id(id).exec(self.db()).await?;
+        Ok(result.rows_affected > 0)
     }
 }

@@ -11,6 +11,7 @@ mod m008_cloud_accounts_endpoint;
 mod m009_agents_system_info;
 mod m010_agent_report_logs;
 mod m011_metrics_alert_events;
+mod m012_audit_logs;
 
 pub struct Migrator;
 
@@ -29,6 +30,7 @@ impl MigratorTrait for Migrator {
             Box::new(m009_agents_system_info::Migration),
             Box::new(m010_agent_report_logs::Migration),
             Box::new(m011_metrics_alert_events::Migration),
+            Box::new(m012_audit_logs::Migration),
         ]
     }
 }

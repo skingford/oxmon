@@ -1,4 +1,6 @@
+pub mod admin;
 pub mod alerts;
+pub mod audit;
 pub mod certificates;
 pub mod dashboard;
 pub mod dictionaries;
@@ -253,6 +255,8 @@ struct AgentResponse {
     id: Option<String>,
     /// Agent 唯一标识
     agent_id: String,
+    /// 主机名（实例显示名称）
+    hostname: Option<String>,
     /// 最后上报时间
     last_seen: Option<DateTime<Utc>>,
     /// 状态（active / inactive / unknown）
@@ -270,6 +274,22 @@ struct AgentDetail {
     id: String,
     /// Agent 唯一标识
     agent_id: String,
+    /// 主机名（实例显示名称）
+    hostname: Option<String>,
+    /// 操作系统类型
+    os: Option<String>,
+    /// 操作系统版本
+    os_version: Option<String>,
+    /// CPU 架构
+    arch: Option<String>,
+    /// 内核版本
+    kernel_version: Option<String>,
+    /// CPU 核心数
+    cpu_cores: Option<i32>,
+    /// 内存大小（GB）
+    memory_gb: Option<f64>,
+    /// 磁盘大小（GB）
+    disk_gb: Option<f64>,
     /// 首次上报时间
     first_seen: DateTime<Utc>,
     /// 最后上报时间
@@ -382,6 +402,7 @@ async fn list_agents(
             AgentResponse {
                 id: Some(agent_info.id),
                 agent_id: agent_info.agent_id,
+                hostname: agent_info.hostname,
                 last_seen: Some(agent_info.last_seen),
                 status: if active {
                     "active".to_string()
@@ -466,6 +487,14 @@ async fn get_agent(
         AgentDetail {
             id: agent_entry.id,
             agent_id: agent_entry.agent_id,
+            hostname: agent_entry.hostname,
+            os: agent_entry.os,
+            os_version: agent_entry.os_version,
+            arch: agent_entry.arch,
+            kernel_version: agent_entry.kernel_version,
+            cpu_cores: agent_entry.cpu_cores,
+            memory_gb: agent_entry.memory_gb,
+            disk_gb: agent_entry.disk_gb,
             first_seen: agent_entry.first_seen,
             last_seen: agent_entry.last_seen,
             status: if active {
@@ -1504,4 +1533,6 @@ pub fn protected_routes() -> OpenApiRouter<AppState> {
         .merge(dictionaries::dictionary_routes())
         .merge(sys_configs::sys_config_routes())
         .merge(crate::cloud::cloud_routes())
+        .merge(audit::audit_routes())
+        .merge(admin::admin_routes())
 }

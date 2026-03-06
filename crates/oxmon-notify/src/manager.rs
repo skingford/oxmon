@@ -50,6 +50,8 @@ struct ChannelInstance {
 struct AggregationEntry {
     events: Vec<AlertEvent>,
     first_seen: DateTime<Utc>,
+    /// 是否已为当前窗口调度了定时 flush 任务
+    flush_scheduled: bool,
 }
 
 /// 单个接收者的发送结果
@@ -222,7 +224,11 @@ impl NotificationManager {
         "alert-batch-global".to_string()
     }
 
-    pub async fn notify(&self, event: &AlertEvent) {
+    /// 接收一条告警事件，经静默窗口检测和聚合后发送批量报告。
+    ///
+    /// 使用 `Arc<Self>` 接收者，以便在聚合窗口内首条事件到达时
+    /// spawn 定时 flush 任务，确保窗口到期后即使无后续事件也能发送。
+    pub async fn notify(self: &Arc<Self>, event: &AlertEvent) {
         let now = Utc::now();
 
         // Check silence windows from DB
@@ -263,27 +269,103 @@ impl NotificationManager {
             return;
         }
 
-        // Aggregation: buffer similar alerts
+        // ── 聚合逻辑：将本条事件写入全局批次 ──
         let key = Self::aggregation_key(event);
-        let mut pending = self.pending.lock().await;
+        let window_dur = Duration::seconds(self.aggregation_window_secs as i64);
 
-        let entry = pending.entry(key).or_insert_with(|| AggregationEntry {
-            events: Vec::new(),
-            first_seen: now,
-        });
-        entry.events.push(event.clone());
+        // 在持锁的同步作用域内完成所有 HashMap 操作，
+        // 避免跨 await 持有 MutexGuard。
+        enum FlushAction {
+            /// 惰性 flush：新事件到来时窗口已过期，立即发送
+            Lazy {
+                events: Vec<AlertEvent>,
+                first_seen: chrono::DateTime<Utc>,
+            },
+            /// 首条事件入桶，需要 spawn 定时 flush
+            StartTimer,
+            /// 窗口尚未到期，仅入桶，timer 已调度
+            Buffered,
+        }
 
-        let window = Duration::seconds(self.aggregation_window_secs as i64);
-        if now - entry.first_seen >= window {
-            let events = std::mem::take(&mut entry.events);
-            let first_seen = entry.first_seen;
-            drop(pending);
-            {
-                let mut pending = self.pending.lock().await;
-                pending.remove(&Self::aggregation_key(event));
+        let action = {
+            let mut pending = self.pending.lock().await;
+            let entry = pending.entry(key.clone()).or_insert_with(|| AggregationEntry {
+                events: Vec::new(),
+                first_seen: now,
+                flush_scheduled: false,
+            });
+            entry.events.push(event.clone());
+
+            if now - entry.first_seen >= window_dur {
+                // 惰性 flush：取出所有事件，移除 entry
+                let events = std::mem::take(&mut entry.events);
+                let first_seen = entry.first_seen;
+                pending.remove(&key);
+                FlushAction::Lazy { events, first_seen }
+            } else if !entry.flush_scheduled {
+                // 首条事件：标记已调度，之后 spawn timer
+                entry.flush_scheduled = true;
+                FlushAction::StartTimer
+            } else {
+                FlushAction::Buffered
             }
+        };
 
-            // 统一以批量报告形式发送（参考 AI 检测报告样式）
+        match action {
+            FlushAction::Lazy { events, first_seen } => {
+                let locale = self
+                    .cert_store
+                    .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
+                    .await;
+                let report_date = format!(
+                    "{} – {}",
+                    first_seen.format("%Y-%m-%d %H:%M"),
+                    now.format("%H:%M")
+                );
+                self.send_alert_report(&events, &report_date, &locale).await;
+            }
+            FlushAction::StartTimer => {
+                // spawn 定时任务，窗口到期后无论有无新事件都强制 flush
+                let window_secs = self.aggregation_window_secs;
+                let self_clone = Arc::clone(self);
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(window_secs)).await;
+                    self_clone.flush_pending_batch().await;
+                });
+            }
+            FlushAction::Buffered => {
+                // 已有 timer 在跑，什么都不做
+            }
+        }
+    }
+
+    /// 将 pending 全局批次中的所有事件取出并发送告警报告。
+    /// 由定时 flush 任务调用，也可由惰性 flush 路径重用。
+    /// 若 pending 为空或已被其他路径清空，则静默返回。
+    async fn flush_pending_batch(&self) {
+        let now = Utc::now();
+        let key = Self::aggregation_key_global();
+
+        let flushed = {
+            let mut pending = self.pending.lock().await;
+            if let Some(entry) = pending.get(key.as_str()) {
+                if entry.events.is_empty() {
+                    pending.remove(key.as_str());
+                    None
+                } else {
+                    let first_seen = entry.first_seen;
+                    if let Some(entry) = pending.remove(key.as_str()) {
+                        Some((entry.events, first_seen))
+                    } else {
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some((events, first_seen)) = flushed {
             let locale = self
                 .cert_store
                 .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
@@ -295,6 +377,11 @@ impl NotificationManager {
             );
             self.send_alert_report(&events, &report_date, &locale).await;
         }
+    }
+
+    /// 返回全局聚合桶的 key（供内部复用）。
+    fn aggregation_key_global() -> String {
+        "alert-batch-global".to_string()
     }
 
     async fn send_to_channels(&self, event: &AlertEvent) {
@@ -698,9 +785,11 @@ impl NotificationManager {
     }
 
     /// 发送 AI 检测报告到所有通知渠道，绕过静默窗口和聚合。
+    ///
     /// - Email 渠道：发送 HTML 格式报告
     /// - 钉钉/企业微信：发送 Markdown 格式（实例汇总表 + AI 分析）
     /// - 其他渠道：纯文本 fallback
+    ///
     /// 返回成功发送的渠道数量。
     #[allow(clippy::too_many_arguments)]
     pub async fn send_ai_report(
@@ -895,11 +984,24 @@ impl NotificationManager {
 
         let now = Utc::now();
 
+        // 批量解析 agent_id → 显示名称（hostname 或云实例名），失败时静默回退
+        let unique_agent_ids: Vec<String> = {
+            let mut ids: Vec<String> = events.iter().map(|e| e.agent_id.clone()).collect();
+            ids.sort();
+            ids.dedup();
+            ids
+        };
+        let display_names = self
+            .cert_store
+            .resolve_agent_display_names(&unique_agent_ids)
+            .await;
+
         // 将 AlertEvent 转换为渲染用的明细结构
         let items: Vec<AlertReportDetail> = events
             .iter()
             .map(|e| AlertReportDetail {
                 agent_id: e.agent_id.clone(),
+                instance_name: display_names.get(&e.agent_id).cloned(),
                 rule_name: e.rule_name.clone(),
                 metric_name: e.metric_name.clone(),
                 severity: e.severity.to_string().to_lowercase(),
@@ -907,6 +1009,7 @@ impl NotificationManager {
                 threshold: e.threshold,
                 message: e.message.clone(),
                 triggered_at: e.timestamp,
+                labels: e.labels.clone(),
             })
             .collect();
 

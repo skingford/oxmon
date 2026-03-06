@@ -8,7 +8,7 @@ use oxmon_common::types::{MetricBatch, MetricDataPoint};
 use oxmon_notify::manager::NotificationManager;
 use oxmon_storage::CertStore;
 use oxmon_storage::StorageEngine;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::time::{interval, Duration};
 
@@ -74,6 +74,7 @@ impl CloudCheckScheduler {
         }
 
         let now = Utc::now().timestamp();
+        let mut all_accounts = Vec::new();
         let mut due_accounts = Vec::new();
 
         for account in accounts {
@@ -102,6 +103,12 @@ impl CloudCheckScheduler {
                 true
             };
 
+            all_accounts.push((
+                account.config_key.clone(),
+                account.provider.clone(),
+                account.account_name.clone(),
+                account_config.clone(),
+            ));
             if is_due {
                 due_accounts.push((
                     account.config_key.clone(),
@@ -112,21 +119,17 @@ impl CloudCheckScheduler {
             }
         }
 
-        if due_accounts.is_empty() {
-            return Ok(());
-        }
-
-        tracing::info!(
-            count = due_accounts.len(),
-            "Collecting cloud metrics for due accounts"
-        );
-
-        // Build providers for due accounts
-        let mut providers: Vec<Arc<dyn oxmon_cloud::CloudProvider>> = Vec::new();
-        for (_config_key, provider_type, account_name, account_config) in &due_accounts {
+        // Build providers for ALL enabled accounts to always sync instance status/metadata.
+        let mut providers_for_sync: Vec<Arc<dyn oxmon_cloud::CloudProvider>> = Vec::new();
+        let mut account_config_key_map: HashMap<(String, String), String> = HashMap::new();
+        for (config_key, provider_type, account_name, account_config) in &all_accounts {
+            account_config_key_map.insert(
+                (provider_type.clone(), account_name.clone()),
+                config_key.clone(),
+            );
             match build_provider(provider_type, account_name, account_config.clone()) {
                 Ok(provider) => {
-                    providers.push(Arc::from(provider));
+                    providers_for_sync.push(Arc::from(provider));
                 }
                 Err(e) => {
                     tracing::error!(
@@ -139,14 +142,15 @@ impl CloudCheckScheduler {
             }
         }
 
-        if providers.is_empty() {
-            tracing::warn!("No valid cloud providers to collect from");
+        if providers_for_sync.is_empty() {
+            tracing::warn!("No valid cloud providers to sync from");
             return Ok(());
         }
 
-        // First, discover and save all instances from all providers
+        // First, discover and save all instances from all enabled providers.
+        // This keeps cloud_instances status fresh even when metric collection is not due.
         let mut all_instances = Vec::new();
-        for provider in &providers {
+        for provider in &providers_for_sync {
             match provider.list_instances().await {
                 Ok(instances) => {
                     all_instances.extend(instances);
@@ -163,14 +167,16 @@ impl CloudCheckScheduler {
 
         // Write instances to database
         for instance in &all_instances {
-            // Extract provider type from instance.provider (format: "tencent:account_name")
-            let provider_type = instance.provider.split(':').next().unwrap_or("unknown");
+            // Extract provider/account from instance.provider (format: "{provider}:{account_name}")
+            let (provider_type, account_name) = instance
+                .provider
+                .split_once(':')
+                .unwrap_or(("unknown", "unknown"));
 
-            // Find the matching config_key for this instance
-            let config_key = due_accounts
-                .iter()
-                .find(|(_, pt, _an, _)| pt == provider_type)
-                .map(|(ck, _, _, _)| ck.clone())
+            // Find the matching config_key by provider + account_name
+            let config_key = account_config_key_map
+                .get(&(provider_type.to_string(), account_name.to_string()))
+                .cloned()
                 .unwrap_or_else(|| format!("cloud_{}_{}", provider_type, "unknown"));
 
             // 将安全组ID数组序列化为JSON字符串
@@ -252,9 +258,63 @@ impl CloudCheckScheduler {
             "Saved cloud instances to database"
         );
 
+        if due_accounts.is_empty() {
+            tracing::info!("No due cloud accounts for metrics collection; status sync only");
+            return Ok(());
+        }
+
+        tracing::info!(
+            count = due_accounts.len(),
+            "Collecting cloud metrics for due accounts"
+        );
+
+        // Build providers for due accounts
+        let mut providers: Vec<Arc<dyn oxmon_cloud::CloudProvider>> = Vec::new();
+        for (_config_key, provider_type, account_name, account_config) in &due_accounts {
+            match build_provider(provider_type, account_name, account_config.clone()) {
+                Ok(provider) => {
+                    providers.push(Arc::from(provider));
+                }
+                Err(e) => {
+                    tracing::error!(
+                        provider = provider_type,
+                        account = account_name,
+                        error = %e,
+                        "Failed to build cloud provider"
+                    );
+                }
+            }
+        }
+
+        if providers.is_empty() {
+            tracing::warn!("No valid cloud providers to collect from");
+            return Ok(());
+        }
+
         // Collect metrics from all providers
         let collector = CloudCollector::new(providers, self.max_concurrent);
         let mut metrics = collector.collect_all().await?;
+
+        // Diagnose collection gaps: discovered instances but no metrics object returned
+        // (usually timeout/provider mismatch/error in collector task).
+        let discovered_ids: HashSet<String> =
+            all_instances.iter().map(|i| i.instance_id.clone()).collect();
+        let collected_ids: HashSet<String> = metrics.iter().map(|m| m.instance_id.clone()).collect();
+        let mut missing_ids: Vec<String> = discovered_ids
+            .difference(&collected_ids)
+            .cloned()
+            .collect();
+        missing_ids.sort();
+        if !missing_ids.is_empty() {
+            let sample: Vec<String> = missing_ids.iter().take(20).cloned().collect();
+            tracing::warn!(
+                discovered_instances = discovered_ids.len(),
+                collected_metrics_instances = collected_ids.len(),
+                missing_count = missing_ids.len(),
+                sample_missing_instance_ids = ?sample,
+                "Some cloud instances were discovered but returned no metrics object"
+            );
+        }
 
         tracing::info!(
             collected = metrics.len(),
@@ -331,6 +391,16 @@ impl CloudCheckScheduler {
             // Extract provider type from m.provider (format: "tencent:account_name" or "alibaba:account_name")
             let provider_type = m.provider.split(':').next().unwrap_or("unknown");
             let agent_id = format!("cloud:{}:{}", provider_type, m.instance_id);
+            let core_metrics_all_missing =
+                m.cpu_usage.is_none() && m.memory_usage.is_none() && m.disk_usage.is_none();
+            if core_metrics_all_missing {
+                tracing::warn!(
+                    provider = %m.provider,
+                    instance_id = %m.instance_id,
+                    region = %m.region,
+                    "Cloud instance returned no core usage metrics (cpu/memory/disk)"
+                );
+            }
 
             let mut labels = HashMap::new();
             labels.insert("provider".to_string(), m.provider.clone());

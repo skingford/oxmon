@@ -2,6 +2,7 @@ pub mod ai;
 pub mod ai_seed;
 pub mod api;
 pub mod app;
+pub mod audit;
 pub mod auth;
 pub mod cert;
 pub mod channel_seed;

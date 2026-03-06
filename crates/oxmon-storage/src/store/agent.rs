@@ -107,6 +107,14 @@ fn agent_to_entry(m: agent::Model) -> AgentEntry {
         last_seen: m.last_seen.with_timezone(&Utc),
         collection_interval_secs: m.collection_interval_secs.map(|v| v as u64),
         description: m.description,
+        hostname: m.hostname,
+        os: m.os,
+        os_version: m.os_version,
+        arch: m.arch,
+        kernel_version: m.kernel_version,
+        cpu_cores: m.cpu_cores,
+        memory_gb: m.memory_gb,
+        disk_gb: m.disk_gb,
         created_at: m.created_at.with_timezone(&Utc),
         updated_at: m.updated_at.with_timezone(&Utc),
     }
@@ -488,6 +496,7 @@ impl CertStore {
     }
 
     /// 更新 agent 的系统信息（hostname, os, os_version 等），仅更新非 None 字段。
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_agent_system_info(
         &self,
         agent_id: &str,
@@ -558,6 +567,7 @@ impl CertStore {
     // ---- agent_report_logs ----
 
     /// 记录一次 Agent 上报日志。
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_agent_report_log(
         &self,
         agent_id: &str,
@@ -636,5 +646,96 @@ impl CertStore {
             ))
             .await?;
         Ok(result.rows_affected())
+    }
+
+    /// 批量解析 agent_id 列表为可读显示名称。
+    ///
+    /// - 普通 Agent（无前缀）：查 `agents` 表，返回 `hostname`，若无则返回 `agent_id`
+    /// - 云实例（前缀 `cloud:{provider}:{instance_id}`）：查 `cloud_instances` 表，
+    ///   返回 `instance_name`，若无则返回原始 `agent_id`
+    ///
+    /// 查询失败时记录 warn 日志并对该 agent_id 返回 None（调用方应回退到 agent_id 本身）。
+    pub async fn resolve_agent_display_names(
+        &self,
+        agent_ids: &[String],
+    ) -> std::collections::HashMap<String, String> {
+        use crate::entities::cloud_instance::{Column as InstCol, Entity as InstEntity};
+
+        let mut result: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        if agent_ids.is_empty() {
+            return result;
+        }
+
+        // 区分普通 agent_id 与云实例 agent_id（前缀 cloud:）
+        let mut regular_ids: Vec<&str> = Vec::new();
+        // cloud_agent_id -> instance_id
+        let mut cloud_instance_ids: Vec<(&str, &str)> = Vec::new();
+
+        for id in agent_ids {
+            if let Some(rest) = id.strip_prefix("cloud:") {
+                // 格式: cloud:{provider}:{instance_id}，取最后一段作为 instance_id
+                let instance_id = rest.split_once(':').map(|x| x.1).unwrap_or(rest);
+                cloud_instance_ids.push((id.as_str(), instance_id));
+            } else {
+                regular_ids.push(id.as_str());
+            }
+        }
+
+        // 查普通 Agent：批量 IN 查询
+        if !regular_ids.is_empty() {
+            match AgentEntity::find()
+                .filter(AgentCol::AgentId.is_in(regular_ids.iter().copied()))
+                .all(self.db())
+                .await
+            {
+                Ok(rows) => {
+                    for m in rows {
+                        let display = m
+                            .hostname
+                            .filter(|h| !h.is_empty())
+                            .unwrap_or_else(|| m.agent_id.clone());
+                        result.insert(m.agent_id, display);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to resolve regular agent display names");
+                }
+            }
+        }
+
+        // 查云实例：批量 IN 查询（按 instance_id）
+        if !cloud_instance_ids.is_empty() {
+            let instance_ids: Vec<&str> = cloud_instance_ids.iter().map(|(_, iid)| *iid).collect();
+            match InstEntity::find()
+                .filter(InstCol::InstanceId.is_in(instance_ids))
+                .all(self.db())
+                .await
+            {
+                Ok(rows) => {
+                    // 构建 instance_id -> display_name 映射
+                    let inst_map: std::collections::HashMap<String, String> = rows
+                        .into_iter()
+                        .map(|m| {
+                            let display = m
+                                .instance_name
+                                .filter(|n| !n.is_empty())
+                                .unwrap_or_else(|| m.instance_id.clone());
+                            (m.instance_id, display)
+                        })
+                        .collect();
+                    // 将云实例的 agent_id 映射到显示名称
+                    for (cloud_agent_id, instance_id) in cloud_instance_ids {
+                        if let Some(name) = inst_map.get(instance_id) {
+                            result.insert(cloud_agent_id.to_string(), name.clone());
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to resolve cloud instance display names");
+                }
+            }
+        }
+
+        result
     }
 }

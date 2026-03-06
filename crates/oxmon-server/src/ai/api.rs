@@ -687,7 +687,7 @@ async fn list_report_instances(
         .filter(|item| {
             filter_level
                 .as_deref()
-                .map_or(true, |f| item.risk_level == f)
+                .is_none_or(|f| item.risk_level == f)
         })
         .collect();
 

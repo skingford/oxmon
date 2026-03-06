@@ -20,6 +20,9 @@ pub struct AnalysisInput {
 #[derive(Debug, Clone, Serialize)]
 pub struct MetricSnapshot {
     pub agent_id: String,
+    /// 实例显示名称（hostname 或云实例名称）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_name: Option<String>,
     pub agent_type: String, // local / cloud:tencent / cloud:alibaba
     pub cpu_usage: Option<f64>,
     pub memory_usage: Option<f64>,

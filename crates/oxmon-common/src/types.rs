@@ -148,6 +148,22 @@ pub struct AgentEntry {
     pub collection_interval_secs: Option<u64>,
     /// 描述信息
     pub description: Option<String>,
+    /// 主机名
+    pub hostname: Option<String>,
+    /// 操作系统类型
+    pub os: Option<String>,
+    /// 操作系统版本
+    pub os_version: Option<String>,
+    /// CPU 架构
+    pub arch: Option<String>,
+    /// 内核版本
+    pub kernel_version: Option<String>,
+    /// CPU 核心数
+    pub cpu_cores: Option<i32>,
+    /// 内存大小（GB）
+    pub memory_gb: Option<f64>,
+    /// 磁盘大小（GB）
+    pub disk_gb: Option<f64>,
     /// 创建时间
     pub created_at: DateTime<Utc>,
     /// 更新时间
@@ -494,6 +510,37 @@ pub struct PublicKeyResponse {
     pub public_key: String,
     /// 加密算法标识
     pub algorithm: String,
+}
+
+// ---- Admin user management types ----
+
+/// 管理员用户信息（对外暴露，屏蔽敏感字段）
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct AdminUserResponse {
+    /// 唯一标识
+    pub id: String,
+    /// 登录用户名
+    pub username: String,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 更新时间
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 创建管理员用户请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct CreateAdminUserRequest {
+    /// 登录用户名（必填，唯一）
+    pub username: String,
+    /// RSA-OAEP 加密后的密码（Base64 编码，必填）
+    pub encrypted_password: String,
+}
+
+/// 重置管理员密码请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ResetAdminPasswordRequest {
+    /// RSA-OAEP 加密后的新密码（Base64 编码，必填）
+    pub encrypted_new_password: String,
 }
 
 // ---- System dictionary types ----

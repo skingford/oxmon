@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod agent_report_log;
+pub mod audit_log;
 pub mod alert_event;
 pub mod metric;
 pub mod agent_whitelist;

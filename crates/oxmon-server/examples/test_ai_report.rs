@@ -28,6 +28,7 @@ async fn main() -> Result<()> {
     let current_metrics = vec![
         MetricSnapshot {
             agent_id: "agent-001".to_string(),
+            instance_name: Some("web-prod-01".to_string()),
             agent_type: "local".to_string(),
             cpu_usage: Some(75.5),
             memory_usage: Some(82.3),
@@ -36,6 +37,7 @@ async fn main() -> Result<()> {
         },
         MetricSnapshot {
             agent_id: "agent-002".to_string(),
+            instance_name: Some("api-node-1".to_string()),
             agent_type: "local".to_string(),
             cpu_usage: Some(45.2),
             memory_usage: Some(60.5),
@@ -44,6 +46,7 @@ async fn main() -> Result<()> {
         },
         MetricSnapshot {
             agent_id: "cloud:tencent:ins-abc123".to_string(),
+            instance_name: Some("tencent-cvm-gz".to_string()),
             agent_type: "tencent".to_string(),
             cpu_usage: Some(90.1),
             memory_usage: Some(88.7),

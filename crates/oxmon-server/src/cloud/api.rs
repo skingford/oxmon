@@ -94,6 +94,10 @@ struct CloudInstanceResponse {
     /// 原始云厂商状态归一化后的状态（running/pending/stopped/error/unknown）
     normalized_status: String,
     status: Option<String>,
+    /// 实例状态最近一次同步时间（来自云实例元数据同步）
+    status_synced_at: String,
+    /// 实例状态同步距今秒数（用于前端显示“同步延迟”）
+    status_sync_age_secs: i64,
     last_seen_at: String,
     created_at: String,
     updated_at: String,
@@ -193,6 +197,10 @@ struct CloudInstanceDetailResponse {
     normalized_status: String,
     /// 实例状态（Running / Stopped 等）
     status: Option<String>,
+    /// 实例状态最近一次同步时间（来自云实例元数据同步）
+    status_synced_at: String,
+    /// 实例状态同步距今秒数（用于前端显示“同步延迟”）
+    status_sync_age_secs: i64,
 
     // ---- Hardware specifications ----
     /// 实例规格（如 S5.LARGE8）
@@ -341,6 +349,9 @@ fn row_to_cloud_account_response(_state: &AppState, row: CloudAccountRow) -> Clo
 }
 
 fn cloud_instance_row_to_response(row: CloudInstanceRow) -> CloudInstanceResponse {
+    let last_seen_dt = chrono::DateTime::from_timestamp(row.last_seen_at, 0).unwrap_or_default();
+    let status_sync_age_secs = (chrono::Utc::now().timestamp() - row.last_seen_at).max(0);
+
     // 反序列化安全组ID数组
     let security_group_ids = row
         .security_group_ids
@@ -373,9 +384,9 @@ fn cloud_instance_row_to_response(row: CloudInstanceRow) -> CloudInstanceRespons
         os: row.os,
         normalized_status: normalize_cloud_instance_status(row.status.as_deref()).to_string(),
         status: row.status,
-        last_seen_at: chrono::DateTime::from_timestamp(row.last_seen_at, 0)
-            .unwrap_or_default()
-            .to_rfc3339(),
+        status_synced_at: last_seen_dt.to_rfc3339(),
+        status_sync_age_secs,
+        last_seen_at: last_seen_dt.to_rfc3339(),
         created_at: chrono::DateTime::from_timestamp(row.created_at, 0)
             .unwrap_or_default()
             .to_rfc3339(),
@@ -1313,6 +1324,10 @@ async fn get_cloud_instance_detail(
         os: instance.os,
         normalized_status: normalize_cloud_instance_status(instance.status.as_deref()).to_string(),
         status: instance.status,
+        status_synced_at: chrono::DateTime::from_timestamp(instance.last_seen_at, 0)
+            .unwrap_or_default()
+            .to_rfc3339(),
+        status_sync_age_secs: (chrono::Utc::now().timestamp() - instance.last_seen_at).max(0),
         instance_type: instance.instance_type,
         cpu_cores: instance.cpu_cores,
         memory_gb: instance.memory_gb,

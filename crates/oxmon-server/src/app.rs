@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use crate::{ai, api, auth, cert, logging, openapi};
+use crate::{ai, api, audit, auth, cert, logging, openapi};
 use axum::middleware;
 use axum::Router;
 use std::sync::Arc;
@@ -26,7 +26,9 @@ use utoipa_swagger_ui::SwaggerUi;
         (name = "Dashboard", description = "仪表盘概览"),
         (name = "System", description = "系统管理"),
         (name = "Dictionaries", description = "系统字典管理"),
-        (name = "Cloud", description = "云账户与云实例管理")
+        (name = "Cloud", description = "云账户与云实例管理"),
+        (name = "Audit", description = "审计操作日志"),
+        (name = "Admin", description = "后台管理员管理")
     ),
     modifiers(&SecurityAddon)
 )]
@@ -123,12 +125,24 @@ pub fn build_http_app(state: AppState) -> Router {
                 })
                 .layer(middleware::from_fn_with_state(
                     state.clone(),
+                    audit::audit_middleware,
+                ))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
                     auth::jwt_auth_middleware,
                 ))
         } else {
-            protected_router.merge(cert_router).merge(ai_router).layer(
-                middleware::from_fn_with_state(state.clone(), auth::jwt_auth_middleware),
-            )
+            protected_router
+                .merge(cert_router)
+                .merge(ai_router)
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    audit::audit_middleware,
+                ))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    auth::jwt_auth_middleware,
+                ))
         };
 
     public_router

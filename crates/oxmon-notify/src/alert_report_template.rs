@@ -1,11 +1,14 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
 
 /// 单条告警明细（用于批量告警报告）
 #[derive(Debug, Clone)]
 pub struct AlertReportDetail {
     /// Agent ID（主机标识）
     pub agent_id: String,
+    /// 实例显示名称（hostname 或云实例名，解析失败时为 None）
+    pub instance_name: Option<String>,
     /// 规则名称
     pub rule_name: String,
     /// 指标名称
@@ -20,6 +23,118 @@ pub struct AlertReportDetail {
     pub message: String,
     /// 触发时间
     pub triggered_at: DateTime<Utc>,
+    /// 指标标签（如 mount=/data, interface=eth0）
+    pub labels: HashMap<String, String>,
+}
+
+/// 格式化指标名称和值为可读形式（支持中英文）
+pub fn format_metric_display(metric_name: &str, value: f64, labels: &HashMap<String, String>, locale: &str) -> String {
+    let is_zh = locale == "zh-CN";
+
+    // 附加标签信息（如挂载点、网络接口）
+    let label_suffix = if let Some(mount) = labels.get("mount") {
+        format!(" [{}]", mount)
+    } else if let Some(iface) = labels.get("interface") {
+        format!(" [{}]", iface)
+    } else {
+        String::new()
+    };
+
+    match metric_name {
+        "cpu.usage" => {
+            if is_zh {
+                format!("CPU使用率: {:.1}%{}", value, label_suffix)
+            } else {
+                format!("CPU Usage: {:.1}%{}", value, label_suffix)
+            }
+        }
+        "memory.usage" => {
+            if is_zh {
+                format!("内存使用率: {:.1}%{}", value, label_suffix)
+            } else {
+                format!("Memory Usage: {:.1}%{}", value, label_suffix)
+            }
+        }
+        "disk.usage" => {
+            if is_zh {
+                format!("磁盘使用率: {:.1}%{}", value, label_suffix)
+            } else {
+                format!("Disk Usage: {:.1}%{}", value, label_suffix)
+            }
+        }
+        "load.1min" => {
+            if is_zh {
+                format!("1分钟负载: {:.2}{}", value, label_suffix)
+            } else {
+                format!("Load 1min: {:.2}{}", value, label_suffix)
+            }
+        }
+        "load.5min" => {
+            if is_zh {
+                format!("5分钟负载: {:.2}{}", value, label_suffix)
+            } else {
+                format!("Load 5min: {:.2}{}", value, label_suffix)
+            }
+        }
+        "load.15min" => {
+            if is_zh {
+                format!("15分钟负载: {:.2}{}", value, label_suffix)
+            } else {
+                format!("Load 15min: {:.2}{}", value, label_suffix)
+            }
+        }
+        "network.rx_bytes" => {
+            if is_zh {
+                format!("网络接收: {:.1} KB/s{}", value, label_suffix)
+            } else {
+                format!("Net RX: {:.1} KB/s{}", value, label_suffix)
+            }
+        }
+        "network.tx_bytes" => {
+            if is_zh {
+                format!("网络发送: {:.1} KB/s{}", value, label_suffix)
+            } else {
+                format!("Net TX: {:.1} KB/s{}", value, label_suffix)
+            }
+        }
+        "cloud.cpu.usage" => {
+            if is_zh {
+                format!("云主机CPU: {:.1}%{}", value, label_suffix)
+            } else {
+                format!("Cloud CPU: {:.1}%{}", value, label_suffix)
+            }
+        }
+        "cloud.memory.usage" => {
+            if is_zh {
+                format!("云主机内存: {:.1}%{}", value, label_suffix)
+            } else {
+                format!("Cloud Memory: {:.1}%{}", value, label_suffix)
+            }
+        }
+        "cloud.disk.usage" => {
+            if is_zh {
+                format!("云主机磁盘: {:.1}%{}", value, label_suffix)
+            } else {
+                format!("Cloud Disk: {:.1}%{}", value, label_suffix)
+            }
+        }
+        "certificate.days_remaining" => {
+            if is_zh {
+                format!("证书剩余天数: {:.0}天{}", value, label_suffix)
+            } else {
+                format!("Cert Days Left: {:.0}{}", value, label_suffix)
+            }
+        }
+        _ => {
+            // 未知指标：原样显示名称和值
+            format!("{}: {:.2}{}", metric_name, value, label_suffix)
+        }
+    }
+}
+
+/// 获取实例显示名称：优先 instance_name，其次 agent_id
+pub fn display_name(detail: &AlertReportDetail) -> &str {
+    detail.instance_name.as_deref().unwrap_or(&detail.agent_id)
 }
 
 /// 告警批量报告渲染参数
@@ -208,23 +323,37 @@ impl AlertReportRenderer {
                 item.message.clone()
             };
 
+            // 主机列：显示实例名（主要）+ agent_id（次要）
+            let agent_cell = if let Some(ref name) = item.instance_name {
+                format!(
+                    "<strong>{}</strong><br><small style=\"color:#888\">{}</small>",
+                    html_escape(name),
+                    html_escape(&item.agent_id)
+                )
+            } else {
+                format!("<code>{}</code>", html_escape(&item.agent_id))
+            };
+
+            // 格式化指标值显示
+            let metric_display = format_metric_display(&item.metric_name, item.value, &item.labels, locale);
+
             html.push_str(&format!(
                 "<tr class=\"{row_class}\">\
-                  <td class=\"agent-id\"><code>{agent}</code></td>\
+                  <td class=\"agent-id\">{agent_cell}</td>\
                   <td>{rule}</td>\
                   <td><code>{metric}</code></td>\
-                  <td class=\"{val_class}\">{value:.2}</td>\
+                  <td class=\"{val_class}\">{metric_display}</td>\
                   <td class=\"num\">{threshold:.2}</td>\
                   <td><span class=\"badge {badge_class}\">{severity}</span></td>\
                   <td style=\"white-space:nowrap\">{time}</td>\
                   <td class=\"msg-cell\">{message}</td>\
                 </tr>",
                 row_class = row_class,
-                agent = html_escape(&item.agent_id),
+                agent_cell = agent_cell,
                 rule = html_escape(&item.rule_name),
                 metric = html_escape(&item.metric_name),
                 val_class = val_class,
-                value = item.value,
+                metric_display = html_escape(&metric_display),
                 threshold = item.threshold,
                 badge_class = badge_class,
                 severity = badge_text,
@@ -305,15 +434,17 @@ impl AlertReportRenderer {
                 .then(a.triggered_at.cmp(&b.triggered_at))
         });
 
+        let value_label = if is_zh { "当前值" } else { "Value" };
         md.push_str(&format!(
-            "| {agent_label} | {rule_label} | {metric_label} | {severity_label} | {time_col_label} |\n",
+            "| {agent_label} | {rule_label} | {metric_label} | {value_label} | {severity_label} | {time_col_label} |\n",
             agent_label = agent_label,
             rule_label = rule_label,
             metric_label = metric_label,
+            value_label = value_label,
             severity_label = severity_label,
             time_col_label = time_col_label,
         ));
-        md.push_str("|---|---|---|---|---|\n");
+        md.push_str("|---|---|---|---|---|---|\n");
 
         for item in &sorted {
             let sev_display = match item.severity.as_str() {
@@ -322,9 +453,17 @@ impl AlertReportRenderer {
                 _ => if is_zh { "🔵 提示" } else { "🔵 Info" },
             };
             let time_str = item.triggered_at.format("%H:%M:%S").to_string();
+            // 实例名（主）+ agent_id（次）
+            let agent_display = if let Some(ref name) = item.instance_name {
+                format!("{} ({})", name, item.agent_id)
+            } else {
+                item.agent_id.clone()
+            };
+            let metric_display =
+                format_metric_display(&item.metric_name, item.value, &item.labels, params.locale);
             md.push_str(&format!(
-                "| {} | {} | {} | {} | {} |\n",
-                item.agent_id, item.rule_name, item.metric_name, sev_display, time_str
+                "| {} | {} | {} | {} | {} | {} |\n",
+                agent_display, item.rule_name, item.metric_name, metric_display, sev_display, time_str
             ));
         }
 
@@ -371,9 +510,17 @@ impl AlertReportRenderer {
                 "warning" => if is_zh { "[警告]" } else { "[WARN]" },
                 _ => if is_zh { "[提示]" } else { "[INFO]" },
             };
+            // 实例名（主）+ agent_id（次），格式化指标值
+            let host_display = if let Some(ref name) = item.instance_name {
+                format!("{}({})", name, item.agent_id)
+            } else {
+                item.agent_id.clone()
+            };
+            let metric_display =
+                format_metric_display(&item.metric_name, item.value, &item.labels, params.locale);
             text.push_str(&format!(
-                "- {} {} {} {:.2} ({:.2}): {}\n",
-                sev, item.agent_id, item.metric_name, item.value, item.threshold, item.rule_name
+                "- {} {} {} (阈值:{:.2}): {}\n",
+                sev, host_display, metric_display, item.threshold, item.rule_name
             ));
         }
 
@@ -396,6 +543,7 @@ mod tests {
         vec![
             AlertReportDetail {
                 agent_id: "server-01".to_string(),
+                instance_name: Some("prod-web-01".to_string()),
                 rule_name: "CPU 过高".to_string(),
                 metric_name: "cpu.usage".to_string(),
                 severity: "critical".to_string(),
@@ -403,9 +551,11 @@ mod tests {
                 threshold: 90.0,
                 message: "CPU 使用率超过阈值".to_string(),
                 triggered_at: Utc::now(),
+                labels: HashMap::new(),
             },
             AlertReportDetail {
                 agent_id: "server-02".to_string(),
+                instance_name: None,
                 rule_name: "内存告警".to_string(),
                 metric_name: "memory.usage".to_string(),
                 severity: "warning".to_string(),
@@ -413,6 +563,7 @@ mod tests {
                 threshold: 80.0,
                 message: "内存使用率偏高".to_string(),
                 triggered_at: Utc::now(),
+                labels: HashMap::new(),
             },
         ]
     }
@@ -430,8 +581,12 @@ mod tests {
         };
         let html = AlertReportRenderer::render_html(&params).unwrap();
         assert!(html.contains("告警通知汇总"));
-        assert!(html.contains("server-01"));
+        assert!(html.contains("prod-web-01"), "should contain instance name");
+        assert!(html.contains("server-01"), "should contain agent_id");
         assert!(html.contains("严重"));
+        assert!(html.contains("CPU使用率:"), "should contain formatted metric");
+        // server-02 无 instance_name，只显示 agent_id
+        assert!(html.contains("server-02"));
     }
 
     #[test]
@@ -447,8 +602,10 @@ mod tests {
         };
         let html = AlertReportRenderer::render_html(&params).unwrap();
         assert!(html.contains("Alert Notification Summary"));
+        assert!(html.contains("prod-web-01"));
         assert!(html.contains("server-01"));
         assert!(html.contains("Critical"));
+        assert!(html.contains("CPU Usage:"), "should contain formatted metric");
     }
 
     #[test]
@@ -464,7 +621,8 @@ mod tests {
         };
         let md = AlertReportRenderer::render_markdown(&params);
         assert!(md.contains("告警通知汇总"));
-        assert!(md.contains("server-01"));
+        assert!(md.contains("prod-web-01 (server-01)"), "instance name with agent_id");
+        assert!(md.contains("CPU使用率:"), "formatted metric in markdown");
     }
 
     #[test]
@@ -480,6 +638,40 @@ mod tests {
         };
         let plain = AlertReportRenderer::render_plain(&params);
         assert!(plain.contains("告警汇总"));
-        assert!(plain.contains("server-01"));
+        assert!(plain.contains("prod-web-01(server-01)"), "instance name with agent_id in plain");
+        assert!(plain.contains("CPU使用率:"), "formatted metric in plain text");
+    }
+
+    #[test]
+    fn test_format_metric_display_zh() {
+        let labels = HashMap::new();
+        assert_eq!(
+            format_metric_display("cpu.usage", 90.5, &labels, "zh-CN"),
+            "CPU使用率: 90.5%"
+        );
+        assert_eq!(
+            format_metric_display("memory.usage", 85.2, &labels, "zh-CN"),
+            "内存使用率: 85.2%"
+        );
+
+        let mut disk_labels = HashMap::new();
+        disk_labels.insert("mount".to_string(), "/data".to_string());
+        assert_eq!(
+            format_metric_display("disk.usage", 78.0, &disk_labels, "zh-CN"),
+            "磁盘使用率: 78.0% [/data]"
+        );
+    }
+
+    #[test]
+    fn test_format_metric_display_en() {
+        let labels = HashMap::new();
+        assert_eq!(
+            format_metric_display("cpu.usage", 90.5, &labels, "en"),
+            "CPU Usage: 90.5%"
+        );
+        assert_eq!(
+            format_metric_display("cloud.cpu.usage", 75.0, &labels, "en"),
+            "Cloud CPU: 75.0%"
+        );
     }
 }
