@@ -5,6 +5,7 @@
 //! Built-in channels include email (SMTP), webhook, SMS, DingTalk,
 //! and WeCom (WeChat Work).
 
+pub mod alert_report_template;
 pub mod cert_report_template;
 pub mod channels;
 pub mod error;

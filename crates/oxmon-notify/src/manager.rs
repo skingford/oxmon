@@ -1,3 +1,4 @@
+use crate::alert_report_template::{AlertReportDetail, AlertReportParams, AlertReportRenderer};
 use crate::cert_report_template::{CertAlertDetail, CertReportParams, CertReportRenderer};
 use crate::plugin::ChannelRegistry;
 use crate::utils::{truncate_string, MAX_BODY_LENGTH};
@@ -214,9 +215,11 @@ impl NotificationManager {
         Ok(())
     }
 
-    /// Aggregation key: group by rule_id
-    fn aggregation_key(event: &AlertEvent) -> String {
-        event.rule_id.clone()
+    /// Aggregation key: all alerts share a single global batch key.
+    /// This ensures that alerts from different rules within the same
+    /// aggregation window are collected into one batch report.
+    fn aggregation_key(_event: &AlertEvent) -> String {
+        "alert-batch-global".to_string()
     }
 
     pub async fn notify(&self, event: &AlertEvent) {
@@ -280,49 +283,17 @@ impl NotificationManager {
                 pending.remove(&Self::aggregation_key(event));
             }
 
-            if events.len() == 1 {
-                self.send_to_channels(&events[0]).await;
-            } else {
-                let summary = AlertEvent {
-                    id: format!("agg-{}-{}", events[0].rule_id, now.timestamp_millis()),
-                    rule_id: events[0].rule_id.clone(),
-                    rule_name: events[0].rule_name.clone(),
-                    agent_id: if events.iter().all(|e| e.agent_id == events[0].agent_id) {
-                        events[0].agent_id.clone()
-                    } else {
-                        format!(
-                            "{} agents",
-                            events
-                                .iter()
-                                .map(|e| &e.agent_id)
-                                .collect::<std::collections::HashSet<_>>()
-                                .len()
-                        )
-                    },
-                    metric_name: events[0].metric_name.clone(),
-                    severity: events
-                        .iter()
-                        .map(|e| e.severity)
-                        .max()
-                        .unwrap_or(events[0].severity),
-                    message: format!(
-                        "{} similar alerts aggregated since {}: {}",
-                        events.len(),
-                        first_seen.format("%H:%M:%S"),
-                        events[0].message,
-                    ),
-                    value: events.last().map(|e| e.value).unwrap_or(0.0),
-                    threshold: events[0].threshold,
-                    timestamp: now,
-                    predicted_breach: None,
-                    status: 1,
-                    labels: events[0].labels.clone(),
-                    first_triggered_at: None,
-                    created_at: now,
-                    updated_at: now,
-                };
-                self.send_to_channels(&summary).await;
-            }
+            // 统一以批量报告形式发送（参考 AI 检测报告样式）
+            let locale = self
+                .cert_store
+                .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
+                .await;
+            let report_date = format!(
+                "{} – {}",
+                first_seen.format("%Y-%m-%d %H:%M"),
+                now.format("%H:%M")
+            );
+            self.send_alert_report(&events, &report_date, &locale).await;
         }
     }
 
@@ -899,6 +870,213 @@ impl NotificationManager {
             report_id = %report_id,
             success_count = success_count,
             "AI report sent to all channels"
+        );
+
+        success_count
+    }
+
+    /// 发送规则触发的告警批量汇总报告，参考 AI 检测报告样式。
+    ///
+    /// 将聚合窗口内收集到的所有 `AlertEvent` 汇总为一份通知发送：
+    /// - Email 渠道：HTML 格式表格报告
+    /// - 钉钉/企业微信：Markdown 表格
+    /// - 其他渠道：纯文本降级
+    ///
+    /// 返回成功发送的渠道数量。
+    pub async fn send_alert_report(
+        &self,
+        events: &[AlertEvent],
+        report_date: &str,
+        locale: &str,
+    ) -> usize {
+        if events.is_empty() {
+            return 0;
+        }
+
+        let now = Utc::now();
+
+        // 将 AlertEvent 转换为渲染用的明细结构
+        let items: Vec<AlertReportDetail> = events
+            .iter()
+            .map(|e| AlertReportDetail {
+                agent_id: e.agent_id.clone(),
+                rule_name: e.rule_name.clone(),
+                metric_name: e.metric_name.clone(),
+                severity: e.severity.to_string().to_lowercase(),
+                value: e.value,
+                threshold: e.threshold,
+                message: e.message.clone(),
+                triggered_at: e.timestamp,
+            })
+            .collect();
+
+        let critical_count = items.iter().filter(|i| i.severity == "critical").count();
+        let warning_count = items.iter().filter(|i| i.severity == "warning").count();
+        let total_alerts = items.len();
+
+        let params = AlertReportParams {
+            report_date,
+            total_alerts,
+            critical_count,
+            warning_count,
+            items: &items,
+            locale,
+        };
+
+        let html_content = match AlertReportRenderer::render_html(&params) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to render alert report HTML");
+                String::new()
+            }
+        };
+        let markdown_content = AlertReportRenderer::render_markdown(&params);
+        let plain_content = AlertReportRenderer::render_plain(&params);
+
+        let subject = if locale.contains("zh") {
+            format!(
+                "[oxmon][告警汇总] {} | 共{}条 严重:{} 警告:{}",
+                report_date, total_alerts, critical_count, warning_count
+            )
+        } else {
+            format!(
+                "[oxmon][Alert Summary] {} | Total:{} Critical:{} Warning:{}",
+                report_date, total_alerts, critical_count, warning_count
+            )
+        };
+
+        let max_severity = events
+            .iter()
+            .map(|e| e.severity)
+            .max()
+            .unwrap_or(events[0].severity);
+
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("report_date".to_string(), report_date.to_string());
+        labels.insert("total_alerts".to_string(), total_alerts.to_string());
+
+        let fallback_event = AlertEvent {
+            id: format!("alert-report-{}", now.timestamp_millis()),
+            rule_id: "alert-batch-report".to_string(),
+            rule_name: subject.clone(),
+            agent_id: "system".to_string(),
+            metric_name: "alert.report".to_string(),
+            severity: max_severity,
+            message: plain_content.clone(),
+            value: total_alerts as f64,
+            threshold: 0.0,
+            timestamp: now,
+            predicted_breach: None,
+            status: 1,
+            labels,
+            first_triggered_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let instances = self.instances.read().await;
+        let mut success_count = 0;
+
+        for (channel_id, instance) in instances.iter() {
+            if max_severity < instance.min_severity {
+                continue;
+            }
+
+            let start = Instant::now();
+
+            // 优先走渠道原生报告接口（email → HTML，dingtalk → markdown）
+            let result = instance
+                .channel
+                .send_cert_report(
+                    &subject,
+                    &html_content,
+                    &markdown_content,
+                    &plain_content,
+                    &instance.recipients,
+                )
+                .await;
+
+            let (send_result, response) = match result {
+                Some(Ok(resp)) => {
+                    success_count += 1;
+                    (Ok(()), Some(resp))
+                }
+                Some(Err(e)) => {
+                    tracing::error!(
+                        channel_id = %channel_id,
+                        channel_type = %instance.channel_type,
+                        error = %e,
+                        "Failed to send alert report via native channel"
+                    );
+                    (Err(anyhow::anyhow!("{e}")), None)
+                }
+                // 渠道不支持报告接口，回退到纯文本 fallback_event
+                None => {
+                    let r = instance
+                        .channel
+                        .send(&fallback_event, &instance.recipients, locale)
+                        .await;
+                    let duration_ms = start.elapsed().as_millis() as i64;
+                    match r {
+                        Ok(resp) => {
+                            success_count += 1;
+                            let ctx = SendLogContext {
+                                channel_id,
+                                channel_name: &instance.name,
+                                channel_type: &instance.channel_type,
+                                duration_ms,
+                                recipient_count: instance.recipients.len() as i32,
+                                response: Some(resp),
+                            };
+                            Self::record_send_log(&self.cert_store, &fallback_event, &ctx, &Ok(()))
+                                .await;
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                channel_id = %channel_id,
+                                channel_type = %instance.channel_type,
+                                error = %e,
+                                "Failed to send alert report via fallback channel"
+                            );
+                            let ctx = SendLogContext {
+                                channel_id,
+                                channel_name: &instance.name,
+                                channel_type: &instance.channel_type,
+                                duration_ms,
+                                recipient_count: instance.recipients.len() as i32,
+                                response: None,
+                            };
+                            Self::record_send_log(
+                                &self.cert_store,
+                                &fallback_event,
+                                &ctx,
+                                &Err(anyhow::anyhow!("{e}")),
+                            )
+                            .await;
+                        }
+                    }
+                    continue;
+                }
+            };
+
+            let duration_ms = start.elapsed().as_millis() as i64;
+            let ctx = SendLogContext {
+                channel_id,
+                channel_name: &instance.name,
+                channel_type: &instance.channel_type,
+                duration_ms,
+                recipient_count: instance.recipients.len() as i32,
+                response,
+            };
+            Self::record_send_log(&self.cert_store, &fallback_event, &ctx, &send_result).await;
+        }
+
+        tracing::info!(
+            total_alerts = total_alerts,
+            critical_count = critical_count,
+            warning_count = warning_count,
+            success_count = success_count,
+            "Alert batch report sent to all channels"
         );
 
         success_count
