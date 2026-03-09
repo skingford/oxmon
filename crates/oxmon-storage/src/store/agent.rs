@@ -661,7 +661,8 @@ impl CertStore {
     ) -> std::collections::HashMap<String, String> {
         use crate::entities::cloud_instance::{Column as InstCol, Entity as InstEntity};
 
-        let mut result: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut result: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         if agent_ids.is_empty() {
             return result;
         }

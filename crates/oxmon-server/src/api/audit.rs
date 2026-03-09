@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-/// 审计日志条目
+/// 审计日志列表条目
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AuditLogItem {
     /// 日志 ID
@@ -37,6 +37,41 @@ pub struct AuditLogItem {
     pub user_agent: Option<String>,
     /// 链路追踪 ID
     pub trace_id: Option<String>,
+    /// 请求耗时（毫秒）
+    pub duration_ms: i64,
+    /// 创建时间（ISO 8601）
+    pub created_at: String,
+}
+
+/// 审计日志详情
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AuditLogDetail {
+    /// 日志 ID
+    pub id: String,
+    /// 操作用户 ID
+    pub user_id: String,
+    /// 操作用户名
+    pub username: String,
+    /// 操作动作：CREATE / UPDATE / DELETE
+    pub action: String,
+    /// 资源类型（路径第一段，如 alerts、notifications 等）
+    pub resource_type: String,
+    /// 资源 ID（可为空）
+    pub resource_id: Option<String>,
+    /// HTTP 方法
+    pub method: String,
+    /// 请求路径
+    pub path: String,
+    /// HTTP 状态码
+    pub status_code: i32,
+    /// 客户端 IP
+    pub ip_address: Option<String>,
+    /// User-Agent
+    pub user_agent: Option<String>,
+    /// 链路追踪 ID
+    pub trace_id: Option<String>,
+    /// 请求参数/请求体快照
+    pub request_body: Option<String>,
     /// 请求耗时（毫秒）
     pub duration_ms: i64,
     /// 创建时间（ISO 8601）
@@ -183,7 +218,7 @@ async fn get_audit_log(
 ) -> impl IntoResponse {
     match state.cert_store.get_audit_log(&id).await {
         Ok(Some(row)) => {
-            let item = AuditLogItem {
+            let item = AuditLogDetail {
                 id: row.id,
                 user_id: row.user_id,
                 username: row.username,
@@ -196,12 +231,18 @@ async fn get_audit_log(
                 ip_address: row.ip_address,
                 user_agent: row.user_agent,
                 trace_id: row.trace_id,
+                request_body: row.request_body,
                 duration_ms: row.duration_ms,
                 created_at: row.created_at,
             };
             success_response(StatusCode::OK, &trace_id, item)
         }
-        Ok(None) => error_response(StatusCode::NOT_FOUND, &trace_id, "not_found", "audit log not found"),
+        Ok(None) => error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "audit log not found",
+        ),
         Err(e) => {
             tracing::error!(error = %e, "Failed to get audit log");
             error_response(

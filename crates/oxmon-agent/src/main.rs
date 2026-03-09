@@ -11,8 +11,8 @@ use oxmon_collector::Collector;
 use oxmon_common::proto::metric_service_client::MetricServiceClient;
 use oxmon_common::proto::{MetricBatchProto, MetricDataPointProto, SystemInfoProto};
 use oxmon_common::types::MetricDataPoint;
-use sysinfo::{Disks, System};
 use std::collections::VecDeque;
+use sysinfo::{Disks, System};
 use tokio::signal;
 use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
@@ -63,13 +63,8 @@ fn collect_system_info() -> SystemInfoProto {
     let memory_gb = sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
 
     let disks = Disks::new_with_refreshed_list();
-    let disk_gb = disks
-        .iter()
-        .map(|d| d.total_space() as f64)
-        .sum::<f64>()
-        / 1024.0
-        / 1024.0
-        / 1024.0;
+    let disk_gb =
+        disks.iter().map(|d| d.total_space() as f64).sum::<f64>() / 1024.0 / 1024.0 / 1024.0;
 
     SystemInfoProto {
         hostname,

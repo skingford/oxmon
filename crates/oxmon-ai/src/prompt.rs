@@ -44,10 +44,7 @@ fn format_metrics(current: &[MetricSnapshot], history: &[HistoryMetric]) -> Stri
     for (i, metric) in current.iter().enumerate() {
         let hist = hist_map.get(metric.agent_id.as_str());
         let risk = infer_risk_label(metric.cpu_usage, metric.memory_usage, metric.disk_usage);
-        let instance_name = metric
-            .instance_name
-            .as_deref()
-            .unwrap_or("-");
+        let instance_name = metric.instance_name.as_deref().unwrap_or("-");
         output.push_str(&format!(
             "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             i + 1,

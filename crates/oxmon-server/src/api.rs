@@ -791,7 +791,8 @@ async fn agent_latest(
 
     let rows = match state
         .storage
-        .query_all_latest_for_agent(&agent_entry.agent_id, 2).await
+        .query_all_latest_for_agent(&agent_entry.agent_id, 2)
+        .await
     {
         Ok(rows) => rows,
         Err(err) => {
@@ -828,7 +829,6 @@ async fn agent_latest(
 
     success_response(StatusCode::OK, &trace_id, metrics)
 }
-
 
 /// 获取指定 Agent 的上报日志（分页）。
 /// 鉴权：需要 Bearer Token。
@@ -923,14 +923,7 @@ async fn agent_report_logs(
         })
         .collect();
 
-    success_paginated_response(
-        StatusCode::OK,
-        &trace_id,
-        items,
-        total,
-        limit,
-        offset,
-    )
+    success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
 }
 
 // GET /v1/metrics
@@ -1007,12 +1000,16 @@ async fn query_all_metrics(
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
 
-    let total = match state.storage.count_metrics(
-        from,
-        to,
-        params.agent_id_eq.as_deref(),
-        params.metric_name_eq.as_deref(),
-    ).await {
+    let total = match state
+        .storage
+        .count_metrics(
+            from,
+            to,
+            params.agent_id_eq.as_deref(),
+            params.metric_name_eq.as_deref(),
+        )
+        .await
+    {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Count metrics failed");
@@ -1026,14 +1023,18 @@ async fn query_all_metrics(
         }
     };
 
-    match state.storage.query_metrics_paginated(
-        from,
-        to,
-        params.agent_id_eq.as_deref(),
-        params.metric_name_eq.as_deref(),
-        limit,
-        offset,
-    ).await {
+    match state
+        .storage
+        .query_metrics_paginated(
+            from,
+            to,
+            params.agent_id_eq.as_deref(),
+            params.metric_name_eq.as_deref(),
+            limit,
+            offset,
+        )
+        .await
+    {
         Ok(points) => {
             let items: Vec<MetricDataPointResponse> = points
                 .into_iter()
@@ -1171,12 +1172,11 @@ async fn metric_names(
         }
     };
 
-    match state.storage.query_distinct_metric_names(
-        from,
-        to,
-        pagination.limit(),
-        pagination.offset(),
-    ).await {
+    match state
+        .storage
+        .query_distinct_metric_names(from, to, pagination.limit(), pagination.offset())
+        .await
+    {
         Ok(names) => success_paginated_response(
             StatusCode::OK,
             &trace_id,
@@ -1237,7 +1237,8 @@ async fn metric_agents(
 
     match state
         .storage
-        .query_distinct_agent_ids(from, to, pagination.limit(), pagination.offset()).await
+        .query_distinct_agent_ids(from, to, pagination.limit(), pagination.offset())
+        .await
     {
         Ok(ids) => success_paginated_response(
             StatusCode::OK,
@@ -1486,7 +1487,8 @@ async fn metric_summary(
         .unwrap_or_else(|| to - chrono::Duration::hours(1));
     match state
         .storage
-        .query_metric_summary(from, to, &params.agent_id, &params.metric_name).await
+        .query_metric_summary(from, to, &params.agent_id, &params.metric_name)
+        .await
     {
         Ok(summary) => success_response(StatusCode::OK, &trace_id, summary),
         Err(e) => {

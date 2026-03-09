@@ -289,11 +289,13 @@ impl NotificationManager {
 
         let action = {
             let mut pending = self.pending.lock().await;
-            let entry = pending.entry(key.clone()).or_insert_with(|| AggregationEntry {
-                events: Vec::new(),
-                first_seen: now,
-                flush_scheduled: false,
-            });
+            let entry = pending
+                .entry(key.clone())
+                .or_insert_with(|| AggregationEntry {
+                    events: Vec::new(),
+                    first_seen: now,
+                    flush_scheduled: false,
+                });
             entry.events.push(event.clone());
 
             if now - entry.first_seen >= window_dur {
@@ -1003,11 +1005,8 @@ impl NotificationManager {
             // key: (agent_id, metric_name, labels_canonical)
             let mut best: HashMap<(String, String, String), &AlertEvent> = HashMap::new();
             for e in events.iter() {
-                let mut label_pairs: Vec<String> = e
-                    .labels
-                    .iter()
-                    .map(|(k, v)| format!("{k}={v}"))
-                    .collect();
+                let mut label_pairs: Vec<String> =
+                    e.labels.iter().map(|(k, v)| format!("{k}={v}")).collect();
                 label_pairs.sort();
                 let label_key = label_pairs.join(",");
                 let key = (e.agent_id.clone(), e.metric_name.clone(), label_key);

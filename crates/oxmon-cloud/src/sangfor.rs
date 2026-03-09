@@ -1,5 +1,5 @@
 use crate::{CloudAccountConfig, CloudInstance, CloudMetrics, CloudProvider};
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use reqwest::Client;
@@ -81,7 +81,13 @@ impl SangforCloudProvider {
     }
 
     /// AWS4-HMAC-SHA256 签名，用于深信服 SCP Open API
-    fn sign_aws4(&self, method: &str, uri: &str, query_string: &str, now: &DateTime<Utc>) -> String {
+    fn sign_aws4(
+        &self,
+        method: &str,
+        uri: &str,
+        query_string: &str,
+        now: &DateTime<Utc>,
+    ) -> String {
         let date_str = now.format("%Y%m%d").to_string();
         let datetime_str = now.format("%Y%m%dT%H%M%SZ").to_string();
         let host = self.host_for_sign();
@@ -187,10 +193,7 @@ impl SangforCloudProvider {
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            let total = data
-                .get("total_size")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as usize;
+            let total = data.get("total_size").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
             let count = items.len();
             servers.extend(items);
@@ -205,10 +208,7 @@ impl SangforCloudProvider {
     }
 
     /// 获取单台服务器的最新指标（取最后一个数据点）
-    async fn fetch_metrics_for_server(
-        &self,
-        server_id: &str,
-    ) -> Result<HashMap<String, f64>> {
+    async fn fetch_metrics_for_server(&self, server_id: &str) -> Result<HashMap<String, f64>> {
         let metric_names = "cpu.util,memory.util,io.read.iops,io.write.iops,net.in.bps,net.out.bps";
         let qs = format!(
             "object_type=server&metric_names={}&timegap=1h",
@@ -372,7 +372,10 @@ impl CloudProvider for SangforCloudProvider {
                     created_time: None,
                     expired_time: None,
                     charge_type: None,
-                    vpc_id: s.get("vpc_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    vpc_id: s
+                        .get("vpc_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                     subnet_id: None,
                     security_group_ids: vec![],
                     zone,
@@ -380,8 +383,14 @@ impl CloudProvider for SangforCloudProvider {
                     ipv6_addresses: vec![],
                     eip_allocation_id: None,
                     internet_charge_type: None,
-                    image_id: s.get("image_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                    hostname: s.get("hostname").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    image_id: s
+                        .get("image_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    hostname: s
+                        .get("hostname")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                     description: None,
                     gpu: None,
                     io_optimized: None,

@@ -69,7 +69,9 @@ pub async fn build_test_context() -> Result<TestContext> {
     let storage = Arc::new(SeaOrmStorageEngine::new(cert_store.db().clone()));
 
     let password_hash = hash_token("changeme")?;
-    let _ = cert_store.create_user("admin", &password_hash, None, None, None, None).await?;
+    let _ = cert_store
+        .create_user("admin", &password_hash, None, None, None, None)
+        .await?;
 
     let rules: Vec<Box<dyn oxmon_alert::AlertRule>> = vec![Box::new(ThresholdRule {
         id: "test-threshold".to_string(),

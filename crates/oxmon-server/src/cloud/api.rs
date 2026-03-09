@@ -1257,11 +1257,11 @@ async fn get_cloud_instance_detail(
     let agent_id = format!("cloud:{}:{}", instance.provider, instance.instance_id);
 
     // 3. Query latest metric values (lookback 2 days to cover partition boundaries)
-    let metrics = match state.storage.query_latest_metrics_for_agent(
-        &agent_id,
-        CLOUD_METRIC_NAMES,
-        2,
-    ).await {
+    let metrics = match state
+        .storage
+        .query_latest_metrics_for_agent(&agent_id, CLOUD_METRIC_NAMES, 2)
+        .await
+    {
         Ok(m) => m,
         Err(e) => {
             tracing::warn!(error = %e, agent_id = %agent_id, "Failed to query latest cloud metrics, returning instance info without metrics");
@@ -1701,12 +1701,16 @@ async fn cloud_instance_metrics(
         std::collections::HashMap::new();
 
     for metric_name in &metric_names {
-        let pts = match state.storage.query(&MetricQuery {
-            agent_id: agent_id.clone(),
-            metric_name: metric_name.clone(),
-            from: from_time,
-            to: to_time,
-        }).await {
+        let pts = match state
+            .storage
+            .query(&MetricQuery {
+                agent_id: agent_id.clone(),
+                metric_name: metric_name.clone(),
+                from: from_time,
+                to: to_time,
+            })
+            .await
+        {
             Ok(dps) => dps
                 .into_iter()
                 .map(|dp| MetricPoint {

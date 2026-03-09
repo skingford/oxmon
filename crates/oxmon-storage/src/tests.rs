@@ -8,10 +8,7 @@ use tempfile::TempDir;
 async fn setup() -> (TempDir, SeaOrmStorageEngine) {
     oxmon_common::id::init(1, 1);
     let dir = TempDir::new().unwrap();
-    let db_url = format!(
-        "sqlite://{}?mode=rwc",
-        dir.path().join("test.db").display()
-    );
+    let db_url = format!("sqlite://{}?mode=rwc", dir.path().join("test.db").display());
     let cert_store = CertStore::new(&db_url, dir.path()).await.unwrap();
     let engine = SeaOrmStorageEngine::new(cert_store.db().clone());
     (dir, engine)

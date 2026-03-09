@@ -137,9 +137,7 @@ pub async fn generate_report_for_account(
         ai_model: analyzer.model_name(),
         ai_analysis: &analysis_result.content,
         instance_table_html: &instance_table_html,
-        created_at: &chrono::Utc::now()
-            .with_timezone(&utc8())
-            .to_rfc3339(),
+        created_at: &chrono::Utc::now().with_timezone(&utc8()).to_rfc3339(),
         locale: &locale,
     })?;
 
@@ -290,9 +288,7 @@ pub async fn generate_report_for_cloud_instances(
         ai_model: analyzer.model_name(),
         ai_analysis: &analysis_result.content,
         instance_table_html: &instance_table_html,
-        created_at: &chrono::Utc::now()
-            .with_timezone(&utc8())
-            .to_rfc3339(),
+        created_at: &chrono::Utc::now().with_timezone(&utc8()).to_rfc3339(),
         locale: &locale,
     })?;
 
@@ -460,9 +456,7 @@ pub async fn generate_report_for_single_instance(
         ai_model: analyzer.model_name(),
         ai_analysis: &analysis_result.content,
         instance_table_html: &instance_table_html,
-        created_at: &chrono::Utc::now()
-            .with_timezone(&utc8())
-            .to_rfc3339(),
+        created_at: &chrono::Utc::now().with_timezone(&utc8()).to_rfc3339(),
         locale: &locale,
     })?;
 
@@ -581,7 +575,9 @@ pub async fn query_latest_metrics(
         .collect();
 
     if !ids_needing_names.is_empty() {
-        let name_map = cert_store.resolve_agent_display_names(&ids_needing_names).await;
+        let name_map = cert_store
+            .resolve_agent_display_names(&ids_needing_names)
+            .await;
         for metric in &mut results {
             if metric.instance_name.is_none() {
                 if let Some(name) = name_map.get(&metric.agent_id) {
@@ -609,7 +605,9 @@ async fn query_agent_latest_metrics(
 
     let aliases = metric_aliases_for_agent(agent_id);
     let metric_names = metric_names_from_aliases(aliases);
-    let metrics = storage.query_latest_metrics_for_agent(agent_id, &metric_names, 7).await?;
+    let metrics = storage
+        .query_latest_metrics_for_agent(agent_id, &metric_names, 7)
+        .await?;
 
     if metrics.is_empty() {
         return Ok(None);
@@ -1154,7 +1152,10 @@ async fn query_avg_with_aliases(
     aliases: &[&str],
 ) -> f64 {
     for metric_name in aliases {
-        match storage.query_metric_summary(from.to_owned(), to.to_owned(), agent_id, metric_name).await {
+        match storage
+            .query_metric_summary(from.to_owned(), to.to_owned(), agent_id, metric_name)
+            .await
+        {
             Ok(summary) if summary.count > 0 => return summary.avg,
             _ => {}
         }
@@ -1191,12 +1192,7 @@ async fn query_history_averages_for_metrics(
 
     for metric in metrics {
         if seen.insert(metric.agent_id.clone()) {
-            history.push(query_agent_history_average(
-                storage,
-                &from,
-                &now,
-                &metric.agent_id,
-            ).await);
+            history.push(query_agent_history_average(storage, &from, &now, &metric.agent_id).await);
         }
     }
 

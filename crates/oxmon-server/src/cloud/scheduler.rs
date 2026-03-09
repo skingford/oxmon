@@ -336,13 +336,14 @@ impl CloudCheckScheduler {
 
         // Diagnose collection gaps: discovered instances but no metrics object returned
         // (usually timeout/provider mismatch/error in collector task).
-        let discovered_ids: HashSet<String> =
-            all_instances.iter().map(|i| i.instance_id.clone()).collect();
-        let collected_ids: HashSet<String> = metrics.iter().map(|m| m.instance_id.clone()).collect();
-        let mut missing_ids: Vec<String> = discovered_ids
-            .difference(&collected_ids)
-            .cloned()
+        let discovered_ids: HashSet<String> = all_instances
+            .iter()
+            .map(|i| i.instance_id.clone())
             .collect();
+        let collected_ids: HashSet<String> =
+            metrics.iter().map(|m| m.instance_id.clone()).collect();
+        let mut missing_ids: Vec<String> =
+            discovered_ids.difference(&collected_ids).cloned().collect();
         missing_ids.sort();
         if !missing_ids.is_empty() {
             let sample: Vec<String> = missing_ids.iter().take(20).cloned().collect();

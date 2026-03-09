@@ -684,11 +684,7 @@ async fn list_report_instances(
                 timestamp: m.timestamp,
             }
         })
-        .filter(|item| {
-            filter_level
-                .as_deref()
-                .is_none_or(|f| item.risk_level == f)
-        })
+        .filter(|item| filter_level.as_deref().is_none_or(|f| item.risk_level == f))
         .collect();
 
     let total = all_items.len() as u64;

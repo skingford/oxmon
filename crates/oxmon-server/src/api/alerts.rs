@@ -615,12 +615,16 @@ async fn alert_history(
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
 
-    let total = match state.storage.count_alert_history(
-        from,
-        to,
-        params.severity_eq.as_deref(),
-        params.agent_id_eq.as_deref(),
-    ).await {
+    let total = match state
+        .storage
+        .count_alert_history(
+            from,
+            to,
+            params.severity_eq.as_deref(),
+            params.agent_id_eq.as_deref(),
+        )
+        .await
+    {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to count alert history");
@@ -634,14 +638,18 @@ async fn alert_history(
         }
     };
 
-    match state.storage.query_alert_history(
-        from,
-        to,
-        params.severity_eq.as_deref(),
-        params.agent_id_eq.as_deref(),
-        limit,
-        offset,
-    ).await {
+    match state
+        .storage
+        .query_alert_history(
+            from,
+            to,
+            params.severity_eq.as_deref(),
+            params.agent_id_eq.as_deref(),
+            limit,
+            offset,
+        )
+        .await
+    {
         Ok(events) => {
             let items: Vec<AlertEventResponse> = events
                 .into_iter()
@@ -872,32 +880,36 @@ async fn active_alerts(
     let rule_id = params.rule_id_eq.as_deref();
     let metric_name = params.metric_name_eq.as_deref();
 
-    let total =
-        match state
-            .storage
-            .count_active_alerts(agent_id_contains, severity, rule_id, metric_name).await
-        {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to count active alerts");
-                return error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &trace_id,
-                    "storage_error",
-                    "Database error",
-                )
-                .into_response();
-            }
-        };
+    let total = match state
+        .storage
+        .count_active_alerts(agent_id_contains, severity, rule_id, metric_name)
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count active alerts");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
 
-    match state.storage.query_active_alerts(
-        agent_id_contains,
-        severity,
-        rule_id,
-        metric_name,
-        limit,
-        offset,
-    ).await {
+    match state
+        .storage
+        .query_active_alerts(
+            agent_id_contains,
+            severity,
+            rule_id,
+            metric_name,
+            limit,
+            offset,
+        )
+        .await
+    {
         Ok(events) => {
             success_paginated_response(StatusCode::OK, &trace_id, events, total, limit, offset)
         }

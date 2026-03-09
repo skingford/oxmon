@@ -73,9 +73,7 @@ impl MigrationTrait for Migration {
             .await?;
         manager
             .get_connection()
-            .execute_unprepared(
-                "ALTER TABLE users_backup RENAME TO users",
-            )
+            .execute_unprepared("ALTER TABLE users_backup RENAME TO users")
             .await?;
         Ok(())
     }

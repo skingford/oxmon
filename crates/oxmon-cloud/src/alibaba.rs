@@ -698,7 +698,10 @@ impl AlibabaCloudProvider {
         instance_id: &str,
         region: &str,
     ) -> Option<f64> {
-        match self.get_cms_metric(namespace, metric_name, instance_id).await {
+        match self
+            .get_cms_metric(namespace, metric_name, instance_id)
+            .await
+        {
             Ok(v) => v,
             Err(e) => {
                 let err = e.to_string();
@@ -754,12 +757,7 @@ impl CloudProvider for AlibabaCloudProvider {
 
         // Get CPU usage
         let cpu_usage = self
-            .get_cms_metric_with_diagnostics(
-                "acs_ecs_dashboard",
-                "cpu_total",
-                instance_id,
-                region,
-            )
+            .get_cms_metric_with_diagnostics("acs_ecs_dashboard", "cpu_total", instance_id, region)
             .await;
 
         // Get memory usage
@@ -824,12 +822,7 @@ impl CloudProvider for AlibabaCloudProvider {
 
         // Get TCP connection count
         let connections = self
-            .get_cms_metric_with_diagnostics(
-                "acs_ecs_dashboard",
-                "tcp_total",
-                instance_id,
-                region,
-            )
+            .get_cms_metric_with_diagnostics("acs_ecs_dashboard", "tcp_total", instance_id, region)
             .await;
 
         Ok(CloudMetrics {

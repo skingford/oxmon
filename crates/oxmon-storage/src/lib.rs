@@ -138,11 +138,8 @@ pub trait StorageEngine: Send + Sync {
         to: DateTime<Utc>,
     ) -> Result<u64>;
 
-    async fn count_distinct_agent_ids(
-        &self,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
-    ) -> Result<u64>;
+    async fn count_distinct_agent_ids(&self, from: DateTime<Utc>, to: DateTime<Utc>)
+        -> Result<u64>;
 
     async fn count_active_alerts(
         &self,

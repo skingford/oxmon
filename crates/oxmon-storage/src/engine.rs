@@ -6,17 +6,16 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use oxmon_common::types::{AlertEvent, MetricBatch, MetricDataPoint, Severity};
 use sea_orm::{
-    ActiveValue::Set, ColumnTrait, Condition, DatabaseConnection, EntityTrait,
-    FromQueryResult, Order, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement, Value,
-    sea_query::OnConflict,
+    sea_query::OnConflict, ActiveValue::Set, ColumnTrait, Condition, DatabaseConnection,
+    EntityTrait, FromQueryResult, Order, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    Statement, Value,
 };
 use std::collections::HashMap;
 
 // ---- 辅助转换函数 ----
 
 fn model_to_dp(m: crate::entities::metric::Model) -> Result<MetricDataPoint> {
-    let labels: HashMap<String, String> =
-        serde_json::from_str(&m.labels).unwrap_or_default();
+    let labels: HashMap<String, String> = serde_json::from_str(&m.labels).unwrap_or_default();
     let timestamp = DateTime::from_timestamp_millis(m.timestamp).unwrap_or_default();
     let created_at = DateTime::from_timestamp_millis(m.created_at).unwrap_or_default();
     let updated_at = DateTime::from_timestamp_millis(m.updated_at).unwrap_or_default();
@@ -33,12 +32,12 @@ fn model_to_dp(m: crate::entities::metric::Model) -> Result<MetricDataPoint> {
 }
 
 fn ae_model_to_event(m: crate::entities::alert_event::Model) -> AlertEvent {
-    let labels: HashMap<String, String> =
-        serde_json::from_str(&m.labels).unwrap_or_default();
+    let labels: HashMap<String, String> = serde_json::from_str(&m.labels).unwrap_or_default();
     let timestamp = DateTime::from_timestamp_millis(m.timestamp).unwrap_or_default();
     let predicted_breach = m.predicted_breach.and_then(DateTime::from_timestamp_millis);
-    let first_triggered_at =
-        m.first_triggered_at.and_then(DateTime::from_timestamp_millis);
+    let first_triggered_at = m
+        .first_triggered_at
+        .and_then(DateTime::from_timestamp_millis);
     let created_at = DateTime::from_timestamp_millis(m.created_at).unwrap_or_default();
     let updated_at = DateTime::from_timestamp_millis(m.updated_at).unwrap_or_default();
     let severity: Severity = m.severity.parse().unwrap_or(Severity::Info);
@@ -116,14 +115,8 @@ impl SeaOrmStorageEngine {
     async fn update_alert_status(&self, event_id: &str, new_status: &str) -> Result<bool> {
         let now = Utc::now().timestamp_millis();
         let result = AeEntity::update_many()
-            .col_expr(
-                AeCol::Status,
-                sea_orm::sea_query::Expr::value(new_status),
-            )
-            .col_expr(
-                AeCol::UpdatedAt,
-                sea_orm::sea_query::Expr::value(now),
-            )
+            .col_expr(AeCol::Status, sea_orm::sea_query::Expr::value(new_status))
+            .col_expr(AeCol::UpdatedAt, sea_orm::sea_query::Expr::value(now))
             .filter(AeCol::Id.eq(event_id))
             .exec(&self.db)
             .await?;
@@ -160,11 +153,7 @@ impl StorageEngine for SeaOrmStorageEngine {
             .collect();
 
         MEntity::insert_many(models)
-            .on_conflict(
-                OnConflict::column(MCol::Id)
-                    .do_nothing()
-                    .to_owned(),
-            )
+            .on_conflict(OnConflict::column(MCol::Id).do_nothing().to_owned())
             .exec_without_returning(&self.db)
             .await?;
 
@@ -226,8 +215,8 @@ impl StorageEngine for SeaOrmStorageEngine {
     // ---- 数据清理 ----
 
     async fn cleanup(&self, retention_days: u32) -> Result<u32> {
-        let cutoff_ms = (Utc::now() - chrono::Duration::days(retention_days as i64))
-            .timestamp_millis();
+        let cutoff_ms =
+            (Utc::now() - chrono::Duration::days(retention_days as i64)).timestamp_millis();
 
         let metric_result = MEntity::delete_many()
             .filter(MCol::Timestamp.lt(cutoff_ms))
@@ -266,9 +255,7 @@ impl StorageEngine for SeaOrmStorageEngine {
             timestamp: Set(event.timestamp.timestamp_millis()),
             predicted_breach: Set(event.predicted_breach.map(|t| t.timestamp_millis())),
             labels: Set(labels_json),
-            first_triggered_at: Set(
-                event.first_triggered_at.map(|t| t.timestamp_millis()),
-            ),
+            first_triggered_at: Set(event.first_triggered_at.map(|t| t.timestamp_millis())),
             status: Set(status_str),
             created_at: Set(now),
             updated_at: Set(now),
@@ -454,10 +441,7 @@ impl StorageEngine for SeaOrmStorageEngine {
              FROM alert_events
              WHERE timestamp >= $1 AND timestamp <= $2
              GROUP BY severity, rule_id, agent_id, metric_name, status",
-            vec![
-                Value::BigInt(Some(from_ms)),
-                Value::BigInt(Some(to_ms)),
-            ],
+            vec![Value::BigInt(Some(from_ms)), Value::BigInt(Some(to_ms))],
         ))
         .all(&self.db)
         .await?;
@@ -754,8 +738,8 @@ impl StorageEngine for SeaOrmStorageEngine {
         let from = to - chrono::Duration::days(lookback_days as i64);
         let from_ms = from.timestamp_millis();
 
-        let models = crate::entities::metric::Model::find_by_statement(
-            Statement::from_sql_and_values(
+        let models =
+            crate::entities::metric::Model::find_by_statement(Statement::from_sql_and_values(
                 self.db.get_database_backend(),
                 "SELECT m.id, m.timestamp, m.agent_id, m.metric_name, m.value,
                         m.labels, m.created_at, m.updated_at
@@ -774,10 +758,9 @@ impl StorageEngine for SeaOrmStorageEngine {
                     Value::String(Some(agent_id.to_string())),
                     Value::BigInt(Some(from_ms)),
                 ],
-            ),
-        )
-        .all(&self.db)
-        .await?;
+            ))
+            .all(&self.db)
+            .await?;
 
         models.into_iter().map(model_to_dp).collect()
     }

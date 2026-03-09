@@ -78,9 +78,7 @@ async fn list_admin_users(
         state
             .cert_store
             .list_users(username_contains, limit as u64, offset as u64),
-        state
-            .cert_store
-            .count_users_filtered(username_contains),
+        state.cert_store.count_users_filtered(username_contains),
     ) {
         Ok(result) => result,
         Err(e) => {
@@ -254,11 +252,7 @@ async fn get_admin_user(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.cert_store.get_user_by_id(&id).await {
-        Ok(Some(user)) => success_response(
-            StatusCode::OK,
-            &trace_id,
-            to_admin_user_response(user),
-        ),
+        Ok(Some(user)) => success_response(StatusCode::OK, &trace_id, to_admin_user_response(user)),
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,
@@ -443,11 +437,9 @@ async fn reset_admin_user_password(
         .update_user_password_hash(&id, &new_password_hash)
         .await
     {
-        Ok(true) => success_empty_response(
-            StatusCode::OK,
-            &trace_id,
-            "password reset successfully",
-        ),
+        Ok(true) => {
+            success_empty_response(StatusCode::OK, &trace_id, "password reset successfully")
+        }
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,
@@ -523,6 +515,10 @@ async fn delete_admin_user(
 pub fn admin_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_admin_users, create_admin_user))
-        .routes(routes!(get_admin_user, update_admin_user, delete_admin_user))
+        .routes(routes!(
+            get_admin_user,
+            update_admin_user,
+            delete_admin_user
+        ))
         .routes(routes!(reset_admin_user_password))
 }

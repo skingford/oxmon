@@ -28,7 +28,12 @@ pub struct AlertReportDetail {
 }
 
 /// 格式化指标名称和值为可读形式（支持中英文）
-pub fn format_metric_display(metric_name: &str, value: f64, labels: &HashMap<String, String>, locale: &str) -> String {
+pub fn format_metric_display(
+    metric_name: &str,
+    value: f64,
+    labels: &HashMap<String, String>,
+    locale: &str,
+) -> String {
     let is_zh = locale == "zh-CN";
 
     // 附加标签信息（如挂载点、网络接口）
@@ -222,22 +227,28 @@ impl AlertReportRenderer {
         let (risk_level, risk_label) = if params.critical_count > 0 {
             (
                 "high",
-                if is_zh { "🔴 严重告警" } else { "🔴 Critical Alert" },
+                if is_zh {
+                    "🔴 严重告警"
+                } else {
+                    "🔴 Critical Alert"
+                },
             )
         } else if params.warning_count > 0 {
-            (
-                "medium",
-                if is_zh { "🟡 警告" } else { "🟡 Warning" },
-            )
+            ("medium", if is_zh { "🟡 警告" } else { "🟡 Warning" })
         } else {
-            (
-                "normal",
-                if is_zh { "✅ 正常" } else { "✅ Normal" },
-            )
+            ("normal", if is_zh { "✅ 正常" } else { "✅ Normal" })
         };
 
-        let critical_value_class = if params.critical_count > 0 { "is-danger" } else { "" };
-        let warning_value_class = if params.warning_count > 0 { "is-warn" } else { "" };
+        let critical_value_class = if params.critical_count > 0 {
+            "is-danger"
+        } else {
+            ""
+        };
+        let warning_value_class = if params.warning_count > 0 {
+            "is-warn"
+        } else {
+            ""
+        };
 
         let table_rows = Self::build_html_table_rows(params.items, locale);
         let created_at = Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
@@ -302,11 +313,7 @@ impl AlertReportRenderer {
                     "is-warn",
                     if is_zh { "警告" } else { "Warning" },
                 ),
-                _ => (
-                    "row-info",
-                    "is-info",
-                    if is_zh { "提示" } else { "Info" },
-                ),
+                _ => ("row-info", "is-info", if is_zh { "提示" } else { "Info" }),
             };
 
             let val_class = match item.severity.as_str() {
@@ -335,7 +342,8 @@ impl AlertReportRenderer {
             };
 
             // 格式化指标值显示
-            let metric_display = format_metric_display(&item.metric_name, item.value, &item.labels, locale);
+            let metric_display =
+                format_metric_display(&item.metric_name, item.value, &item.labels, locale);
 
             html.push_str(&format!(
                 "<tr class=\"{row_class}\">\
@@ -448,9 +456,27 @@ impl AlertReportRenderer {
 
         for item in &sorted {
             let sev_display = match item.severity.as_str() {
-                "critical" => if is_zh { "🔴 严重" } else { "🔴 Critical" },
-                "warning" => if is_zh { "🟡 警告" } else { "🟡 Warning" },
-                _ => if is_zh { "🔵 提示" } else { "🔵 Info" },
+                "critical" => {
+                    if is_zh {
+                        "🔴 严重"
+                    } else {
+                        "🔴 Critical"
+                    }
+                }
+                "warning" => {
+                    if is_zh {
+                        "🟡 警告"
+                    } else {
+                        "🟡 Warning"
+                    }
+                }
+                _ => {
+                    if is_zh {
+                        "🔵 提示"
+                    } else {
+                        "🔵 Info"
+                    }
+                }
             };
             let time_str = item.triggered_at.format("%H:%M:%S").to_string();
             // 实例名（主）+ agent_id（次）
@@ -463,7 +489,12 @@ impl AlertReportRenderer {
                 format_metric_display(&item.metric_name, item.value, &item.labels, params.locale);
             md.push_str(&format!(
                 "| {} | {} | {} | {} | {} | {} |\n",
-                agent_display, item.rule_name, item.metric_name, metric_display, sev_display, time_str
+                agent_display,
+                item.rule_name,
+                item.metric_name,
+                metric_display,
+                sev_display,
+                time_str
             ));
         }
 
@@ -506,9 +537,27 @@ impl AlertReportRenderer {
 
         for item in sorted {
             let sev = match item.severity.as_str() {
-                "critical" => if is_zh { "[严重]" } else { "[CRIT]" },
-                "warning" => if is_zh { "[警告]" } else { "[WARN]" },
-                _ => if is_zh { "[提示]" } else { "[INFO]" },
+                "critical" => {
+                    if is_zh {
+                        "[严重]"
+                    } else {
+                        "[CRIT]"
+                    }
+                }
+                "warning" => {
+                    if is_zh {
+                        "[警告]"
+                    } else {
+                        "[WARN]"
+                    }
+                }
+                _ => {
+                    if is_zh {
+                        "[提示]"
+                    } else {
+                        "[INFO]"
+                    }
+                }
             };
             // 实例名（主）+ agent_id（次），格式化指标值
             let host_display = if let Some(ref name) = item.instance_name {
@@ -584,7 +633,10 @@ mod tests {
         assert!(html.contains("prod-web-01"), "should contain instance name");
         assert!(html.contains("server-01"), "should contain agent_id");
         assert!(html.contains("严重"));
-        assert!(html.contains("CPU使用率:"), "should contain formatted metric");
+        assert!(
+            html.contains("CPU使用率:"),
+            "should contain formatted metric"
+        );
         // server-02 无 instance_name，只显示 agent_id
         assert!(html.contains("server-02"));
     }
@@ -605,7 +657,10 @@ mod tests {
         assert!(html.contains("prod-web-01"));
         assert!(html.contains("server-01"));
         assert!(html.contains("Critical"));
-        assert!(html.contains("CPU Usage:"), "should contain formatted metric");
+        assert!(
+            html.contains("CPU Usage:"),
+            "should contain formatted metric"
+        );
     }
 
     #[test]
@@ -621,7 +676,10 @@ mod tests {
         };
         let md = AlertReportRenderer::render_markdown(&params);
         assert!(md.contains("告警通知汇总"));
-        assert!(md.contains("prod-web-01 (server-01)"), "instance name with agent_id");
+        assert!(
+            md.contains("prod-web-01 (server-01)"),
+            "instance name with agent_id"
+        );
         assert!(md.contains("CPU使用率:"), "formatted metric in markdown");
     }
 
@@ -638,8 +696,14 @@ mod tests {
         };
         let plain = AlertReportRenderer::render_plain(&params);
         assert!(plain.contains("告警汇总"));
-        assert!(plain.contains("prod-web-01(server-01)"), "instance name with agent_id in plain");
-        assert!(plain.contains("CPU使用率:"), "formatted metric in plain text");
+        assert!(
+            plain.contains("prod-web-01(server-01)"),
+            "instance name with agent_id in plain"
+        );
+        assert!(
+            plain.contains("CPU使用率:"),
+            "formatted metric in plain text"
+        );
     }
 
     #[test]

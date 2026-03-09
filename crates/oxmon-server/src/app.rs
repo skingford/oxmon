@@ -108,42 +108,41 @@ pub fn build_http_app(state: AppState) -> Router {
         login_router
     };
 
-    let protected_branch =
-        if rate_limit_enabled {
-            let api_governor_conf = Arc::new(
-                GovernorConfigBuilder::default()
-                    .per_second(1)
-                    .burst_size(60)
-                    .finish()
-                    .expect("failed to build API rate limiter config"),
-            );
-            protected_router
-                .merge(cert_router)
-                .merge(ai_router)
-                .layer(GovernorLayer {
-                    config: api_governor_conf,
-                })
-                .layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    audit::audit_middleware,
-                ))
-                .layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    auth::jwt_auth_middleware,
-                ))
-        } else {
-            protected_router
-                .merge(cert_router)
-                .merge(ai_router)
-                .layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    audit::audit_middleware,
-                ))
-                .layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    auth::jwt_auth_middleware,
-                ))
-        };
+    let protected_branch = if rate_limit_enabled {
+        let api_governor_conf = Arc::new(
+            GovernorConfigBuilder::default()
+                .per_second(1)
+                .burst_size(60)
+                .finish()
+                .expect("failed to build API rate limiter config"),
+        );
+        protected_router
+            .merge(cert_router)
+            .merge(ai_router)
+            .layer(GovernorLayer {
+                config: api_governor_conf,
+            })
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                audit::audit_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::jwt_auth_middleware,
+            ))
+    } else {
+        protected_router
+            .merge(cert_router)
+            .merge(ai_router)
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                audit::audit_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::jwt_auth_middleware,
+            ))
+    };
 
     public_router
         .merge(login_branch)

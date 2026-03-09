@@ -15,9 +15,7 @@ impl MigrationTrait for Migration {
         // (the error is silently ignored via execute_unprepared best-effort semantics).
         manager
             .get_connection()
-            .execute_unprepared(
-                "ALTER TABLE cloud_accounts ADD COLUMN endpoint TEXT;",
-            )
+            .execute_unprepared("ALTER TABLE cloud_accounts ADD COLUMN endpoint TEXT;")
             .await
             .ok(); // Ignore error if column already exists
         Ok(())
