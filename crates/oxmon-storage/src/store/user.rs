@@ -55,6 +55,7 @@ impl CertStore {
             email: Set(email.map(|s| s.to_owned())),
             created_at: Set(now),
             updated_at: Set(now),
+            ..Default::default()
         };
         am.insert(self.db()).await?;
         Ok(id)
