@@ -580,6 +580,15 @@ pub struct UpdateAdminUserRequest {
     pub email: Option<String>,
 }
 
+/// 手动清除登录失败锁定请求
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct UnlockLoginThrottleRequest {
+    /// 用户名（必填）
+    pub username: String,
+    /// 指定 IP；为空时清除该用户名下所有 IP 的锁定记录
+    pub ip_address: Option<String>,
+}
+
 // ---- System dictionary types ----
 
 /// 系统字典条目

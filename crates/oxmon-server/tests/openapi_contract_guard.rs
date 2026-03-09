@@ -30,6 +30,7 @@ async fn openapi_paths_should_be_covered_by_test_matrix() -> Result<()> {
         "GET /v1/auth/public-key",
         "POST /v1/auth/login",
         "POST /v1/auth/password",
+        "POST /v1/auth/logout",
         "GET /v1/agents",
         "GET /v1/agents/{id}",
         "PUT /v1/agents/{id}",

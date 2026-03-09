@@ -14,6 +14,7 @@ pub mod cloud_account;
 pub mod cloud_collection_state;
 pub mod cloud_instance;
 pub mod dictionary_type;
+pub mod login_throttle;
 pub mod metric;
 pub mod notification_channel;
 pub mod notification_log;

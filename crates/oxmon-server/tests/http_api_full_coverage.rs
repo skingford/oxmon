@@ -4,9 +4,9 @@ use axum::http::StatusCode;
 use common::{
     add_whitelist_agent, assert_err_envelope, assert_ok_envelope, build_test_context,
     encrypt_password_with_state, ensure_cert_domain_with_result, login_and_get_token,
-    make_json_body, must_ok, must_some, request_json, request_no_body,
+    make_json_body, must_ok, must_some, request_json, request_json_with_headers, request_no_body,
 };
-use oxmon_storage::StorageEngine;
+use oxmon_storage::{AuditLogFilter, StorageEngine};
 use serde_json::json;
 
 #[tokio::test]
@@ -38,6 +38,25 @@ async fn auth_login_success_and_failure_cases() {
     assert_ok_envelope(&body);
     assert!(body["data"]["access_token"].is_string());
 
+    let logs = must_ok(
+        ctx.state
+            .cert_store
+            .list_audit_logs(&AuditLogFilter::default(), 20, 0)
+            .await,
+        "audit logs should query",
+    );
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].action, "LOGIN");
+    assert_eq!(logs[0].resource_type, "auth");
+    assert_eq!(logs[0].path, "/v1/auth/login");
+    assert_eq!(logs[0].status_code, 200);
+    assert_eq!(logs[0].username, "admin");
+    assert!(logs[0]
+        .request_body
+        .as_deref()
+        .unwrap_or("")
+        .contains("\"encrypted_password\":\"***\""));
+
     // Wrong password
     let encrypted_wrong = encrypt_password_with_state(&ctx.state, "wrong");
     let (status, body, _) = request_json(
@@ -62,6 +81,81 @@ async fn auth_login_success_and_failure_cases() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_err_envelope(&body, 1001);
+
+    let disabled_hash = must_ok(
+        oxmon_storage::auth::hash_token("disabled-secret"),
+        "disabled password hash should generate",
+    );
+    let _ = must_ok(
+        ctx.state
+            .cert_store
+            .create_user(
+                "disabled_admin",
+                &disabled_hash,
+                Some("disabled"),
+                None,
+                None,
+                None,
+            )
+            .await,
+        "disabled admin should create",
+    );
+    let disabled_password = encrypt_password_with_state(&ctx.state, "disabled-secret");
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/auth/login",
+        None,
+        Some(json!({"username":"disabled_admin","encrypted_password": disabled_password})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_err_envelope(&body, 1002);
+
+    let logs = must_ok(
+        ctx.state
+            .cert_store
+            .list_audit_logs(&AuditLogFilter::default(), 20, 0)
+            .await,
+        "login audit logs should query",
+    );
+    assert_eq!(logs.len(), 4);
+    assert_eq!(logs.iter().filter(|log| log.action == "LOGIN").count(), 1);
+    assert_eq!(
+        logs.iter()
+            .filter(|log| log.action == "LOGIN_FAILED")
+            .count(),
+        3
+    );
+    assert!(logs.iter().any(|log| {
+        log.action == "LOGIN_FAILED"
+            && log
+                .request_body
+                .as_deref()
+                .unwrap_or("")
+                .contains("\"failure_reason\":\"user_disabled\"")
+    }));
+    assert!(logs.iter().any(|log| {
+        log.action == "LOGIN_FAILED"
+            && log
+                .request_body
+                .as_deref()
+                .unwrap_or("")
+                .contains("\"failure_reason\":\"missing_credentials\"")
+    }));
+    assert!(logs.iter().any(|log| {
+        log.action == "LOGIN_FAILED"
+            && log
+                .request_body
+                .as_deref()
+                .unwrap_or("")
+                .contains("\"failure_reason\":\"invalid_credentials\"")
+            && log
+                .request_body
+                .as_deref()
+                .unwrap_or("")
+                .contains("\"encrypted_password\":\"***\"")
+    }));
 }
 
 #[tokio::test]
@@ -1715,4 +1809,153 @@ async fn openapi_endpoints_should_be_accessible() {
     if let Some(raw) = body.as_str() {
         assert!(raw.contains("openapi:"));
     }
+}
+
+#[tokio::test]
+async fn auth_logout_and_login_lockout_should_work() {
+    let ctx = must_ok(build_test_context().await, "test context should build");
+    let token = login_and_get_token(&ctx.app).await;
+
+    let (status, body, _) =
+        request_no_body(&ctx.app, "POST", "/v1/auth/logout", Some(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+
+    let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/agents", Some(&token)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_err_envelope(&body, 1002);
+
+    let encrypted_wrong = encrypt_password_with_state(&ctx.state, "wrong-password");
+    for _ in 0..4 {
+        let (status, body, _) = request_json(
+            &ctx.app,
+            "POST",
+            "/v1/auth/login",
+            None,
+            Some(json!({"username":"admin","encrypted_password": encrypted_wrong})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_err_envelope(&body, 1002);
+    }
+
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/auth/login",
+        None,
+        Some(json!({"username":"admin","encrypted_password": encrypted_wrong})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_err_envelope(&body, 1010);
+
+    let encrypted_ok = encrypt_password_with_state(&ctx.state, "changeme");
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/auth/login",
+        None,
+        Some(json!({"username":"admin","encrypted_password": encrypted_ok})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_err_envelope(&body, 1010);
+}
+
+#[tokio::test]
+async fn admin_unlock_login_throttle_should_clear_lock() {
+    let ctx = must_ok(build_test_context().await, "test context should build");
+    let admin_token = login_and_get_token(&ctx.app).await;
+    let ip = "198.51.100.10";
+    let headers = [("x-forwarded-for", ip)];
+
+    let encrypted_wrong = encrypt_password_with_state(&ctx.state, "wrong-password");
+    for _ in 0..4 {
+        let (status, body, _) = request_json_with_headers(
+            &ctx.app,
+            "POST",
+            "/v1/auth/login",
+            None,
+            &headers,
+            Some(json!({"username":"admin","encrypted_password": encrypted_wrong})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_err_envelope(&body, 1002);
+    }
+
+    let (status, body, _) = request_json_with_headers(
+        &ctx.app,
+        "POST",
+        "/v1/auth/login",
+        None,
+        &headers,
+        Some(json!({"username":"admin","encrypted_password": encrypted_wrong})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_err_envelope(&body, 1010);
+
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/admin/users/unlock-login-throttle",
+        Some(&admin_token),
+        Some(json!({"username":"admin","ip_address": ip})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+
+    let encrypted_ok = encrypt_password_with_state(&ctx.state, "changeme");
+    let (status, body, _) = request_json_with_headers(
+        &ctx.app,
+        "POST",
+        "/v1/auth/login",
+        None,
+        &headers,
+        Some(json!({"username":"admin","encrypted_password": encrypted_ok})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+}
+
+#[tokio::test]
+async fn admin_list_login_throttles_should_show_active_locks() {
+    let ctx = must_ok(build_test_context().await, "test context should build");
+    let admin_token = login_and_get_token(&ctx.app).await;
+    let ip = "203.0.113.10";
+    let headers = [("x-forwarded-for", ip)];
+    let encrypted_wrong = encrypt_password_with_state(&ctx.state, "wrong-password");
+
+    for _ in 0..5 {
+        let _ = request_json_with_headers(
+            &ctx.app,
+            "POST",
+            "/v1/auth/login",
+            None,
+            &headers,
+            Some(json!({"username":"admin","encrypted_password": encrypted_wrong})),
+        )
+        .await;
+    }
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/admin/users/login-throttles?username=admin&locked_only=true",
+        Some(&admin_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    let items = body["data"]["items"]
+        .as_array()
+        .expect("items should be array");
+    assert!(!items.is_empty());
+    assert_eq!(items[0]["username"], "admin");
+    assert_eq!(items[0]["ip_address"], ip);
+    assert!(items[0]["locked_until"].is_string());
 }

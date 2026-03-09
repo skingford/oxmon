@@ -37,6 +37,8 @@ jwt_secret = "your-secret-key-here"
 token_expire_secs = 86400       # Token validity period (default: 24 hours)
 default_username = "admin"      # Default admin username
 default_password = "changeme"   # Default admin password (change this!)
+login_failure_threshold = 5     # Lock after N failed logins for same ip+username
+login_lock_duration_hours = 3   # Lock duration in hours after threshold is reached
 
 # Alert Rules
 # Managed via REST API or CLI: oxmon-server init-rules <config> <seed.json>

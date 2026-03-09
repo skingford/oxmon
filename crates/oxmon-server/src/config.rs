@@ -473,6 +473,10 @@ pub struct AuthConfig {
     pub default_username: String,
     #[serde(default = "default_password")]
     pub default_password: String,
+    #[serde(default = "default_login_failure_threshold")]
+    pub login_failure_threshold: u32,
+    #[serde(default = "default_login_lock_duration_hours")]
+    pub login_lock_duration_hours: i64,
 }
 
 impl Default for AuthConfig {
@@ -482,6 +486,8 @@ impl Default for AuthConfig {
             token_expire_secs: default_token_expire_secs(),
             default_username: default_username(),
             default_password: default_password(),
+            login_failure_threshold: default_login_failure_threshold(),
+            login_lock_duration_hours: default_login_lock_duration_hours(),
         }
     }
 }
@@ -496,6 +502,14 @@ fn default_username() -> String {
 
 fn default_password() -> String {
     "changeme".to_string()
+}
+
+fn default_login_failure_threshold() -> u32 {
+    5
+}
+
+fn default_login_lock_duration_hours() -> i64 {
+    3
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -540,6 +554,28 @@ mod tests {
             cfg.cloud_check.default_account_collection_interval_secs,
             3600
         );
+    }
+
+    #[test]
+    fn auth_login_throttle_defaults_should_load() {
+        let cfg: ServerConfig = toml::from_str("").expect("config should parse");
+        assert_eq!(cfg.auth.login_failure_threshold, 5);
+        assert_eq!(cfg.auth.login_lock_duration_hours, 3);
+    }
+
+    #[test]
+    fn auth_login_throttle_can_be_loaded_from_toml() {
+        let cfg: ServerConfig = toml::from_str(
+            r#"
+[auth]
+login_failure_threshold = 7
+login_lock_duration_hours = 6
+"#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(cfg.auth.login_failure_threshold, 7);
+        assert_eq!(cfg.auth.login_lock_duration_hours, 6);
     }
 
     #[test]

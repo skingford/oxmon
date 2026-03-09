@@ -171,6 +171,48 @@ pub async fn request_json(
     (status, json, trace_id)
 }
 
+pub async fn request_json_with_headers(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    token: Option<&str>,
+    headers: &[(&str, &str)],
+    body: Option<Value>,
+) -> (StatusCode, Value, Option<String>) {
+    let mut builder = Request::builder().method(method).uri(uri);
+    if let Some(token) = token {
+        builder = builder.header("Authorization", format!("Bearer {token}"));
+    }
+    builder = builder.header("Content-Type", "application/json");
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+
+    let req_body = body.unwrap_or(Value::Null).to_string();
+    let req = must_ok(builder.body(Body::from(req_body)), "request should build");
+
+    let resp = must_ok(app.clone().oneshot(req).await, "request should be handled");
+
+    let status = resp.status();
+    let trace_id = resp
+        .headers()
+        .get("x-trace-id")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string());
+    let bytes = must_ok(
+        to_bytes(resp.into_body(), usize::MAX).await,
+        "body should read",
+    );
+    let json = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice::<Value>(&bytes)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).to_string()))
+    };
+
+    (status, json, trace_id)
+}
+
 pub async fn request_no_body(
     app: &axum::Router,
     method: &str,

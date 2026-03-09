@@ -142,6 +142,7 @@ fn to_custom_error_code(code: &str) -> i32 {
         "conflict" => 1005,
         "app_id_missing" => 1008,
         "app_id_invalid" => 1009,
+        "too_many_attempts" => 1010,
         "duplicate_domain" => 1101,
         "invalid_domain" => 1102,
         "invalid_port" => 1103,
@@ -1517,6 +1518,7 @@ pub fn auth_routes() -> OpenApiRouter<AppState> {
 pub fn protected_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(crate::auth::change_password))
+        .routes(routes!(crate::auth::logout))
         .routes(routes!(list_agents))
         .routes(routes!(get_agent, update_agent_info, delete_agent_record))
         .routes(routes!(agent_latest))

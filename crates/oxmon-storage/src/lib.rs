@@ -16,10 +16,10 @@ pub use store::{
     AgentReportLogRow, AgentWhitelistFilter, AlertRuleFilter, AlertRuleRow, AlertRuleUpdate,
     AuditLogFilter, AuditLogRow, CertDomainSummary, CertHealthSummary, CertStatusFilter,
     CertStatusSummary, CloudAccountRow, CloudAccountSummary, CloudCollectionStateRow,
-    CloudInstanceRow, CloudInstanceStatusSummary, DictTypeFilter, NotificationChannelFilter,
-    NotificationChannelRow, NotificationChannelUpdate, NotificationLogFilter, NotificationLogRow,
-    NotificationRecipientRow, SilenceWindowFilter, SilenceWindowRow, SystemConfigFilter,
-    SystemConfigRow, SystemConfigUpdate,
+    CloudInstanceRow, CloudInstanceStatusSummary, DictTypeFilter, LoginThrottleFilter,
+    LoginThrottleRow, NotificationChannelFilter, NotificationChannelRow, NotificationChannelUpdate,
+    NotificationLogFilter, NotificationLogRow, NotificationRecipientRow, SilenceWindowFilter,
+    SilenceWindowRow, SystemConfigFilter, SystemConfigRow, SystemConfigUpdate,
 };
 
 use anyhow::Result;

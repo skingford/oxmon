@@ -619,6 +619,16 @@ async fn run_server(config_path: &str) -> Result<()> {
                 Err(e) => tracing::error!(error = %e, "Agent report log cleanup failed"),
                 _ => {}
             }
+            match cleanup_cert_store
+                .cleanup_expired_login_throttles(config.auth.login_lock_duration_hours)
+                .await
+            {
+                Ok(removed) if removed > 0 => {
+                    tracing::info!(removed, "Cleaned up expired login throttle records")
+                }
+                Err(e) => tracing::error!(error = %e, "Login throttle cleanup failed"),
+                _ => {}
+            }
         }
     });
 

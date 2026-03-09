@@ -298,3 +298,66 @@ async fn query_metrics_paginated() {
 
     assert_ne!(page1[0].id, page2[0].id);
 }
+
+#[tokio::test]
+async fn login_throttle_should_persist_across_store_reopen() {
+    oxmon_common::id::init(1, 1);
+    let dir = TempDir::new().unwrap();
+    let db_url = format!("sqlite://{}?mode=rwc", dir.path().join("test.db").display());
+
+    let store = CertStore::new(&db_url, dir.path()).await.unwrap();
+    for _ in 0..5 {
+        let _ = store
+            .register_login_failure("admin", Some("127.0.0.1"), 5, 3)
+            .await
+            .unwrap();
+    }
+    let locked_until = store
+        .get_login_lock_until("admin", Some("127.0.0.1"), 3)
+        .await
+        .unwrap();
+    assert!(locked_until.is_some());
+
+    drop(store);
+
+    let reopened = CertStore::new(&db_url, dir.path()).await.unwrap();
+    let locked_until = reopened
+        .get_login_lock_until("admin", Some("127.0.0.1"), 3)
+        .await
+        .unwrap();
+    assert!(locked_until.is_some());
+
+    reopened
+        .clear_login_failures("admin", Some("127.0.0.1"))
+        .await
+        .unwrap();
+    let cleared = reopened
+        .get_login_lock_until("admin", Some("127.0.0.1"), 3)
+        .await
+        .unwrap();
+    assert!(cleared.is_none());
+}
+
+#[tokio::test]
+async fn login_throttle_cleanup_should_remove_expired_records() {
+    oxmon_common::id::init(1, 1);
+    let dir = TempDir::new().unwrap();
+    let db_url = format!("sqlite://{}?mode=rwc", dir.path().join("test.db").display());
+    let store = CertStore::new(&db_url, dir.path()).await.unwrap();
+
+    for _ in 0..5 {
+        let _ = store
+            .register_login_failure("admin", Some("127.0.0.1"), 5, 0)
+            .await
+            .unwrap();
+    }
+
+    let removed = store.cleanup_expired_login_throttles(0).await.unwrap();
+    assert!(removed >= 1);
+
+    let locked_until = store
+        .get_login_lock_until("admin", Some("127.0.0.1"), 0)
+        .await
+        .unwrap();
+    assert!(locked_until.is_none());
+}

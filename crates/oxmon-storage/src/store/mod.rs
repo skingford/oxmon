@@ -35,6 +35,7 @@ pub use notification::{
     NotificationChannelUpdate, NotificationLogFilter, NotificationLogRow, NotificationRecipientRow,
     SilenceWindowFilter, SilenceWindowRow,
 };
+pub use user::{LoginThrottleFilter, LoginThrottleRow};
 
 /// 管理数据库（oxmon.db）的统一访问层。
 ///

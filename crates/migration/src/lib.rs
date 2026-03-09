@@ -13,6 +13,7 @@ mod m010_agent_report_logs;
 mod m011_metrics_alert_events;
 mod m012_audit_logs;
 mod m013_users_extended_fields;
+mod m014_login_throttles;
 
 pub struct Migrator;
 
@@ -33,6 +34,7 @@ impl MigratorTrait for Migrator {
             Box::new(m011_metrics_alert_events::Migration),
             Box::new(m012_audit_logs::Migration),
             Box::new(m013_users_extended_fields::Migration),
+            Box::new(m014_login_throttles::Migration),
         ]
     }
 }
