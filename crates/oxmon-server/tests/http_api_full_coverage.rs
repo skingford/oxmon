@@ -1802,6 +1802,65 @@ async fn openapi_endpoints_should_be_accessible() {
     let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.json", None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body["paths"].is_object());
+    assert_eq!(
+        body["paths"]["/v1/auth/login"]["post"]["responses"]["429"]["content"]["application/json"]
+            ["schema"]["$ref"],
+        "#/components/schemas/LoginLockoutResponse"
+    );
+    assert!(
+        body["components"]["schemas"]["LoginLockoutResponse"]["properties"]["data"].is_object()
+    );
+    assert!(
+        body["components"]["schemas"]["LoginLockoutInfo"]["properties"]["locked_until"].is_object()
+    );
+    assert!(
+        body["components"]["schemas"]["LoginLockoutInfo"]["properties"]["retry_after_seconds"]
+            .is_object()
+    );
+    assert_eq!(
+        body["paths"]["/v1/admin/users/login-throttles"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/LoginThrottleListResponse"
+    );
+    assert!(
+        body["components"]["schemas"]["LoginThrottleListResponse"]["properties"]["data"]
+            .is_object()
+    );
+    assert!(
+        body["components"]["schemas"]["LoginThrottleItem"]["properties"]["locked_until"]
+            .is_object()
+    );
+    assert_eq!(
+        body["paths"]["/v1/admin/users/unlock-login-throttle"]["post"]["responses"]["200"]
+            ["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/EmptySuccessResponse"
+    );
+    assert!(body["components"]["schemas"]["EmptySuccessResponse"]["example"].is_object());
+    assert!(body["components"]["schemas"]["UnlockLoginThrottleRequest"]["example"].is_object());
+    assert_eq!(
+        body["paths"]["/v1/auth/logout"]["post"]["responses"]["200"]["content"]["application/json"]
+            ["schema"]["$ref"],
+        "#/components/schemas/EmptySuccessResponse"
+    );
+    assert!(body["components"]["schemas"]["EmptySuccessResponse"]["example"].is_object());
+    assert_eq!(
+        body["paths"]["/v1/auth/password"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/EmptySuccessResponse"
+    );
+    assert!(body["components"]["schemas"]["EmptySuccessResponse"]["example"].is_object());
+    assert_eq!(
+        body["paths"]["/v1/admin/users/{id}/password"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/EmptySuccessResponse"
+    );
+    assert!(body["components"]["schemas"]["EmptySuccessResponse"]["example"].is_object());
+    assert_eq!(
+        body["paths"]["/v1/admin/users/{id}"]["delete"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/EmptySuccessResponse"
+    );
+    assert!(body["components"]["schemas"]["EmptySuccessResponse"]["example"].is_object());
 
     let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.yaml", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -1820,6 +1879,26 @@ async fn auth_logout_and_login_lockout_should_work() {
         request_no_body(&ctx.app, "POST", "/v1/auth/logout", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
+
+    let logout_audits = must_ok(
+        ctx.state
+            .cert_store
+            .list_audit_logs(
+                &oxmon_storage::AuditLogFilter {
+                    action: Some("LOGOUT".to_string()),
+                    ..Default::default()
+                },
+                20,
+                0,
+            )
+            .await,
+        "logout audit logs should query",
+    );
+    assert!(logout_audits.iter().any(|row| {
+        row.username == "admin"
+            && row.path == "/v1/auth/logout"
+            && row.status_code == StatusCode::OK.as_u16() as i32
+    }));
 
     let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/agents", Some(&token)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -1848,7 +1927,28 @@ async fn auth_logout_and_login_lockout_should_work() {
     )
     .await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    assert_err_envelope(&body, 1010);
+    assert_eq!(body["err_code"], 1010);
+    assert!(body["err_msg"].is_string());
+    assert!(body["data"]["locked_until"].is_string());
+    assert!(body["data"]["retry_after_seconds"].as_i64().unwrap_or(-1) >= 0);
+
+    let alerts = must_ok(
+        ctx.state
+            .storage
+            .query_alert_history(
+                chrono::Utc::now() - chrono::Duration::hours(1),
+                chrono::Utc::now() + chrono::Duration::minutes(1),
+                Some("critical"),
+                None,
+                20,
+                0,
+            )
+            .await,
+        "security alerts should query",
+    );
+    assert!(alerts
+        .iter()
+        .any(|event| event.rule_id == "security-login-lockout"));
 
     let encrypted_ok = encrypt_password_with_state(&ctx.state, "changeme");
     let (status, body, _) = request_json(
@@ -1860,7 +1960,10 @@ async fn auth_logout_and_login_lockout_should_work() {
     )
     .await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    assert_err_envelope(&body, 1010);
+    assert_eq!(body["err_code"], 1010);
+    assert!(body["err_msg"].is_string());
+    assert!(body["data"]["locked_until"].is_string());
+    assert!(body["data"]["retry_after_seconds"].as_i64().unwrap_or(-1) >= 0);
 }
 
 #[tokio::test]
@@ -1895,7 +1998,10 @@ async fn admin_unlock_login_throttle_should_clear_lock() {
     )
     .await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    assert_err_envelope(&body, 1010);
+    assert_eq!(body["err_code"], 1010);
+    assert!(body["err_msg"].is_string());
+    assert!(body["data"]["locked_until"].is_string());
+    assert!(body["data"]["retry_after_seconds"].as_i64().unwrap_or(-1) >= 0);
 
     let (status, body, _) = request_json(
         &ctx.app,
@@ -1907,6 +2013,43 @@ async fn admin_unlock_login_throttle_should_clear_lock() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
+
+    let unlock_audits = must_ok(
+        ctx.state
+            .cert_store
+            .list_audit_logs(
+                &AuditLogFilter {
+                    action: Some("UNLOCK_LOGIN_THROTTLE".to_string()),
+                    ..Default::default()
+                },
+                20,
+                0,
+            )
+            .await,
+        "unlock audit logs should query",
+    );
+    assert!(unlock_audits.iter().any(|row| {
+        row.username == "admin"
+            && row.path == "/v1/admin/users/unlock-login-throttle"
+            && row.status_code == StatusCode::OK.as_u16() as i32
+            && row.resource_id.as_deref() == Some("admin")
+    }));
+
+    let active_security_alerts = must_ok(
+        ctx.state
+            .storage
+            .query_active_alerts(
+                None,
+                Some("critical"),
+                Some("security-login-lockout"),
+                None,
+                20,
+                0,
+            )
+            .await,
+        "active security alerts should query",
+    );
+    assert!(active_security_alerts.is_empty());
 
     let encrypted_ok = encrypt_password_with_state(&ctx.state, "changeme");
     let (status, body, _) = request_json_with_headers(
@@ -1958,4 +2101,214 @@ async fn admin_list_login_throttles_should_show_active_locks() {
     assert_eq!(items[0]["username"], "admin");
     assert_eq!(items[0]["ip_address"], ip);
     assert!(items[0]["locked_until"].is_string());
+}
+
+#[tokio::test]
+async fn audit_logs_should_filter_unlock_login_throttle_action() {
+    let ctx = must_ok(build_test_context().await, "test context should build");
+    let admin_token = login_and_get_token(&ctx.app).await;
+    let ip = "198.51.100.31";
+    let headers = [("x-forwarded-for", ip)];
+    let encrypted_wrong = encrypt_password_with_state(&ctx.state, "wrong-password");
+
+    for _ in 0..5 {
+        let _ = request_json_with_headers(
+            &ctx.app,
+            "POST",
+            "/v1/auth/login",
+            None,
+            &headers,
+            Some(json!({"username":"admin","encrypted_password": encrypted_wrong})),
+        )
+        .await;
+    }
+
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/admin/users/unlock-login-throttle",
+        Some(&admin_token),
+        Some(json!({"username":"admin","ip_address": ip})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/audit/logs?action=UNLOCK_LOGIN_THROTTLE&path__contains=%2Fadmin%2Fusers%2Funlock-login-throttle&status_code=200",
+        Some(&admin_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+
+    let items = body["data"]["items"]
+        .as_array()
+        .expect("items should be array");
+    assert!(!items.is_empty());
+    assert!(items.iter().any(|item| {
+        item["action"] == "UNLOCK_LOGIN_THROTTLE"
+            && item["username"] == "admin"
+            && item["path"] == "/v1/admin/users/unlock-login-throttle"
+            && item["status_code"] == 200
+    }));
+}
+
+#[tokio::test]
+async fn audit_logs_should_filter_logout_action() {
+    let ctx = must_ok(build_test_context().await, "test context should build");
+    let admin_token = login_and_get_token(&ctx.app).await;
+
+    let (status, body, _) =
+        request_no_body(&ctx.app, "POST", "/v1/auth/logout", Some(&admin_token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+
+    let new_admin_token = login_and_get_token(&ctx.app).await;
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/audit/logs?action=LOGOUT&path__contains=%2Fauth%2Flogout&status_code=200",
+        Some(&new_admin_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+
+    let items = body["data"]["items"]
+        .as_array()
+        .expect("items should be array");
+    assert!(!items.is_empty());
+    assert!(items.iter().any(|item| {
+        item["action"] == "LOGOUT"
+            && item["username"] == "admin"
+            && item["path"] == "/v1/auth/logout"
+            && item["status_code"] == 200
+    }));
+}
+
+#[tokio::test]
+async fn audit_logs_should_filter_login_failed_by_username_and_ip() {
+    let ctx = must_ok(build_test_context().await, "test context should build");
+    let admin_token = login_and_get_token(&ctx.app).await;
+    let ip = "198.51.100.25";
+    let headers = [("x-forwarded-for", ip)];
+    let encrypted_wrong = encrypt_password_with_state(&ctx.state, "wrong-password");
+
+    let (status, body, _) = request_json_with_headers(
+        &ctx.app,
+        "POST",
+        "/v1/auth/login",
+        None,
+        &headers,
+        Some(json!({"username":"admin","encrypted_password": encrypted_wrong})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_err_envelope(&body, 1002);
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/audit/logs?action=LOGIN_FAILED&username__contains=adm&ip_address=198.51.100.25&path__contains=%2Fauth%2Flogin&status_code=401",
+        Some(&admin_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    let items = body["data"]["items"]
+        .as_array()
+        .expect("items should be array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["action"], "LOGIN_FAILED");
+    assert_eq!(items[0]["username"], "admin");
+    assert_eq!(items[0]["ip_address"], ip);
+    assert_eq!(items[0]["status_code"], 401);
+}
+
+#[tokio::test]
+async fn audit_security_summary_should_aggregate_login_events() {
+    let ctx = must_ok(build_test_context().await, "test context should build");
+    let admin_token = login_and_get_token(&ctx.app).await;
+    let headers = [("x-forwarded-for", "203.0.113.50")];
+    let encrypted_wrong = encrypt_password_with_state(&ctx.state, "wrong-password");
+
+    let (status, body, _) = request_json_with_headers(
+        &ctx.app,
+        "POST",
+        "/v1/auth/login",
+        None,
+        &headers,
+        Some(json!({"username":"admin","encrypted_password": encrypted_wrong})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_err_envelope(&body, 1002);
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/audit/logs/security-summary?hours=24",
+        Some(&admin_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert!(body["data"]["login_success_count"].as_u64().unwrap_or(0) >= 1);
+    assert!(body["data"]["login_failed_count"].as_u64().unwrap_or(0) >= 1);
+    assert!(body["data"]["unique_failed_ips"].as_u64().unwrap_or(0) >= 1);
+    assert!(body["data"]["top_failed_ips"].is_array());
+    assert_eq!(body["data"]["top_failed_ips"][0]["key"], "203.0.113.50");
+}
+
+#[tokio::test]
+async fn audit_security_timeseries_should_return_hourly_points() {
+    let ctx = must_ok(build_test_context().await, "test context should build");
+    let admin_token = login_and_get_token(&ctx.app).await;
+    let headers = [("x-forwarded-for", "203.0.113.77")];
+    let encrypted_wrong = encrypt_password_with_state(&ctx.state, "wrong-password");
+
+    let _ = request_json_with_headers(
+        &ctx.app,
+        "POST",
+        "/v1/auth/login",
+        None,
+        &headers,
+        Some(json!({"username":"admin","encrypted_password": encrypted_wrong})),
+    )
+    .await;
+
+    let encrypted_ok = encrypt_password_with_state(&ctx.state, "changeme");
+    let _ = request_json_with_headers(
+        &ctx.app,
+        "POST",
+        "/v1/auth/login",
+        None,
+        &headers,
+        Some(json!({"username":"admin","encrypted_password": encrypted_ok})),
+    )
+    .await;
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "GET",
+        "/v1/audit/logs/security-summary/timeseries?hours=6",
+        Some(&admin_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    let points = body["data"]["points"]
+        .as_array()
+        .expect("points should be array");
+    assert_eq!(points.len(), 6);
+    assert!(points.iter().all(|point| point["hour"].is_string()));
+    assert!(points
+        .iter()
+        .any(|point| point["login_success_count"].as_u64().unwrap_or(0) >= 1));
+    assert!(points
+        .iter()
+        .any(|point| point["login_failed_count"].as_u64().unwrap_or(0) >= 1));
 }

@@ -36,3 +36,5 @@ config/agent.toml
 *.log
 
 nginx/
+
+.serena/

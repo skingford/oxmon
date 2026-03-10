@@ -7,14 +7,16 @@ use crate::auth::Claims;
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
+use chrono::Utc;
 use oxmon_common::types::{
     AdminUserResponse, CreateAdminUserRequest, ResetAdminPasswordRequest,
     UnlockLoginThrottleRequest, UpdateAdminUserRequest,
 };
 use oxmon_storage::auth::hash_token;
+use oxmon_storage::{AuditLogRow, StorageEngine};
 use serde::{Deserialize, Serialize};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
@@ -28,6 +30,80 @@ fn to_admin_user_response(user: oxmon_common::types::User) -> AdminUserResponse 
         email: user.email,
         created_at: user.created_at,
         updated_at: user.updated_at,
+    }
+}
+fn first_non_empty_csv_value(raw: &str) -> Option<String> {
+    raw.split(',')
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(first_non_empty_csv_value)
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+}
+
+async fn write_unlock_login_throttle_audit_log(
+    state: &AppState,
+    trace_id: &str,
+    claims: &Claims,
+    headers: &HeaderMap,
+    req: &UnlockLoginThrottleRequest,
+    affected_count: u64,
+    duration_ms: i64,
+) {
+    let request_body = serde_json::json!({
+        "method": "POST",
+        "path": "/v1/admin/users/unlock-login-throttle",
+        "query": serde_json::Value::Null,
+        "body": {
+            "username": req.username,
+            "ip_address": req.ip_address,
+        },
+        "meta": {
+            "capture": "handler",
+            "affected_count": affected_count,
+            "content_type": headers
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+        }
+    })
+    .to_string();
+
+    let row = AuditLogRow {
+        id: oxmon_common::id::next_id(),
+        user_id: claims.sub.to_string(),
+        username: claims.username.to_string(),
+        action: "UNLOCK_LOGIN_THROTTLE".to_string(),
+        resource_type: "auth".to_string(),
+        resource_id: Some(req.username.clone()),
+        method: "POST".to_string(),
+        path: "/v1/admin/users/unlock-login-throttle".to_string(),
+        status_code: StatusCode::OK.as_u16() as i32,
+        ip_address: extract_client_ip(headers),
+        user_agent: headers
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string()),
+        trace_id: Some(trace_id.to_string()),
+        request_body: Some(request_body),
+        duration_ms,
+        created_at: Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+    };
+
+    if let Err(error) = state.cert_store.insert_audit_log(row).await {
+        tracing::warn!(error = %error, "Failed to write unlock login throttle audit log");
     }
 }
 
@@ -58,6 +134,21 @@ struct LoginThrottleItem {
     pub last_failed_at: String,
     pub locked_until: Option<String>,
     pub updated_at: String,
+}
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct LoginThrottleListData {
+    pub items: Vec<LoginThrottleItem>,
+    pub total: u64,
+    pub limit: usize,
+    pub offset: usize,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct LoginThrottleListResponse {
+    pub err_code: i32,
+    pub err_msg: String,
+    pub trace_id: String,
+    pub data: LoginThrottleListData,
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -91,7 +182,7 @@ struct LoginThrottleListParams {
     security(("bearer_auth" = [])),
     params(LoginThrottleListParams),
     responses(
-        (status = 200, description = "登录锁定列表", body = Vec<LoginThrottleItem>),
+        (status = 200, description = "登录锁定列表", body = LoginThrottleListResponse),
         (status = 401, description = "未认证", body = crate::api::ApiError)
     )
 )]
@@ -466,7 +557,7 @@ async fn update_admin_user(
     security(("bearer_auth" = [])),
     request_body = UnlockLoginThrottleRequest,
     responses(
-        (status = 200, description = "解锁成功"),
+        (status = 200, description = "解锁成功", body = crate::api::EmptySuccessResponse),
         (status = 400, description = "请求参数错误", body = crate::api::ApiError),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 500, description = "服务器内部错误", body = crate::api::ApiError)
@@ -475,8 +566,11 @@ async fn update_admin_user(
 async fn unlock_login_throttle(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(req): Json<UnlockLoginThrottleRequest>,
 ) -> impl IntoResponse {
+    let start = std::time::Instant::now();
     if req.username.trim().is_empty() {
         return error_response(
             StatusCode::BAD_REQUEST,
@@ -485,6 +579,38 @@ async fn unlock_login_throttle(
             "username is required",
         );
     }
+
+    let affected = if let Some(ip_address) = req.ip_address.as_deref() {
+        vec![(req.username.clone(), ip_address.to_string())]
+    } else {
+        match state
+            .cert_store
+            .list_login_throttles(
+                &oxmon_storage::LoginThrottleFilter {
+                    username: Some(req.username.clone()),
+                    ip_address: None,
+                    locked_only: false,
+                },
+                1000,
+                0,
+            )
+            .await
+        {
+            Ok(rows) => rows
+                .into_iter()
+                .map(|row| (row.username, row.ip_address))
+                .collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to query login throttles for unlock");
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &trace_id,
+                    "internal_error",
+                    "internal error",
+                );
+            }
+        }
+    };
 
     let result = if let Some(ip_address) = req.ip_address.as_deref() {
         state
@@ -500,7 +626,23 @@ async fn unlock_login_throttle(
     };
 
     match result {
-        Ok(_) => success_empty_response(StatusCode::OK, &trace_id, "unlock success"),
+        Ok(affected_count) => {
+            for (username, ip_address) in affected {
+                let alert_id = crate::auth::login_lock_alert_id(&username, &ip_address);
+                let _ = state.storage.resolve_alert(&alert_id).await;
+            }
+            write_unlock_login_throttle_audit_log(
+                &state,
+                &trace_id,
+                &claims,
+                &headers,
+                &req,
+                affected_count,
+                start.elapsed().as_millis() as i64,
+            )
+            .await;
+            success_empty_response(StatusCode::OK, &trace_id, "unlock success")
+        }
         Err(e) => {
             tracing::error!(error = %e, "Failed to clear login throttle");
             error_response(
@@ -527,7 +669,7 @@ async fn unlock_login_throttle(
     ),
     request_body = ResetAdminPasswordRequest,
     responses(
-        (status = 200, description = "密码重置成功"),
+        (status = 200, description = "密码重置成功", body = crate::api::EmptySuccessResponse),
         (status = 400, description = "请求参数错误", body = crate::api::ApiError),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "用户不存在", body = crate::api::ApiError)
@@ -624,7 +766,7 @@ async fn reset_admin_user_password(
         ("id" = String, Path, description = "用户 ID")
     ),
     responses(
-        (status = 200, description = "删除成功"),
+        (status = 200, description = "删除成功", body = crate::api::EmptySuccessResponse),
         (status = 400, description = "不能删除自身", body = crate::api::ApiError),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "用户不存在", body = crate::api::ApiError)

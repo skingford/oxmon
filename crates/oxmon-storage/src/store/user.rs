@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use oxmon_common::types::User;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Order, PaginatorTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, EntityTrait, Order, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect,
 };
 
@@ -260,6 +260,30 @@ impl CertStore {
             active.insert(self.db()).await?;
             Ok(None)
         }
+    }
+
+    pub async fn list_expired_login_throttles(
+        &self,
+        lock_duration_hours: i64,
+    ) -> Result<Vec<LoginThrottleRow>> {
+        let now = Utc::now().fixed_offset();
+        let stale_cutoff = (Utc::now() - Duration::hours(lock_duration_hours)).fixed_offset();
+        let rows = LoginThrottleEntity::find()
+            .filter(
+                Condition::any()
+                    .add(login_throttle::Column::LockedUntil.lte(now))
+                    .add(
+                        Condition::all()
+                            .add(login_throttle::Column::LockedUntil.is_null())
+                            .add(login_throttle::Column::UpdatedAt.lte(stale_cutoff)),
+                    ),
+            )
+            .all(self.db())
+            .await?
+            .into_iter()
+            .map(login_throttle_model_to_row)
+            .collect();
+        Ok(rows)
     }
 
     pub async fn cleanup_expired_login_throttles(&self, lock_duration_hours: i64) -> Result<u64> {

@@ -582,10 +582,13 @@ pub struct UpdateAdminUserRequest {
 
 /// 手动清除登录失败锁定请求
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(example = json!({"username": "admin", "ip_address": "198.51.100.10"}))]
 pub struct UnlockLoginThrottleRequest {
     /// 用户名（必填）
+    #[schema(example = "admin")]
     pub username: String,
     /// 指定 IP；为空时清除该用户名下所有 IP 的锁定记录
+    #[schema(example = "198.51.100.10")]
     pub ip_address: Option<String>,
 }
 

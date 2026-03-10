@@ -1,6 +1,6 @@
 use anyhow::Result;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Order, PaginatorTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, EntityTrait, Order, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect,
 };
 use serde::{Deserialize, Serialize};
@@ -32,8 +32,12 @@ pub struct AuditLogRow {
 #[derive(Debug, Clone, Default)]
 pub struct AuditLogFilter {
     pub user_id: Option<String>,
+    pub username_contains: Option<String>,
     pub action: Option<String>,
     pub resource_type: Option<String>,
+    pub ip_address: Option<String>,
+    pub path_contains: Option<String>,
+    pub status_code: Option<i32>,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
 }
@@ -94,11 +98,23 @@ impl CertStore {
         if let Some(uid) = &filter.user_id {
             q = q.filter(AuditCol::UserId.eq(uid.as_str()));
         }
+        if let Some(username) = &filter.username_contains {
+            q = q.filter(AuditCol::Username.contains(username.as_str()));
+        }
         if let Some(action) = &filter.action {
             q = q.filter(AuditCol::Action.eq(action.as_str()));
         }
         if let Some(rt) = &filter.resource_type {
             q = q.filter(AuditCol::ResourceType.eq(rt.as_str()));
+        }
+        if let Some(ip_address) = &filter.ip_address {
+            q = q.filter(AuditCol::IpAddress.eq(ip_address.as_str()));
+        }
+        if let Some(path_contains) = &filter.path_contains {
+            q = q.filter(AuditCol::Path.contains(path_contains.as_str()));
+        }
+        if let Some(status_code) = filter.status_code {
+            q = q.filter(AuditCol::StatusCode.eq(status_code));
         }
         if let Some(start) = &filter.start_time {
             q = q.filter(AuditCol::CreatedAt.gte(start.as_str()));
@@ -127,11 +143,23 @@ impl CertStore {
         if let Some(uid) = &filter.user_id {
             q = q.filter(AuditCol::UserId.eq(uid.as_str()));
         }
+        if let Some(username) = &filter.username_contains {
+            q = q.filter(AuditCol::Username.contains(username.as_str()));
+        }
         if let Some(action) = &filter.action {
             q = q.filter(AuditCol::Action.eq(action.as_str()));
         }
         if let Some(rt) = &filter.resource_type {
             q = q.filter(AuditCol::ResourceType.eq(rt.as_str()));
+        }
+        if let Some(ip_address) = &filter.ip_address {
+            q = q.filter(AuditCol::IpAddress.eq(ip_address.as_str()));
+        }
+        if let Some(path_contains) = &filter.path_contains {
+            q = q.filter(AuditCol::Path.contains(path_contains.as_str()));
+        }
+        if let Some(status_code) = filter.status_code {
+            q = q.filter(AuditCol::StatusCode.eq(status_code));
         }
         if let Some(start) = &filter.start_time {
             q = q.filter(AuditCol::CreatedAt.gte(start.as_str()));
@@ -141,6 +169,28 @@ impl CertStore {
         }
 
         Ok(q.count(&self.db).await?)
+    }
+
+    pub async fn list_login_security_audit_logs(
+        &self,
+        start_time: &str,
+    ) -> Result<Vec<AuditLogRow>> {
+        let rows = AuditEntity::find()
+            .filter(AuditCol::ResourceType.eq("auth"))
+            .filter(AuditCol::Path.eq("/v1/auth/login"))
+            .filter(
+                Condition::any()
+                    .add(AuditCol::Action.eq("LOGIN"))
+                    .add(AuditCol::Action.eq("LOGIN_FAILED")),
+            )
+            .filter(AuditCol::CreatedAt.gte(start_time))
+            .order_by(AuditCol::CreatedAt, Order::Desc)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(model_to_row)
+            .collect();
+        Ok(rows)
     }
 
     /// 按 ID 查询单条审计日志

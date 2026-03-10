@@ -76,7 +76,22 @@ pub struct IdResponse {
     /// 资源 ID
     pub id: String,
 }
-
+#[derive(Serialize, ToSchema)]
+#[schema(example = json!({"err_code": 0, "err_msg": "success", "trace_id": "0195abcde1234567890", "data": null}))]
+pub struct EmptySuccessResponse {
+    /// 错误码（成功时为 0）
+    #[schema(example = 0)]
+    pub err_code: i32,
+    /// 错误信息（成功时为 success 或具体成功提示）
+    #[schema(example = "success")]
+    pub err_msg: String,
+    /// 链路追踪 ID（默认空字符串）
+    #[schema(example = "0195abcde1234567890")]
+    pub trace_id: String,
+    /// 空业务数据
+    #[schema(value_type = Option<Object>, example = json!(null))]
+    pub data: Option<Value>,
+}
 pub fn success_response<T>(status: StatusCode, trace_id: &str, data: T) -> Response
 where
     T: Serialize,
@@ -164,6 +179,27 @@ pub fn error_response(status: StatusCode, trace_id: &str, code: &str, msg: &str)
             err_msg: msg.to_string(),
             trace_id: trace_id.to_string(),
             data: None,
+        }),
+    )
+        .into_response()
+}
+pub fn error_response_with_data<T>(
+    status: StatusCode,
+    trace_id: &str,
+    code: &str,
+    msg: &str,
+    data: T,
+) -> Response
+where
+    T: Serialize,
+{
+    (
+        status,
+        Json(ApiResponse {
+            err_code: to_custom_error_code(code),
+            err_msg: msg.to_string(),
+            trace_id: trace_id.to_string(),
+            data: Some(data),
         }),
     )
         .into_response()

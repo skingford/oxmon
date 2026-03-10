@@ -619,15 +619,31 @@ async fn run_server(config_path: &str) -> Result<()> {
                 Err(e) => tracing::error!(error = %e, "Agent report log cleanup failed"),
                 _ => {}
             }
+            let expired_login_throttles = match cleanup_cert_store
+                .list_expired_login_throttles(config.auth.login_lock_duration_hours)
+                .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to list expired login throttle records");
+                    Vec::new()
+                }
+            };
             match cleanup_cert_store
                 .cleanup_expired_login_throttles(config.auth.login_lock_duration_hours)
                 .await
             {
-                Ok(removed) if removed > 0 => {
-                    tracing::info!(removed, "Cleaned up expired login throttle records")
+                Ok(removed) => {
+                    for row in expired_login_throttles {
+                        let alert_id =
+                            oxmon_server::auth::login_lock_alert_id(&row.username, &row.ip_address);
+                        let _ = cleanup_storage.resolve_alert(&alert_id).await;
+                    }
+                    if removed > 0 {
+                        tracing::info!(removed, "Cleaned up expired login throttle records")
+                    }
                 }
                 Err(e) => tracing::error!(error = %e, "Login throttle cleanup failed"),
-                _ => {}
             }
         }
     });
