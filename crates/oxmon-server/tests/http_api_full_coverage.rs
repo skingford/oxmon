@@ -1967,6 +1967,188 @@ async fn auth_logout_and_login_lockout_should_work() {
 }
 
 #[tokio::test]
+async fn admin_create_and_update_user_should_write_audit_logs() {
+    let ctx = must_ok(build_test_context().await, "test context should build");
+    let admin_token = login_and_get_token(&ctx.app).await;
+
+    let encrypted = encrypt_password_with_state(&ctx.state, "createpass123");
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/admin/users",
+        Some(&admin_token),
+        Some(json!({
+            "username": "audit_create_target",
+            "encrypted_password": encrypted,
+            "status": "active",
+            "avatar": "https://example.com/a.png",
+            "phone": "13800000000",
+            "email": "audit@example.com"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_ok_envelope(&body);
+    let user_id =
+        must_some(body["data"]["id"].as_str(), "created user id should exist").to_string();
+
+    let create_audits = must_ok(
+        ctx.state
+            .cert_store
+            .list_audit_logs(
+                &AuditLogFilter {
+                    action: Some("CREATE_ADMIN_USER".to_string()),
+                    ..Default::default()
+                },
+                20,
+                0,
+            )
+            .await,
+        "create admin user audit logs should query",
+    );
+    assert!(create_audits.iter().any(|row| {
+        row.username == "admin"
+            && row.resource_id.as_deref() == Some(user_id.as_str())
+            && row.path == "/v1/admin/users"
+            && row.status_code == StatusCode::CREATED.as_u16() as i32
+            && row.request_body.as_deref().unwrap_or("").contains("\"encrypted_password\":\"***\"")
+    }));
+
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "PUT",
+        &format!("/v1/admin/users/{user_id}"),
+        Some(&admin_token),
+        Some(json!({
+            "status": "disabled",
+            "avatar": "https://example.com/b.png",
+            "phone": "13900000000",
+            "email": "audit2@example.com"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+    assert_eq!(body["data"]["status"], "disabled");
+
+    let update_audits = must_ok(
+        ctx.state
+            .cert_store
+            .list_audit_logs(
+                &AuditLogFilter {
+                    action: Some("UPDATE_ADMIN_USER".to_string()),
+                    ..Default::default()
+                },
+                20,
+                0,
+            )
+            .await,
+        "update admin user audit logs should query",
+    );
+    assert!(update_audits.iter().any(|row| {
+        row.username == "admin"
+            && row.resource_id.as_deref() == Some(user_id.as_str())
+            && row.path == format!("/v1/admin/users/{user_id}")
+            && row.method == "PUT"
+            && row.status_code == StatusCode::OK.as_u16() as i32
+            && row.request_body.as_deref().unwrap_or("").contains("\"status\":\"disabled\"")
+    }));
+}
+
+#[tokio::test]
+async fn admin_reset_password_and_delete_user_should_write_audit_logs() {
+    let ctx = must_ok(build_test_context().await, "test context should build");
+    let admin_token = login_and_get_token(&ctx.app).await;
+
+    let encrypted = encrypt_password_with_state(&ctx.state, "userpass123");
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        "/v1/admin/users",
+        Some(&admin_token),
+        Some(json!({
+            "username": "audit_target",
+            "encrypted_password": encrypted,
+            "status": "active"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_ok_envelope(&body);
+    let user_id =
+        must_some(body["data"]["id"].as_str(), "created user id should exist").to_string();
+
+    let encrypted_new = encrypt_password_with_state(&ctx.state, "userpass456");
+    let (status, body, _) = request_json(
+        &ctx.app,
+        "POST",
+        &format!("/v1/admin/users/{user_id}/password"),
+        Some(&admin_token),
+        Some(json!({"encrypted_new_password": encrypted_new})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+
+    let reset_audits = must_ok(
+        ctx.state
+            .cert_store
+            .list_audit_logs(
+                &AuditLogFilter {
+                    action: Some("RESET_ADMIN_PASSWORD".to_string()),
+                    ..Default::default()
+                },
+                20,
+                0,
+            )
+            .await,
+        "reset password audit logs should query",
+    );
+    assert!(reset_audits.iter().any(|row| {
+        row.username == "admin"
+            && row.resource_id.as_deref() == Some(user_id.as_str())
+            && row.path == format!("/v1/admin/users/{user_id}/password")
+            && row
+                .request_body
+                .as_deref()
+                .unwrap_or("")
+                .contains("\"encrypted_new_password\":\"***\"")
+    }));
+
+    let (status, body, _) = request_no_body(
+        &ctx.app,
+        "DELETE",
+        &format!("/v1/admin/users/{user_id}"),
+        Some(&admin_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ok_envelope(&body);
+
+    let delete_audits = must_ok(
+        ctx.state
+            .cert_store
+            .list_audit_logs(
+                &AuditLogFilter {
+                    action: Some("DELETE_ADMIN_USER".to_string()),
+                    ..Default::default()
+                },
+                20,
+                0,
+            )
+            .await,
+        "delete admin user audit logs should query",
+    );
+    assert!(delete_audits.iter().any(|row| {
+        row.username == "admin"
+            && row.resource_id.as_deref() == Some(user_id.as_str())
+            && row.path == format!("/v1/admin/users/{user_id}")
+            && row.method == "DELETE"
+            && row.status_code == StatusCode::OK.as_u16() as i32
+    }));
+}
+
+#[tokio::test]
 async fn admin_unlock_login_throttle_should_clear_lock() {
     let ctx = must_ok(build_test_context().await, "test context should build");
     let admin_token = login_and_get_token(&ctx.app).await;

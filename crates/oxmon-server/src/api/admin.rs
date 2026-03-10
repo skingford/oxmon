@@ -107,6 +107,211 @@ async fn write_unlock_login_throttle_audit_log(
     }
 }
 
+async fn write_reset_admin_password_audit_log(
+    state: &AppState,
+    trace_id: &str,
+    claims: &Claims,
+    headers: &HeaderMap,
+    target_user_id: &str,
+    duration_ms: i64,
+) {
+    let request_body = serde_json::json!({
+        "method": "POST",
+        "path": format!("/v1/admin/users/{target_user_id}/password"),
+        "query": serde_json::Value::Null,
+        "body": {
+            "encrypted_new_password": "***"
+        },
+        "meta": {
+            "capture": "handler",
+            "content_type": headers
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+        }
+    })
+    .to_string();
+
+    let row = AuditLogRow {
+        id: oxmon_common::id::next_id(),
+        user_id: claims.sub.to_string(),
+        username: claims.username.to_string(),
+        action: "RESET_ADMIN_PASSWORD".to_string(),
+        resource_type: "auth".to_string(),
+        resource_id: Some(target_user_id.to_string()),
+        method: "POST".to_string(),
+        path: format!("/v1/admin/users/{target_user_id}/password"),
+        status_code: StatusCode::OK.as_u16() as i32,
+        ip_address: extract_client_ip(headers),
+        user_agent: headers
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string()),
+        trace_id: Some(trace_id.to_string()),
+        request_body: Some(request_body),
+        duration_ms,
+        created_at: Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+    };
+
+    if let Err(error) = state.cert_store.insert_audit_log(row).await {
+        tracing::warn!(error = %error, "Failed to write reset admin password audit log");
+    }
+}
+
+async fn write_delete_admin_user_audit_log(
+    state: &AppState,
+    trace_id: &str,
+    claims: &Claims,
+    headers: &HeaderMap,
+    target_user_id: &str,
+    duration_ms: i64,
+) {
+    let request_body = serde_json::json!({
+        "method": "DELETE",
+        "path": format!("/v1/admin/users/{target_user_id}"),
+        "query": serde_json::Value::Null,
+        "body": serde_json::Value::Null,
+        "meta": {
+            "capture": "handler"
+        }
+    })
+    .to_string();
+
+    let row = AuditLogRow {
+        id: oxmon_common::id::next_id(),
+        user_id: claims.sub.to_string(),
+        username: claims.username.to_string(),
+        action: "DELETE_ADMIN_USER".to_string(),
+        resource_type: "auth".to_string(),
+        resource_id: Some(target_user_id.to_string()),
+        method: "DELETE".to_string(),
+        path: format!("/v1/admin/users/{target_user_id}"),
+        status_code: StatusCode::OK.as_u16() as i32,
+        ip_address: extract_client_ip(headers),
+        user_agent: headers
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string()),
+        trace_id: Some(trace_id.to_string()),
+        request_body: Some(request_body),
+        duration_ms,
+        created_at: Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+    };
+
+    if let Err(error) = state.cert_store.insert_audit_log(row).await {
+        tracing::warn!(error = %error, "Failed to write delete admin user audit log");
+    }
+}
+
+async fn write_create_admin_user_audit_log(
+    state: &AppState,
+    trace_id: &str,
+    claims: &Claims,
+    headers: &HeaderMap,
+    req: &CreateAdminUserRequest,
+    target_user_id: &str,
+    duration_ms: i64,
+) {
+    let request_body = serde_json::json!({
+        "method": "POST",
+        "path": "/v1/admin/users",
+        "query": serde_json::Value::Null,
+        "body": {
+            "username": req.username,
+            "encrypted_password": "***",
+            "status": req.status,
+            "avatar": req.avatar,
+            "phone": req.phone,
+            "email": req.email,
+        },
+        "meta": {
+            "capture": "handler",
+            "content_type": headers
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+        }
+    })
+    .to_string();
+
+    let row = AuditLogRow {
+        id: oxmon_common::id::next_id(),
+        user_id: claims.sub.to_string(),
+        username: claims.username.to_string(),
+        action: "CREATE_ADMIN_USER".to_string(),
+        resource_type: "auth".to_string(),
+        resource_id: Some(target_user_id.to_string()),
+        method: "POST".to_string(),
+        path: "/v1/admin/users".to_string(),
+        status_code: StatusCode::CREATED.as_u16() as i32,
+        ip_address: extract_client_ip(headers),
+        user_agent: headers
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string()),
+        trace_id: Some(trace_id.to_string()),
+        request_body: Some(request_body),
+        duration_ms,
+        created_at: Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+    };
+
+    if let Err(error) = state.cert_store.insert_audit_log(row).await {
+        tracing::warn!(error = %error, "Failed to write create admin user audit log");
+    }
+}
+
+async fn write_update_admin_user_audit_log(
+    state: &AppState,
+    trace_id: &str,
+    claims: &Claims,
+    headers: &HeaderMap,
+    target_user_id: &str,
+    req: &UpdateAdminUserRequest,
+    duration_ms: i64,
+) {
+    let request_body = serde_json::json!({
+        "method": "PUT",
+        "path": format!("/v1/admin/users/{target_user_id}"),
+        "query": serde_json::Value::Null,
+        "body": {
+            "status": req.status,
+            "avatar": req.avatar,
+            "phone": req.phone,
+            "email": req.email,
+        },
+        "meta": {
+            "capture": "handler",
+            "content_type": headers
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+        }
+    })
+    .to_string();
+
+    let row = AuditLogRow {
+        id: oxmon_common::id::next_id(),
+        user_id: claims.sub.to_string(),
+        username: claims.username.to_string(),
+        action: "UPDATE_ADMIN_USER".to_string(),
+        resource_type: "auth".to_string(),
+        resource_id: Some(target_user_id.to_string()),
+        method: "PUT".to_string(),
+        path: format!("/v1/admin/users/{target_user_id}"),
+        status_code: StatusCode::OK.as_u16() as i32,
+        ip_address: extract_client_ip(headers),
+        user_agent: headers
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string()),
+        trace_id: Some(trace_id.to_string()),
+        request_body: Some(request_body),
+        duration_ms,
+        created_at: Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+    };
+
+    if let Err(error) = state.cert_store.insert_audit_log(row).await {
+        tracing::warn!(error = %error, "Failed to write update admin user audit log");
+    }
+}
+
 /// 管理员用户列表查询参数
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -310,8 +515,11 @@ async fn list_admin_users(
 async fn create_admin_user(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(req): Json<CreateAdminUserRequest>,
 ) -> impl IntoResponse {
+    let start = std::time::Instant::now();
     if req.username.is_empty() || req.encrypted_password.is_empty() {
         return error_response(
             StatusCode::BAD_REQUEST,
@@ -406,7 +614,19 @@ async fn create_admin_user(
         )
         .await
     {
-        Ok(id) => success_id_response(StatusCode::CREATED, &trace_id, id),
+        Ok(id) => {
+            write_create_admin_user_audit_log(
+                &state,
+                &trace_id,
+                &claims,
+                &headers,
+                &req,
+                &id,
+                start.elapsed().as_millis() as i64,
+            )
+            .await;
+            success_id_response(StatusCode::CREATED, &trace_id, id)
+        }
         Err(e) => {
             tracing::error!(error = %e, "Failed to create admin user");
             error_response(
@@ -481,9 +701,12 @@ async fn get_admin_user(
 async fn update_admin_user(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<String>,
     Json(req): Json<UpdateAdminUserRequest>,
 ) -> impl IntoResponse {
+    let start = std::time::Instant::now();
     // 校验 status 值
     if let Some(ref s) = req.status {
         if s != "active" && s != "disabled" {
@@ -529,7 +752,19 @@ async fn update_admin_user(
 
     // 返回更新后的用户信息
     match state.cert_store.get_user_by_id(&id).await {
-        Ok(Some(user)) => success_response(StatusCode::OK, &trace_id, to_admin_user_response(user)),
+        Ok(Some(user)) => {
+            write_update_admin_user_audit_log(
+                &state,
+                &trace_id,
+                &claims,
+                &headers,
+                &id,
+                &req,
+                start.elapsed().as_millis() as i64,
+            )
+            .await;
+            success_response(StatusCode::OK, &trace_id, to_admin_user_response(user))
+        }
         Ok(None) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,
@@ -678,9 +913,12 @@ async fn unlock_login_throttle(
 async fn reset_admin_user_password(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<String>,
     Json(req): Json<ResetAdminPasswordRequest>,
 ) -> impl IntoResponse {
+    let start = std::time::Instant::now();
     if req.encrypted_new_password.is_empty() {
         return error_response(
             StatusCode::BAD_REQUEST,
@@ -734,6 +972,15 @@ async fn reset_admin_user_password(
         .await
     {
         Ok(true) => {
+            write_reset_admin_password_audit_log(
+                &state,
+                &trace_id,
+                &claims,
+                &headers,
+                &id,
+                start.elapsed().as_millis() as i64,
+            )
+            .await;
             success_empty_response(StatusCode::OK, &trace_id, "password reset successfully")
         }
         Ok(false) => error_response(
@@ -775,9 +1022,11 @@ async fn reset_admin_user_password(
 async fn delete_admin_user(
     Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    let start = std::time::Instant::now();
     // 防止删除自身
     if claims.sub == id {
         return error_response(
@@ -789,7 +1038,18 @@ async fn delete_admin_user(
     }
 
     match state.cert_store.delete_user(&id).await {
-        Ok(true) => success_empty_response(StatusCode::OK, &trace_id, "user deleted"),
+        Ok(true) => {
+            write_delete_admin_user_audit_log(
+                &state,
+                &trace_id,
+                &claims,
+                &headers,
+                &id,
+                start.elapsed().as_millis() as i64,
+            )
+            .await;
+            success_empty_response(StatusCode::OK, &trace_id, "user deleted")
+        }
         Ok(false) => error_response(
             StatusCode::NOT_FOUND,
             &trace_id,
