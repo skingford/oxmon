@@ -16,7 +16,7 @@ use utoipa::ToSchema;
 use crate::api::{
     error_response, error_response_with_data, success_empty_response, success_response, ApiError,
 };
-use crate::logging::TraceId;
+use crate::logging::{RemoteIp, TraceId};
 use crate::state::AppState;
 use chrono::{DateTime, Utc};
 use oxmon_storage::AuditLogRow;
@@ -161,28 +161,6 @@ pub async fn get_public_key(
     )
 }
 
-fn first_non_empty_csv_value(raw: &str) -> Option<String> {
-    raw.split(',')
-        .map(str::trim)
-        .find(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn extract_login_ip(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(first_non_empty_csv_value)
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|value| value.to_str().ok())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
-}
-
 fn lock_until_message(locked_until: DateTime<Utc>) -> String {
     format!(
         "too many failed login attempts, account is locked until {}",
@@ -252,6 +230,7 @@ async fn write_login_success_audit_log(
     trace_id: &str,
     username: &str,
     user_id: &str,
+    ip_address: Option<String>,
     headers: &HeaderMap,
     duration_ms: i64,
 ) {
@@ -282,7 +261,7 @@ async fn write_login_success_audit_log(
         method: "POST".to_string(),
         path: "/v1/auth/login".to_string(),
         status_code: StatusCode::OK.as_u16() as i32,
-        ip_address: extract_login_ip(headers),
+        ip_address,
         user_agent: headers
             .get(axum::http::header::USER_AGENT)
             .and_then(|value| value.to_str().ok())
@@ -301,11 +280,11 @@ async fn write_login_success_audit_log(
 async fn emit_login_lock_alert(
     state: &AppState,
     username: &str,
-    headers: &HeaderMap,
+    ip_address: Option<&str>,
     locked_until: DateTime<Utc>,
 ) {
     let now = Utc::now();
-    let ip_address = extract_login_ip(headers).unwrap_or_else(|| "unknown".to_string());
+    let ip_address = ip_address.unwrap_or("unknown").to_string();
     let mut labels = std::collections::HashMap::new();
     labels.insert("username".to_string(), username.to_string());
     labels.insert("ip_address".to_string(), ip_address.clone());
@@ -347,6 +326,7 @@ async fn write_logout_success_audit_log(
     trace_id: &str,
     user_id: &str,
     username: &str,
+    ip_address: Option<String>,
     headers: &HeaderMap,
     duration_ms: i64,
 ) {
@@ -374,7 +354,7 @@ async fn write_logout_success_audit_log(
         method: "POST".to_string(),
         path: "/v1/auth/logout".to_string(),
         status_code: StatusCode::OK.as_u16() as i32,
-        ip_address: extract_login_ip(headers),
+        ip_address,
         user_agent: headers
             .get(axum::http::header::USER_AGENT)
             .and_then(|value| value.to_str().ok())
@@ -390,10 +370,13 @@ async fn write_logout_success_audit_log(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn write_login_failure_audit_log(
     state: &AppState,
     trace_id: &str,
     username: &str,
+    user_id: Option<&str>,
+    ip_address: Option<String>,
     headers: &HeaderMap,
     status_code: StatusCode,
     failure_reason: &str,
@@ -419,15 +402,15 @@ async fn write_login_failure_audit_log(
 
     let row = AuditLogRow {
         id: oxmon_common::id::next_id(),
-        user_id: String::new(),
+        user_id: user_id.unwrap_or("").to_string(),
         username: username.to_string(),
         action: "LOGIN_FAILED".to_string(),
         resource_type: "auth".to_string(),
-        resource_id: None,
+        resource_id: user_id.map(|s| s.to_string()),
         method: "POST".to_string(),
         path: "/v1/auth/login".to_string(),
         status_code: status_code.as_u16() as i32,
-        ip_address: extract_login_ip(headers),
+        ip_address,
         user_agent: headers
             .get(axum::http::header::USER_AGENT)
             .and_then(|value| value.to_str().ok())
@@ -462,11 +445,11 @@ async fn write_login_failure_audit_log(
 )]
 pub async fn login(
     Extension(trace_id): Extension<TraceId>,
+    Extension(RemoteIp(ip_address)): Extension<RemoteIp>,
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> impl IntoResponse {
-    let ip_address = extract_login_ip(&headers);
     let start = std::time::Instant::now();
 
     if req.username.is_empty() || req.encrypted_password.is_empty() {
@@ -474,6 +457,8 @@ pub async fn login(
             &state,
             &trace_id,
             &req.username,
+            None,
+            ip_address.clone(),
             &headers,
             StatusCode::BAD_REQUEST,
             "missing_credentials",
@@ -513,6 +498,8 @@ pub async fn login(
             &state,
             &trace_id,
             &req.username,
+            None,
+            ip_address.clone(),
             &headers,
             StatusCode::TOO_MANY_REQUESTS,
             "locked",
@@ -534,6 +521,8 @@ pub async fn login(
                 &state,
                 &trace_id,
                 &req.username,
+                None,
+                ip_address.clone(),
                 &headers,
                 StatusCode::BAD_REQUEST,
                 "decrypt_failed",
@@ -578,19 +567,23 @@ pub async fn login(
                     &state,
                     &trace_id,
                     &req.username,
+                    None,
+                    ip_address.clone(),
                     &headers,
                     StatusCode::TOO_MANY_REQUESTS,
                     "locked_after_failure",
                     start.elapsed().as_millis() as i64,
                 )
                 .await;
-                emit_login_lock_alert(&state, &req.username, &headers, locked_until).await;
+                emit_login_lock_alert(&state, &req.username, ip_address.as_deref(), locked_until).await;
                 return login_lockout_response(&trace_id, locked_until);
             }
             write_login_failure_audit_log(
                 &state,
                 &trace_id,
                 &req.username,
+                None,
+                ip_address.clone(),
                 &headers,
                 StatusCode::UNAUTHORIZED,
                 "invalid_credentials",
@@ -620,6 +613,8 @@ pub async fn login(
             &state,
             &trace_id,
             &user.username,
+            Some(&user.id),
+            ip_address.clone(),
             &headers,
             StatusCode::UNAUTHORIZED,
             "user_disabled",
@@ -649,8 +644,8 @@ pub async fn login(
                     "internal error",
                 );
             }
-            if let Some(ip_address) = ip_address.as_deref() {
-                resolve_login_lock_alert(&state, &user.username, ip_address).await;
+            if let Some(ip) = ip_address.as_deref() {
+                resolve_login_lock_alert(&state, &user.username, ip).await;
             } else {
                 resolve_login_lock_alert(&state, &user.username, "unknown").await;
             }
@@ -682,19 +677,23 @@ pub async fn login(
                     &state,
                     &trace_id,
                     &user.username,
+                    Some(&user.id),
+                    ip_address.clone(),
                     &headers,
                     StatusCode::TOO_MANY_REQUESTS,
                     "locked_after_failure",
                     start.elapsed().as_millis() as i64,
                 )
                 .await;
-                emit_login_lock_alert(&state, &user.username, &headers, locked_until).await;
+                emit_login_lock_alert(&state, &user.username, ip_address.as_deref(), locked_until).await;
                 return login_lockout_response(&trace_id, locked_until);
             }
             write_login_failure_audit_log(
                 &state,
                 &trace_id,
                 &user.username,
+                Some(&user.id),
+                ip_address.clone(),
                 &headers,
                 StatusCode::UNAUTHORIZED,
                 "invalid_credentials",
@@ -723,6 +722,7 @@ pub async fn login(
                 &trace_id,
                 &user.username,
                 &user.id,
+                ip_address,
                 &headers,
                 start.elapsed().as_millis() as i64,
             )
@@ -764,6 +764,7 @@ pub async fn login(
 )]
 pub async fn logout(
     Extension(trace_id): Extension<TraceId>,
+    Extension(RemoteIp(ip_address)): Extension<RemoteIp>,
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::Extension(claims): axum::Extension<Claims>,
@@ -776,6 +777,7 @@ pub async fn logout(
                 &trace_id,
                 &claims.sub,
                 &claims.username,
+                ip_address,
                 &headers,
                 start.elapsed().as_millis() as i64,
             )

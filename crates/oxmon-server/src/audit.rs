@@ -10,8 +10,6 @@ use chrono::Utc;
 use oxmon_common::id::next_id;
 use oxmon_storage::AuditLogRow;
 use serde_json::{Map, Value};
-use sha2::{Digest, Sha256};
-use std::fmt::Write;
 use std::net::SocketAddr;
 
 use crate::auth::Claims;
@@ -356,60 +354,6 @@ fn build_audit_request_params(
     })
 }
 
-fn normalize_source_id(raw: &str) -> Option<String> {
-    normalize_segment(raw)
-}
-
-fn fallback_source_id(method: &str, path: &str, user_id: Option<&str>) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(method.as_bytes());
-    hasher.update(b"|");
-    hasher.update(path.as_bytes());
-    if let Some(uid) = user_id {
-        hasher.update(b"|");
-        hasher.update(uid.as_bytes());
-    }
-
-    let digest = hasher.finalize();
-    let mut out = String::from("req-");
-    for b in digest.iter().take(8) {
-        let _ = write!(&mut out, "{b:02x}");
-    }
-    out
-}
-
-fn resolve_source_id(
-    headers: &HeaderMap,
-    trace_id: Option<&str>,
-    method: &str,
-    path: &str,
-    user_id: Option<&str>,
-) -> String {
-    let candidates = [
-        headers
-            .get("x-source-id")
-            .and_then(|v| v.to_str().ok())
-            .map(str::trim),
-        headers
-            .get("x-request-id")
-            .and_then(|v| v.to_str().ok())
-            .map(str::trim),
-        headers
-            .get("x-correlation-id")
-            .and_then(|v| v.to_str().ok())
-            .map(str::trim),
-        trace_id.map(str::trim),
-    ];
-
-    for candidate in candidates.into_iter().flatten() {
-        if let Some(normalized) = normalize_source_id(candidate) {
-            return normalized;
-        }
-    }
-
-    fallback_source_id(method, path, user_id)
-}
-
 /// 审计日志中间件
 ///
 /// 仅记录写操作（POST/PUT/PATCH/DELETE）。
@@ -437,14 +381,6 @@ pub async fn audit_middleware(
     // 提取上下文信息
     let claims = req.extensions().get::<Claims>().cloned();
     let trace_id = req.extensions().get::<TraceId>().map(|t| t.0.clone());
-
-    let source_id = resolve_source_id(
-        req.headers(),
-        trace_id.as_deref(),
-        &method,
-        &path,
-        claims.as_ref().map(|c| c.sub.as_str()),
-    );
 
     let query_raw = req.uri().query().map(|q| q.to_string());
     let content_type = req
@@ -527,7 +463,7 @@ pub async fn audit_middleware(
             status_code,
             ip_address,
             user_agent,
-            trace_id: Some(source_id),
+            trace_id: trace_id.clone(),
             request_body: Some(request_params),
             duration_ms,
             created_at,
@@ -586,22 +522,6 @@ mod tests {
         let (rt, rid) = parse_resource("POST", "/v1/notifications/channels/channel_alpha/test");
         assert_eq!(rt, "notifications");
         assert_eq!(rid.as_deref(), Some("channel_alpha"));
-    }
-
-    #[test]
-    fn source_id_is_normalized_from_header() {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-request-id", "  TRACE/AbC 123  ".parse().expect("valid"));
-        let sid = resolve_source_id(&headers, None, "POST", "/v1/alerts/rules", Some("u1"));
-        assert_eq!(sid, "trace-abc-123");
-    }
-
-    #[test]
-    fn source_id_falls_back_with_hash() {
-        let headers = HeaderMap::new();
-        let sid = resolve_source_id(&headers, None, "PATCH", "/v1/a/b", Some("u1"));
-        assert!(sid.starts_with("req-"));
-        assert_eq!(sid.len(), 20);
     }
 
     #[test]

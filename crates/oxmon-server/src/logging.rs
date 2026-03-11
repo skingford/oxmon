@@ -1,5 +1,6 @@
 use axum::{
     body::Body,
+    extract::connect_info::ConnectInfo,
     extract::Request,
     http::{header, HeaderValue},
     middleware::Next,
@@ -7,6 +8,7 @@ use axum::{
 };
 use rand::RngExt;
 use std::fmt::Write;
+use std::net::SocketAddr;
 use std::time::Instant;
 
 /// Newtype wrapper for trace IDs stored in request extensions.
@@ -16,6 +18,39 @@ use std::time::Instant;
 /// extension is missing.
 #[derive(Clone)]
 pub struct TraceId(pub String);
+
+/// 请求客户端的来源 IP 地址（注入到 request extensions 中）。
+///
+/// 优先级：x-forwarded-for > x-real-ip > TCP 直连地址。
+/// 在测试环境中若 ConnectInfo 未配置则为 None。
+#[derive(Clone)]
+pub struct RemoteIp(pub Option<String>);
+
+fn extract_remote_ip(req: &Request) -> Option<String> {
+    let headers = req.headers();
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            v.split(',')
+                .map(str::trim)
+                .find(|s| !s.is_empty())
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            req.extensions()
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|ci| ci.0.ip().to_string())
+        })
+}
 
 impl std::ops::Deref for TraceId {
     type Target = str;
@@ -71,6 +106,10 @@ pub async fn request_logging(mut req: Request, next: Next) -> Response {
 
     // Insert trace_id into request extensions for handlers to access
     req.extensions_mut().insert(TraceId(trace_id.clone()));
+
+    // Inject remote IP so auth handlers can read it without ConnectInfo extractor
+    let remote_ip = RemoteIp(extract_remote_ip(&req));
+    req.extensions_mut().insert(remote_ip);
 
     let method = req.method().clone();
     let uri = req.uri().clone();
