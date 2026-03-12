@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 type HmacSha256 = Hmac<Sha256>;
 
-const API_VERSION: &str = "20180725";
+const API_VERSION: &str = "20260312";
 const DEFAULT_REGION_FOR_SIGN: &str = "cn-south-1";
 const SCP_SERVICE: &str = "open-api";
 
