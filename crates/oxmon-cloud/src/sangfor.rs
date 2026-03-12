@@ -142,6 +142,19 @@ impl SangforCloudProvider {
             format!("{}{}?{}", base, path, query_string)
         };
 
+        tracing::debug!(
+            account = %self.account_name,
+            url = %url,
+            host_for_sign = %self.host_for_sign(),
+            uri_for_sign = %uri,
+            query_string = %query_string,
+            x_amz_date = %datetime_str,
+            region_for_sign = %self.region_for_sign,
+            service = %SCP_SERVICE,
+            authorization = %authorization,
+            "Sangfor SCP request details"
+        );
+
         let resp = self
             .client
             .get(&url)
@@ -155,6 +168,12 @@ impl SangforCloudProvider {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
+            tracing::debug!(
+                account = %self.account_name,
+                status = %status,
+                response_body = %text,
+                "Sangfor SCP error response"
+            );
             bail!("SCP API error ({}): {}", status, text);
         }
 

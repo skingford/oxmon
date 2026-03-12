@@ -27,10 +27,18 @@ struct CloudAccountResponse {
     secret_key: String,
     /// 地域列表（如 ["ap-shanghai", "ap-guangzhou"]）
     regions: Vec<String>,
+    /// 私有云访问地址（深信服 SCP 等私有云专用）
+    endpoint: Option<String>,
     collection_interval_secs: i64,
     enabled: bool,
     created_at: String,
     updated_at: String,
+}
+
+/// 更新成功响应（仅返回 id）
+#[derive(Serialize, ToSchema)]
+struct UpdatedIdResponse {
+    id: String,
 }
 
 /// 创建云账户请求
@@ -341,6 +349,7 @@ fn row_to_cloud_account_response(_state: &AppState, row: CloudAccountRow) -> Clo
         secret_id: row.secret_id,
         secret_key: row.secret_key,
         regions: row.regions,
+        endpoint: row.endpoint,
         collection_interval_secs: row.collection_interval_secs,
         enabled: row.enabled,
         created_at: row.created_at.to_rfc3339(),
@@ -551,12 +560,12 @@ async fn create_cloud_account(
     Json(req): Json<CreateCloudAccountRequest>,
 ) -> impl IntoResponse {
     // Validate provider
-    if req.provider != "tencent" && req.provider != "alibaba" {
+    if req.provider != "tencent" && req.provider != "alibaba" && req.provider != "sangfor" {
         return error_response(
             StatusCode::BAD_REQUEST,
             &trace_id,
             "invalid_provider",
-            "Provider must be 'tencent' or 'alibaba'",
+            "Provider must be 'tencent', 'alibaba' or 'sangfor'",
         )
         .into_response();
     }
@@ -685,7 +694,7 @@ async fn get_cloud_account(
     ),
     request_body = UpdateCloudAccountRequest,
     responses(
-        (status = 200, description = "云账户已更新", body = CloudAccountResponse),
+        (status = 200, description = "云账户已更新", body = UpdatedIdResponse),
         (status = 404, description = "云账户不存在", body = crate::api::ApiError)
     )
 )]
@@ -748,10 +757,7 @@ async fn update_cloud_account(
     };
 
     match state.cert_store.update_cloud_account(&id, &updated).await {
-        Ok(row) => {
-            let resp = row_to_cloud_account_response(&state, row);
-            success_response(StatusCode::OK, &trace_id, resp)
-        }
+        Ok(_) => success_response(StatusCode::OK, &trace_id, UpdatedIdResponse { id }),
         Err(e) => {
             tracing::error!(error = %e, "Failed to update cloud account");
             error_response(
