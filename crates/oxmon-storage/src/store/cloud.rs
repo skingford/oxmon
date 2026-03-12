@@ -25,6 +25,8 @@ pub struct CloudAccountRow {
     pub regions: Vec<String>,
     /// 私有云平台访问地址（深信服 SCP 等私有云专用，公有云留空）
     pub endpoint: Option<String>,
+    /// AWS4 签名使用的 region（深信服 SCP 专用，默认 cn-south-1，留空则用默认值）
+    pub region_for_sign: Option<String>,
     pub collection_interval_secs: i64,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
@@ -116,6 +118,7 @@ fn model_to_account(m: cloud_account::Model) -> CloudAccountRow {
         secret_key: m.secret_key,
         regions,
         endpoint: m.endpoint,
+        region_for_sign: m.region_for_sign,
         collection_interval_secs: m.collection_interval_secs,
         enabled: m.enabled,
         created_at: m.created_at.with_timezone(&Utc),
@@ -201,6 +204,7 @@ impl CertStore {
             secret_key: Set(row.secret_key.clone()),
             regions: Set(regions_json),
             endpoint: Set(row.endpoint.clone()),
+            region_for_sign: Set(row.region_for_sign.clone()),
             collection_interval_secs: Set(row.collection_interval_secs),
             enabled: Set(row.enabled),
             created_at: Set(now),
@@ -287,6 +291,7 @@ impl CertStore {
         am.secret_key = Set(row.secret_key.clone());
         am.regions = Set(regions_json);
         am.endpoint = Set(row.endpoint.clone());
+        am.region_for_sign = Set(row.region_for_sign.clone());
         am.collection_interval_secs = Set(row.collection_interval_secs);
         am.enabled = Set(row.enabled);
         am.updated_at = Set(now);
