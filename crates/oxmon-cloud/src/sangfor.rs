@@ -68,33 +68,26 @@ impl SangforCloudProvider {
         }
     }
 
-    /// 提取 host（不含协议前缀）用于签名
-    fn host_for_sign(&self) -> String {
-        let h = &self.endpoint;
-        if let Some(stripped) = h.strip_prefix("https://") {
-            stripped.trim_end_matches('/').to_string()
-        } else if let Some(stripped) = h.strip_prefix("http://") {
-            stripped.trim_end_matches('/').to_string()
-        } else {
-            h.trim_end_matches('/').to_string()
-        }
-    }
-
     /// AWS4-HMAC-SHA256 签名，用于深信服 SCP Open API
+    /// 签名规范参考官方文档（SCP6.11.2）：
+    ///   - signed_headers = "path;x-amz-date"（深信服自定义变体，非标准 AWS4）
+    ///   - canonical_headers 只包含 x-amz-date
+    /// 返回 (Authorization, datetime_str, canonical_request, string_to_sign)
     fn sign_aws4(
         &self,
         method: &str,
         uri: &str,
         query_string: &str,
         now: &DateTime<Utc>,
-    ) -> String {
+    ) -> (String, String, String, String) {
         let date_str = now.format("%Y%m%d").to_string();
         let datetime_str = now.format("%Y%m%dT%H%M%SZ").to_string();
-        let host = self.host_for_sign();
 
-        // Step 1: canonical request
-        let canonical_headers = format!("host:{}\nx-amz-date:{}\n", host, datetime_str);
-        let signed_headers = "host;x-amz-date";
+        // 深信服 SCP 的 canonical headers 只需要 x-amz-date（官方文档示例）
+        let canonical_headers = format!("x-amz-date:{}\n", datetime_str);
+        // signed_headers 为 "path;x-amz-date"，与官方文档一致
+        let signed_headers = "path;x-amz-date";
+
         let hashed_payload = format!("{:x}", Sha256::digest(b""));
         let canonical_request = format!(
             "{}\n{}\n{}\n{}\n{}\n{}",
@@ -121,19 +114,20 @@ impl SangforCloudProvider {
         let signature = hex::encode(hmac_sha256(&k_signing, string_to_sign.as_bytes()));
 
         // Step 4: authorization header
-        format!(
+        let authorization = format!(
             "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
             self.secret_id, credential_scope, signed_headers, signature
-        )
+        );
+        (authorization, datetime_str, canonical_request, string_to_sign)
     }
 
     /// 发起已签名的 GET 请求
     async fn signed_get(&self, path: &str, query_string: &str) -> Result<serde_json::Value> {
         let now = Utc::now();
-        let datetime_str = now.format("%Y%m%dT%H%M%SZ").to_string();
 
         let uri = format!("/janus/{}{}", API_VERSION, path);
-        let authorization = self.sign_aws4("GET", &uri, query_string, &now);
+        let (authorization, datetime_str, canonical_request, string_to_sign) =
+            self.sign_aws4("GET", &uri, query_string, &now);
 
         let base = self.base_url();
         let url = if query_string.is_empty() {
@@ -142,25 +136,12 @@ impl SangforCloudProvider {
             format!("{}{}?{}", base, path, query_string)
         };
 
-        tracing::debug!(
-            account = %self.account_name,
-            url = %url,
-            host_for_sign = %self.host_for_sign(),
-            uri_for_sign = %uri,
-            query_string = %query_string,
-            x_amz_date = %datetime_str,
-            region_for_sign = %self.region_for_sign,
-            service = %SCP_SERVICE,
-            authorization = %authorization,
-            "Sangfor SCP request details"
-        );
-
+        // 按官方文档只需传 X-Amz-Date 和 Authorization 两个认证头
         let resp = self
             .client
             .get(&url)
-            .header("x-amz-date", &datetime_str)
+            .header("X-Amz-Date", &datetime_str)
             .header("Authorization", &authorization)
-            .header("Host", self.host_for_sign())
             .send()
             .await
             .with_context(|| format!("GET {} failed", url))?;
@@ -168,11 +149,20 @@ impl SangforCloudProvider {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            tracing::debug!(
+            tracing::error!(
                 account = %self.account_name,
-                status = %status,
+                url = %url,
+                uri_for_sign = %uri,
+                query_string = %query_string,
+                x_amz_date = %datetime_str,
+                region_for_sign = %self.region_for_sign,
+                service = %SCP_SERVICE,
+                authorization = %authorization,
+                canonical_request = %canonical_request,
+                string_to_sign = %string_to_sign,
+                http_status = %status,
                 response_body = %text,
-                "Sangfor SCP error response"
+                "Sangfor SCP request failed - signing details"
             );
             bail!("SCP API error ({}): {}", status, text);
         }
