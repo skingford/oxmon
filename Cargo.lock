@@ -2286,7 +2286,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "migration"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "sea-orm-migration",
  "tokio",
@@ -2578,7 +2578,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-agent"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2596,7 +2596,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-ai"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2612,7 +2612,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-alert"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "chrono",
  "glob-match",
@@ -2624,7 +2624,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-cloud"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2648,7 +2648,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-collector"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2661,7 +2661,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-common"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "chrono",
  "prost",
@@ -2678,7 +2678,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-notify"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2702,7 +2702,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-server"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "axum",
@@ -2743,7 +2743,7 @@ dependencies = [
 
 [[package]]
 name = "oxmon-storage"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
