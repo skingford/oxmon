@@ -118,9 +118,13 @@ pub struct CloudAccountConfig {
     /// 私有云访问地址（深信服 SCP 等私有云必填，如 "192.168.1.100" 或 "scp.example.com:8443"）
     #[serde(default)]
     pub endpoint: Option<String>,
-    /// AWS4 签名时使用的 region 字段（深信服 SCP 专用，默认 "cn-south-1"）
+    /// AWS4 签名时使用的 region 字段（深信服 SCP 专用，默认 "regionOne"）
     #[serde(default)]
     pub region_for_sign: Option<String>,
+    /// 深信服 SCP 6.3.0 及更早版本需要通过 Cookie 传递 aCMPAuthToken（SCP 6.3.70+ 无需）
+    /// 若设置则请求时携带 Cookie: aCMPAuthToken=<value>，并将 cookie 纳入签名
+    #[serde(default)]
+    pub scp_auth_token: Option<String>,
     #[serde(default = "default_collection_interval")]
     pub collection_interval_secs: u64,
     #[serde(default = "default_concurrency")]

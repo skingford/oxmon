@@ -29,8 +29,10 @@ struct CloudAccountResponse {
     regions: Vec<String>,
     /// 私有云访问地址（深信服 SCP 等私有云专用）
     endpoint: Option<String>,
-    /// AWS4 签名使用的 region（深信服 SCP 专用，默认 cn-south-1）
+    /// AWS4 签名使用的 region（深信服 SCP 专用，默认 regionOne）
     region_for_sign: Option<String>,
+    /// 深信服 SCP 6.3.0 及更早版本需要的 Cookie 认证 Token（SCP 6.3.70+ 无需）
+    scp_auth_token: Option<String>,
     collection_interval_secs: i64,
     enabled: bool,
     created_at: String,
@@ -64,8 +66,10 @@ struct CreateCloudAccountRequest {
     regions: Vec<String>,
     /// 私有云访问地址（深信服 SCP 必填，如 "192.168.1.100" 或 "scp.example.com"）
     endpoint: Option<String>,
-    /// AWS4 签名使用的 region（深信服 SCP 专用，默认 cn-south-1，一般无需填写）
+    /// AWS4 签名使用的 region（深信服 SCP 专用，默认 regionOne，一般无需填写）
     region_for_sign: Option<String>,
+    /// 深信服 SCP 6.3.0 及更早版本需要的 Cookie 认证 Token（SCP 6.3.70+ 无需）
+    scp_auth_token: Option<String>,
     /// 采集间隔（秒，默认 3600）
     collection_interval_secs: Option<i64>,
 }
@@ -85,6 +89,8 @@ struct UpdateCloudAccountRequest {
     endpoint: Option<Option<String>>,
     /// AWS4 签名 region（深信服 SCP 专用，传入则更新）
     region_for_sign: Option<Option<String>>,
+    /// 深信服 SCP Cookie 认证 Token（传入则更新，传 null 则清除）
+    scp_auth_token: Option<Option<String>>,
     collection_interval_secs: Option<i64>,
     enabled: Option<bool>,
 }
@@ -338,6 +344,7 @@ fn row_to_cloud_account_config(row: &CloudAccountRow) -> CloudAccountConfig {
         regions: row.regions.clone(),
         endpoint: row.endpoint.clone(),
         region_for_sign: row.region_for_sign.clone(),
+        scp_auth_token: row.scp_auth_token.clone(),
         collection_interval_secs: row.collection_interval_secs as u64,
         concurrency: 5,
         instance_filter: Default::default(),
@@ -357,6 +364,7 @@ fn row_to_cloud_account_response(_state: &AppState, row: CloudAccountRow) -> Clo
         regions: row.regions,
         endpoint: row.endpoint,
         region_for_sign: row.region_for_sign,
+        scp_auth_token: row.scp_auth_token,
         collection_interval_secs: row.collection_interval_secs,
         enabled: row.enabled,
         created_at: row.created_at.to_rfc3339(),
@@ -608,6 +616,7 @@ async fn create_cloud_account(
         regions: req.regions,
         endpoint: req.endpoint,
         region_for_sign: req.region_for_sign,
+        scp_auth_token: req.scp_auth_token,
         collection_interval_secs: collection_interval,
         enabled: true,
         created_at: now,
@@ -751,6 +760,12 @@ async fn update_cloud_account(
         None => existing.region_for_sign,
     };
 
+    let scp_auth_token = match req.scp_auth_token {
+        Some(Some(v)) => Some(v),
+        Some(None) => None,
+        None => existing.scp_auth_token,
+    };
+
     let updated = CloudAccountRow {
         id: existing.id,
         config_key: existing.config_key,
@@ -763,6 +778,7 @@ async fn update_cloud_account(
         regions: req.regions.unwrap_or(existing.regions),
         endpoint: req.endpoint.unwrap_or(existing.endpoint),
         region_for_sign,
+        scp_auth_token,
         collection_interval_secs: req
             .collection_interval_secs
             .unwrap_or(existing.collection_interval_secs),
@@ -1516,6 +1532,7 @@ async fn batch_create_cloud_accounts(
             regions,
             endpoint: None,
             region_for_sign: None,
+            scp_auth_token: None,
             collection_interval_secs: collection_interval,
             enabled: true,
             created_at: now,

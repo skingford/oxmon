@@ -633,6 +633,7 @@ mod tests {
             regions: vec!["ap-guangzhou".to_string()],
             endpoint: None,
             region_for_sign: None,
+            scp_auth_token: None,
             collection_interval_secs: 300,
             concurrency: 5,
             instance_filter: Default::default(),

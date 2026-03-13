@@ -84,6 +84,7 @@ impl CloudCheckScheduler {
                 regions: account.regions.clone(),
                 endpoint: account.endpoint.clone(),
                 region_for_sign: account.region_for_sign.clone(),
+                scp_auth_token: account.scp_auth_token.clone(),
                 collection_interval_secs: account.collection_interval_secs as u64,
                 concurrency: 5,
                 instance_filter: Default::default(),

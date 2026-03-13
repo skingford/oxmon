@@ -16,8 +16,10 @@ pub struct Model {
     pub secret_key: String,
     pub regions: String,
     pub endpoint: Option<String>,
-    /// AWS4 签名使用的 region（深信服 SCP 专用，默认 cn-south-1）
+    /// AWS4 签名使用的 region（深信服 SCP 专用，默认 regionOne）
     pub region_for_sign: Option<String>,
+    /// 深信服 SCP 6.3.0 及更早版本需要的 Cookie 认证 Token（SCP 6.3.70+ 无需）
+    pub scp_auth_token: Option<String>,
     pub collection_interval_secs: i64,
     pub enabled: bool,
     pub created_at: DateTimeWithTimeZone,

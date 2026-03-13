@@ -5,14 +5,14 @@ use hmac::{Hmac, Mac};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
 
-fn api_version() -> String {
-    Utc::now().format("%Y%m%d").to_string()
-}
-const DEFAULT_REGION_FOR_SIGN: &str = "cn-south-1";
-const SCP_SERVICE: &str = "open-api";
+
+const API_VERSION: &str = "20180725";
+const DEFAULT_REGION_FOR_SIGN: &str = "regionOne";
+const SCP_SERVICE: &str = "sdk-api";
 
 pub struct SangforCloudProvider {
     account_name: String,
@@ -22,8 +22,10 @@ pub struct SangforCloudProvider {
     regions: Vec<String>,
     /// 私有云访问地址，如 "192.168.1.100" 或 "scp.example.com:8443"
     endpoint: String,
-    /// AWS4 签名使用的 region，默认 "cn-south-1"
+    /// AWS4 签名使用的 region，默认 "regionOne"
     region_for_sign: String,
+    /// SCP 6.3.0 及更早版本需要的 Cookie 认证 Token，SCP 6.3.70+ 无需
+    scp_auth_token: Option<String>,
     client: Client,
     instance_filter: crate::InstanceFilter,
 }
@@ -41,9 +43,12 @@ impl SangforCloudProvider {
             .unwrap_or_else(|| DEFAULT_REGION_FOR_SIGN.to_string());
 
         // SCP 使用自签名证书，必须关闭 TLS 证书校验
+        // 强制 HTTP/1.1：SCP 服务器不支持 HTTP/2，reqwest 默认会通过 ALPN 协商 HTTP/2
+        // 导致服务器返回 401（签名头在 HTTP/2 下会被服务器错误处理）
         let client = Client::builder()
             .use_rustls_tls()
             .danger_accept_invalid_certs(true)
+            .http1_only()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .context("Failed to build HTTP client for Sangfor SCP")?;
@@ -55,46 +60,58 @@ impl SangforCloudProvider {
             regions: config.regions,
             endpoint,
             region_for_sign,
+            scp_auth_token: config.scp_auth_token,
             client,
             instance_filter: config.instance_filter,
         })
     }
 
     /// 构造 SCP API 的 base URL
-    fn base_url(&self) -> String {
-        let version = api_version();
+    fn base_url(&self) -> String {   
         let host = &self.endpoint;
         if host.starts_with("http://") || host.starts_with("https://") {
-            format!("{}/janus/{}", host.trim_end_matches('/'), version)
+            format!("{}/janus/{}", host.trim_end_matches('/'), API_VERSION)
         } else {
-            format!("https://{}/janus/{}", host, version)
+            format!("https://{}/janus/{}", host, API_VERSION)
         }
     }
 
     /// AWS4-HMAC-SHA256 签名，用于深信服 SCP Open API
-    /// 签名规范参考官方文档（SCP6.11.2）：
-    ///   - signed_headers = "path;x-amz-date"（深信服自定义变体，非标准 AWS4）
-    ///   - canonical_headers 只包含 x-amz-date
+    ///
+    /// 签名规范参考官方 Python SDK（sdk_py3）：
+    ///   - signed_headers = "cookie;x-amz-date"（深信服自定义变体）
+    ///   - canonical query string 始终为空字符串（SDK 中 params={} 始终为空，
+    ///     查询参数仅出现在 URL 中，不参与签名）
+    ///   - 当携带 Cookie 时，canonical_headers 包含 cookie 和 x-amz-date 两行
+    ///   - 当不携带 Cookie 时，canonical_headers 只包含 x-amz-date 一行
+    ///     但 Authorization 中 SignedHeaders 仍声明 "cookie;x-amz-date"（与 SDK 行为一致）
+    ///
     /// 返回 (Authorization, datetime_str, canonical_request, string_to_sign)
     fn sign_aws4(
         &self,
         method: &str,
         uri: &str,
-        query_string: &str,
         now: &DateTime<Utc>,
+        cookie_value: Option<&str>,
     ) -> (String, String, String, String) {
         let date_str = now.format("%Y%m%d").to_string();
         let datetime_str = now.format("%Y%m%dT%H%M%SZ").to_string();
 
-        // 深信服 SCP 的 canonical headers 只需要 x-amz-date（官方文档示例）
-        let canonical_headers = format!("x-amz-date:{}\n", datetime_str);
-        // signed_headers 为 "path;x-amz-date"，与官方文档一致
-        let signed_headers = "path;x-amz-date";
+        // signed_headers 固定为 "cookie;x-amz-date"（与官方 Python SDK 一致）
+        let signed_headers = "cookie;x-amz-date";
+
+        // canonical_headers 包含实际存在的头部，按字母序排列
+        // cookie 在 x-amz-date 之前（c < x）
+        let canonical_headers = match cookie_value {
+            Some(cookie) => format!("cookie:{}\nx-amz-date:{}\n", cookie, datetime_str),
+            None => format!("x-amz-date:{}\n", datetime_str),
+        };
 
         let hashed_payload = format!("{:x}", Sha256::digest(b""));
+        // 注意：canonical query string 始终为空（与 Python SDK 一致，查询参数不参与签名）
         let canonical_request = format!(
-            "{}\n{}\n{}\n{}\n{}\n{}",
-            method, uri, query_string, canonical_headers, signed_headers, hashed_payload
+            "{}\n{}\n\n{}\n{}\n{}",
+            method, uri, canonical_headers, signed_headers, hashed_payload
         );
         let hashed_canonical = format!("{:x}", Sha256::digest(canonical_request.as_bytes()));
 
@@ -128,9 +145,18 @@ impl SangforCloudProvider {
     async fn signed_get(&self, path: &str, query_string: &str) -> Result<serde_json::Value> {
         let now = Utc::now();
 
-        let uri = format!("/janus/{}{}", api_version(), path);
+        let uri = format!("/janus/{}{}", API_VERSION, path);
+
+        // 构造 Cookie 值：Python SDK 始终携带 Cookie: aCMPAuthToken=<uuid>
+        // 若配置了 scp_auth_token（SCP 6.3.0 及更早版本），使用配置值；否则生成随机 UUID
+        let cookie_token = self
+            .scp_auth_token
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
+        let cookie_header = format!("aCMPAuthToken={}", cookie_token);
+
         let (authorization, datetime_str, canonical_request, string_to_sign) =
-            self.sign_aws4("GET", &uri, query_string, &now);
+            self.sign_aws4("GET", &uri, &now, Some(&cookie_header));
 
         let base = self.base_url();
         let url = if query_string.is_empty() {
@@ -139,12 +165,14 @@ impl SangforCloudProvider {
             format!("{}{}?{}", base, path, query_string)
         };
 
-        // 按官方文档只需传 X-Amz-Date 和 Authorization 两个认证头
-        let resp = self
+        let request = self
             .client
             .get(&url)
             .header("X-Amz-Date", &datetime_str)
             .header("Authorization", &authorization)
+            .header("Cookie", &cookie_header);
+
+        let resp = request
             .send()
             .await
             .with_context(|| format!("GET {} failed", url))?;
@@ -165,8 +193,8 @@ impl SangforCloudProvider {
             );
             // 单独一行打印 curl 命令，方便直接复制执行
             tracing::error!(
-                "--- curl debug ---\ncurl -sk -X GET \\\n  -H 'X-Amz-Date: {}' \\\n  -H 'Authorization: {}' \\\n  '{}'",
-                datetime_str, authorization, url
+                "--- curl debug ---\ncurl -sk -X GET \\\n  -H 'X-Amz-Date: {}' \\\n  -H 'Authorization: {}' \\\n  -H 'Cookie: {}' \\\n  '{}'",
+                datetime_str, authorization, cookie_header, url
             );
             bail!("SCP API error ({}): {}", status, text);
         }
@@ -194,10 +222,12 @@ impl SangforCloudProvider {
         let page_size = 100u32;
 
         loop {
-            let qs = format!(
-                "az_id={}&page_num={}&page_size={}",
-                az_id, page_num, page_size
-            );
+            // az_id 为空时不传该参数，否则服务器返回 "az_id输入错误：值必须是UUID格式"
+            let qs = if az_id.is_empty() {
+                format!("page_num={}&page_size={}", page_num, page_size)
+            } else {
+                format!("az_id={}&page_num={}&page_size={}", az_id, page_num, page_size)
+            };
             let val = self.signed_get("/servers", &qs).await?;
 
             let data = val.get("data").unwrap_or(&serde_json::Value::Null);
@@ -315,16 +345,24 @@ impl CloudProvider for SangforCloudProvider {
                     .unwrap_or("unknown")
                     .to_string();
 
-                let public_ip = s
-                    .get("public_ip")
-                    .or_else(|| s.get("float_ip"))
+                // SCP IP 地址在 networks 数组中，ip_address 字段
+                let networks = s
+                    .get("networks")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let first_net = networks.first();
+
+                let private_ip = first_net
+                    .and_then(|n| n.get("ip_address"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
 
-                let private_ip = s
-                    .get("private_ip")
-                    .or_else(|| s.get("ip"))
+                // SCP 浮动 IP（公网 IP）可能在其他网络接口中，暂时留空
+                let public_ip = s
+                    .get("public_ip")
+                    .or_else(|| s.get("float_ip"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
@@ -336,21 +374,28 @@ impl CloudProvider for SangforCloudProvider {
                     .unwrap_or("")
                     .to_string();
 
+                // SCP 用 "cores" 字段表示 vCPU 数量
                 let cpu_cores = s
-                    .get("vcpu")
+                    .get("cores")
+                    .or_else(|| s.get("vcpu"))
                     .or_else(|| s.get("cpu"))
                     .and_then(|v| v.as_u64())
                     .map(|v| v as u32);
 
+                // SCP 用 "memory_mb" 字段（单位 MB），转换为 GB
                 let memory_gb = s
-                    .get("memory")
+                    .get("memory_mb")
+                    .or_else(|| s.get("memory"))
                     .and_then(|v| v.as_f64())
                     .map(|mb| mb / 1024.0);
 
+                // SCP 用 "storage_mb" 字段（单位 MB），转换为 GB
                 let disk_gb = s
-                    .get("disk_size")
+                    .get("storage_mb")
+                    .or_else(|| s.get("disk_size"))
                     .or_else(|| s.get("system_disk_size"))
-                    .and_then(|v| v.as_f64());
+                    .and_then(|v| v.as_f64())
+                    .map(|mb| mb / 1024.0);
 
                 let region = if az_id.is_empty() {
                     s.get("az_id")
@@ -385,8 +430,9 @@ impl CloudProvider for SangforCloudProvider {
                     created_time: None,
                     expired_time: None,
                     charge_type: None,
-                    vpc_id: s
-                        .get("vpc_id")
+                    // vpc_id 在 networks 数组中
+                    vpc_id: first_net
+                        .and_then(|n| n.get("vpc_id"))
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string()),
                     subnet_id: None,
@@ -454,5 +500,55 @@ impl CloudProvider for SangforCloudProvider {
             memory_gb: None,
             disk_gb: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sign_matches_python() {
+        let secret_key = "0c345d26da5046d6a015df07e2b621bb";
+        let secret_id = "febd45a7154f43c294947c2c47004cad"; // test.py access_key
+        let region = "regionOne";
+        let date_str = "20240101";
+        let datetime_str = "20240101T120000Z";
+        let cookie_value = "aCMPAuthToken=testtoken1234567890abcdef";
+        let method = "GET";
+        let uri = "/janus/20180725/azs";
+        let signed_headers = "cookie;x-amz-date";
+        let hashed_payload = format!("{:x}", Sha256::digest(b""));
+
+        let canonical_headers = format!("cookie:{}\nx-amz-date:{}\n", cookie_value, datetime_str);
+        let canonical_request = format!(
+            "{}\n{}\n\n{}\n{}\n{}",
+            method, uri, canonical_headers, signed_headers, hashed_payload
+        );
+        eprintln!("canonical_headers: {:?}", canonical_headers);
+        eprintln!("canonical_request: {:?}", canonical_request);
+
+        let hashed_canonical = format!("{:x}", Sha256::digest(canonical_request.as_bytes()));
+        let credential_scope = format!("{}/{}/{}/aws4_request", date_str, region, SCP_SERVICE);
+        let string_to_sign = format!(
+            "AWS4-HMAC-SHA256\n{}\n{}\n{}",
+            datetime_str, credential_scope, hashed_canonical
+        );
+        eprintln!("string_to_sign: {:?}", string_to_sign);
+
+        let k_secret = format!("AWS4{}", secret_key);
+        let k_date = hmac_sha256(k_secret.as_bytes(), date_str.as_bytes());
+        let k_region = hmac_sha256(&k_date, region.as_bytes());
+        let k_service = hmac_sha256(&k_region, SCP_SERVICE.as_bytes());
+        let k_signing = hmac_sha256(&k_service, b"aws4_request");
+        let signature = hex::encode(hmac_sha256(&k_signing, string_to_sign.as_bytes()));
+        eprintln!("signature: {}", signature);
+
+        // Expected from Python
+        assert_eq!(
+            signature,
+            "7f57de3c0021c7ce673be411a9a1eb58761fce2867a84cbea0605fc2c92808fa",
+            "Signature should match Python output"
+        );
     }
 }

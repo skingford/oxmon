@@ -25,8 +25,10 @@ pub struct CloudAccountRow {
     pub regions: Vec<String>,
     /// 私有云平台访问地址（深信服 SCP 等私有云专用，公有云留空）
     pub endpoint: Option<String>,
-    /// AWS4 签名使用的 region（深信服 SCP 专用，默认 cn-south-1，留空则用默认值）
+    /// AWS4 签名使用的 region（深信服 SCP 专用，默认 regionOne，留空则用默认值）
     pub region_for_sign: Option<String>,
+    /// 深信服 SCP 6.3.0 及更早版本需要的 Cookie 认证 Token（SCP 6.3.70+ 无需）
+    pub scp_auth_token: Option<String>,
     pub collection_interval_secs: i64,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
@@ -119,6 +121,7 @@ fn model_to_account(m: cloud_account::Model) -> CloudAccountRow {
         regions,
         endpoint: m.endpoint,
         region_for_sign: m.region_for_sign,
+        scp_auth_token: m.scp_auth_token,
         collection_interval_secs: m.collection_interval_secs,
         enabled: m.enabled,
         created_at: m.created_at.with_timezone(&Utc),
@@ -205,6 +208,7 @@ impl CertStore {
             regions: Set(regions_json),
             endpoint: Set(row.endpoint.clone()),
             region_for_sign: Set(row.region_for_sign.clone()),
+            scp_auth_token: Set(row.scp_auth_token.clone()),
             collection_interval_secs: Set(row.collection_interval_secs),
             enabled: Set(row.enabled),
             created_at: Set(now),
@@ -292,6 +296,7 @@ impl CertStore {
         am.regions = Set(regions_json);
         am.endpoint = Set(row.endpoint.clone());
         am.region_for_sign = Set(row.region_for_sign.clone());
+        am.scp_auth_token = Set(row.scp_auth_token.clone());
         am.collection_interval_secs = Set(row.collection_interval_secs);
         am.enabled = Set(row.enabled);
         am.updated_at = Set(now);
