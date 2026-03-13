@@ -344,7 +344,7 @@ curl -X POST http://localhost:8080/v1/agents/whitelist \
 ```json
 {
   "agent_id": "web-server-01",
-  "token": "AbCdEf1234567890...",
+  "token": "oxmon_example_agent_token_please_replace",
   "created_at": "2026-02-08T10:00:00Z"
 }
 ```
@@ -403,7 +403,7 @@ curl -X POST http://localhost:8080/v1/agents/whitelist/web-server-01/token
 ```json
 {
   "agent_id": "web-server-01",
-  "token": "NewToken1234567890..."
+  "token": "oxmon_example_rotated_token_please_replace"
 }
 ```
 

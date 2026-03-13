@@ -368,6 +368,37 @@ impl SangforCloudProvider {
         Ok(val)
     }
 
+    /// 调用 /azs 接口自动发现所有可用区，返回 (az_id, az_name) 列表
+    async fn list_available_azs(&self) -> Result<Vec<(String, String)>> {
+        let val = self.signed_get("/azs", "").await?;
+        tracing::debug!(
+            account = %self.account_name,
+            raw_response = ?val,
+            "Sangfor SCP /azs raw response"
+        );
+        let items = extract_items_from_response(&val);
+        let mut azs = Vec::new();
+        for item in items {
+            let id = item
+                .get("id")
+                .or_else(|| item.get("az_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if id.is_empty() {
+                continue;
+            }
+            let name = item
+                .get("name")
+                .or_else(|| item.get("az_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(&id)
+                .to_string();
+            azs.push((id, name));
+        }
+        Ok(azs)
+    }
+
     /// 列出指定 az_id（region）下所有服务器，处理分页
     async fn list_servers_in_region(&self, az_id: &str) -> Result<Vec<serde_json::Value>> {
         let mut servers = Vec::new();
@@ -383,13 +414,26 @@ impl SangforCloudProvider {
             };
             let val = self.signed_get("/servers", &qs).await?;
 
-            let data = val.get("data").unwrap_or(&serde_json::Value::Null);
-            let items = data
-                .get("data")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            let total = data.get("total_size").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            // debug 级别输出原始响应（RUST_LOG=oxmon_cloud::sangfor=debug 可查看）
+            tracing::debug!(
+                account = %self.account_name,
+                az_id = %az_id,
+                page_num = page_num,
+                raw_response = ?val,
+                "Sangfor SCP /servers raw response"
+            );
+
+            let items = extract_items_from_response(&val);
+            let total = extract_total_count(&val);
+
+            if page_num == 0 && items.is_empty() {
+                tracing::debug!(
+                    account = %self.account_name,
+                    az_id = %az_id,
+                    total = total,
+                    "Sangfor SCP /servers returned 0 items"
+                );
+            }
 
             let count = items.len();
             servers.extend(items);
@@ -437,6 +481,103 @@ impl SangforCloudProvider {
     }
 }
 
+// ── SCP API 响应解析帮助函数 ─────────────────────────────────────────────────
+
+/// 从 SCP API 响应中提取列表，兼容多种响应结构：
+///   {"data": {"data": [...]}}  ← 最常见
+///   {"data": {"servers": [...]}}
+///   {"data": {"items": [...]}}
+///   {"data": [...]}            ← data 直接是数组
+fn extract_items_from_response(val: &serde_json::Value) -> Vec<serde_json::Value> {
+    let data = val.get("data").unwrap_or(&serde_json::Value::Null);
+    for key in &["data", "servers", "items", "list"] {
+        if let Some(arr) = data.get(*key).and_then(|v| v.as_array()) {
+            return arr.clone();
+        }
+    }
+    if let Some(arr) = data.as_array() {
+        return arr.clone();
+    }
+    vec![]
+}
+
+/// 从 SCP API 响应中提取分页总数，兼容多种字段名
+fn extract_total_count(val: &serde_json::Value) -> usize {
+    let data = val.get("data").unwrap_or(&serde_json::Value::Null);
+    data.get("total_size")
+        .or_else(|| data.get("total"))
+        .or_else(|| data.get("count"))
+        .or_else(|| data.get("total_count"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize
+}
+
+/// 从服务器 JSON 对象中提取 CPU 核数，兼容多种字段名
+fn extract_cpu_cores(s: &serde_json::Value) -> Option<u32> {
+    for field in &["cores", "vcpu", "vcpus", "cpu", "cpu_num"] {
+        if let Some(v) = s.get(*field).and_then(|v| v.as_u64()) {
+            return Some(v as u32);
+        }
+    }
+    None
+}
+
+/// 从服务器 JSON 对象中提取内存（GB），自动检测单位（MB vs GB）
+///
+/// 判断规则：
+///   - 字段名含 `_mb` → 单位 MB，除以 1024
+///   - 字段名含 `_gb` → 单位 GB，直接用
+///   - 通用字段（memory/ram）→ 数值 > 512 则认为是 MB，否则认为是 GB
+fn extract_memory_gb(s: &serde_json::Value) -> Option<f64> {
+    for field in &["memory_mb", "ram_mb", "mem_mb"] {
+        if let Some(mb) = s.get(*field).and_then(|v| v.as_f64()) {
+            return Some(mb / 1024.0);
+        }
+    }
+    for field in &["memory_gb", "ram_gb", "mem_gb"] {
+        if let Some(gb) = s.get(*field).and_then(|v| v.as_f64()) {
+            return Some(gb);
+        }
+    }
+    // 通用字段：> 512 认为是 MB（一台机器内存很少超过 512 GB）
+    for field in &["memory", "ram", "mem"] {
+        if let Some(v) = s.get(*field).and_then(|v| v.as_f64()) {
+            return Some(if v > 512.0 { v / 1024.0 } else { v });
+        }
+    }
+    None
+}
+
+/// 从服务器 JSON 对象中提取磁盘容量（GB），自动检测单位（MB vs GB）
+fn extract_disk_gb(s: &serde_json::Value) -> Option<f64> {
+    for field in &["storage_mb", "disk_mb", "system_disk_mb"] {
+        if let Some(mb) = s.get(*field).and_then(|v| v.as_f64()) {
+            return Some(mb / 1024.0);
+        }
+    }
+    for field in &["storage_gb", "disk_gb", "system_disk_gb"] {
+        if let Some(gb) = s.get(*field).and_then(|v| v.as_f64()) {
+            return Some(gb);
+        }
+    }
+    // 通用字段：> 500 认为是 MB
+    for field in &["disk_size", "system_disk_size", "storage", "disk"] {
+        if let Some(v) = s.get(*field).and_then(|v| v.as_f64()) {
+            return Some(if v > 500.0 { v / 1024.0 } else { v });
+        }
+    }
+    None
+}
+
+/// 从 CPU 和内存推导实例类型字符串，如 "4C8G"
+fn derive_instance_type(cpu_cores: Option<u32>, memory_gb: Option<f64>) -> String {
+    match (cpu_cores, memory_gb) {
+        (Some(cpu), Some(mem)) => format!("{}C{}G", cpu, mem.round() as u64),
+        (Some(cpu), None) => format!("{}C", cpu),
+        _ => String::new(),
+    }
+}
+
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC key length is valid");
     mac.update(data);
@@ -452,20 +593,48 @@ impl CloudProvider for SangforCloudProvider {
     async fn list_instances(&self) -> Result<Vec<CloudInstance>> {
         let mut instances = Vec::new();
 
-        // 当 regions 为空时，尝试不带 az_id 列出所有服务器
-        let regions_to_query: Vec<String> = if self.regions.is_empty() {
-            vec![String::new()]
-        } else {
-            self.regions.clone()
-        };
+        // 构建 az_id → az_name 映射，用于设置 zone 友好名称
+        // 当 regions 为空时，调用 /azs 自动发现可用区列表；否则直接使用配置的 regions
+        let (regions_to_query, az_name_map): (Vec<String>, HashMap<String, String>) =
+            if self.regions.is_empty() {
+                match self.list_available_azs().await {
+                    Ok(azs) if !azs.is_empty() => {
+                        tracing::info!(
+                            account = %self.account_name,
+                            count = azs.len(),
+                            "Auto-discovered Sangfor SCP availability zones"
+                        );
+                        let map: HashMap<_, _> = azs.iter().cloned().collect();
+                        let ids: Vec<String> = azs.into_iter().map(|(id, _)| id).collect();
+                        (ids, map)
+                    }
+                    Ok(_) => {
+                        tracing::info!(
+                            account = %self.account_name,
+                            "No AZs discovered from /azs, querying all servers without az_id filter"
+                        );
+                        (vec![String::new()], HashMap::new())
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            account = %self.account_name,
+                            error = %e,
+                            "Failed to discover AZs via /azs, falling back to unfiltered query"
+                        );
+                        (vec![String::new()], HashMap::new())
+                    }
+                }
+            } else {
+                (self.regions.clone(), HashMap::new())
+            };
 
         for az_id in &regions_to_query {
             let servers = match self.list_servers_in_region(az_id).await {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::error!(
-                        account = self.account_name,
-                        az_id = az_id,
+                        account = %self.account_name,
+                        az_id = %az_id,
                         error = %e,
                         "Failed to list Sangfor SCP servers"
                     );
@@ -512,44 +681,60 @@ impl CloudProvider for SangforCloudProvider {
                     .unwrap_or("")
                     .to_string();
 
-                // SCP 浮动 IP（公网 IP）可能在其他网络接口中，暂时留空
-                let public_ip = s
-                    .get("public_ip")
-                    .or_else(|| s.get("float_ip"))
-                    .and_then(|v| v.as_str())
+                // 辅助闭包：读取非空字符串字段（空字符串视为不存在，继续向后查找）
+                let nev = |field: &str| -> Option<&str> {
+                    s.get(field)
+                        .and_then(|v| v.as_str())
+                        .filter(|v| !v.is_empty())
+                };
+
+                // SCP 公网 IP：顶层字段 → floatingip.floating_ip_address 嵌套对象 → floatingips 数组
+                let public_ip = nev("public_ip")
+                    .or_else(|| nev("float_ip"))
+                    .or_else(|| nev("floating_ip"))
+                    .or_else(|| {
+                        s.get("floatingip")
+                            .and_then(|fip| fip.get("floating_ip_address"))
+                            .and_then(|v| v.as_str())
+                            .filter(|v| !v.is_empty())
+                    })
+                    .or_else(|| {
+                        s.get("floatingips")
+                            .and_then(|v| v.as_array())
+                            .and_then(|arr| arr.first())
+                            .and_then(|fip| fip.get("floating_ip_address"))
+                            .and_then(|v| v.as_str())
+                            .filter(|v| !v.is_empty())
+                    })
                     .unwrap_or("")
                     .to_string();
 
-                let os = s
-                    .get("os_type")
-                    .or_else(|| s.get("os"))
-                    .and_then(|v| v.as_str())
+                // SCP OS 名称：os_name("Ubuntu 22.04.2 LTS") 优先；
+                // image_name 虽有此字段但可能为空字符串，需跳过空值
+                let os = nev("os_name")
+                    .or_else(|| nev("image_name"))
+                    .or_else(|| {
+                        s.get("image")
+                            .and_then(|img| img.get("name"))
+                            .and_then(|v| v.as_str())
+                            .filter(|v| !v.is_empty())
+                    })
+                    .or_else(|| nev("os_dist"))
+                    .or_else(|| nev("os"))
+                    .or_else(|| nev("os_type"))
                     .unwrap_or("")
                     .to_string();
 
-                // SCP 用 "cores" 字段表示 vCPU 数量
-                let cpu_cores = s
-                    .get("cores")
-                    .or_else(|| s.get("vcpu"))
-                    .or_else(|| s.get("cpu"))
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as u32);
+                // 使用多字段回退 + 单位自动检测
+                let cpu_cores = extract_cpu_cores(&s);
+                let memory_gb = extract_memory_gb(&s);
+                let disk_gb = extract_disk_gb(&s);
 
-                // SCP 用 "memory_mb" 字段（单位 MB），转换为 GB
-                let memory_gb = s
-                    .get("memory_mb")
-                    .or_else(|| s.get("memory"))
-                    .and_then(|v| v.as_f64())
-                    .map(|mb| mb / 1024.0);
+                // SCP 不提供 flavor 对象，os_type 是系统分类码（常量如 "l2664"），无规格含义
+                // 从 CPU + 内存推导可读的规格字符串（如 "4C16G"）
+                let instance_type = derive_instance_type(cpu_cores, memory_gb);
 
-                // SCP 用 "storage_mb" 字段（单位 MB），转换为 GB
-                let disk_gb = s
-                    .get("storage_mb")
-                    .or_else(|| s.get("disk_size"))
-                    .or_else(|| s.get("system_disk_size"))
-                    .and_then(|v| v.as_f64())
-                    .map(|mb| mb / 1024.0);
-
+                // region：优先使用配置的 az_id，其次从服务器响应中读取
                 let region = if az_id.is_empty() {
                     s.get("az_id")
                         .or_else(|| s.get("zone"))
@@ -560,9 +745,18 @@ impl CloudProvider for SangforCloudProvider {
                     az_id.clone()
                 };
 
-                let zone = s
-                    .get("zone")
-                    .or_else(|| s.get("az_id"))
+                // zone：优先使用 /azs 发现的友好名称，其次是响应中的字段
+                let zone = az_name_map.get(&region).cloned().or_else(|| {
+                    s.get("zone")
+                        .or_else(|| s.get("az_name"))
+                        .or_else(|| s.get("az_id"))
+                        .and_then(|v| v.as_str())
+                        .map(|z| z.to_string())
+                });
+
+                // 从 networks 数组中提取子网 ID（若存在）
+                let subnet_id = first_net
+                    .and_then(|n| n.get("subnet_id").or_else(|| n.get("net_id")))
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
@@ -576,19 +770,19 @@ impl CloudProvider for SangforCloudProvider {
                     os,
                     status,
                     tags: HashMap::new(),
-                    instance_type: String::new(),
+                    instance_type,
                     cpu_cores,
                     memory_gb,
                     disk_gb,
                     created_time: None,
                     expired_time: None,
                     charge_type: None,
-                    // vpc_id 在 networks 数组中
+                    // vpc_id 和 subnet_id 在 networks 数组中
                     vpc_id: first_net
-                        .and_then(|n| n.get("vpc_id"))
+                        .and_then(|n| n.get("vpc_id").or_else(|| n.get("network_id")))
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string()),
-                    subnet_id: None,
+                    subnet_id,
                     security_group_ids: vec![],
                     zone,
                     internet_max_bandwidth: None,
@@ -603,12 +797,22 @@ impl CloudProvider for SangforCloudProvider {
                         .get("hostname")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string()),
-                    description: None,
+                    description: s
+                        .get("description")
+                        .or_else(|| s.get("desc"))
+                        .and_then(|v| v.as_str())
+                        .filter(|d| !d.is_empty())
+                        .map(|s| s.to_string()),
                     gpu: None,
                     io_optimized: None,
                     latest_operation: None,
                     latest_operation_state: None,
-                    project_id: None,
+                    project_id: s
+                        .get("project_id")
+                        .or_else(|| s.get("tenant_id"))
+                        .and_then(|v| v.as_str())
+                        .filter(|p| !p.is_empty())
+                        .map(|s| s.to_string()),
                     resource_group_id: None,
                     auto_renew_flag: None,
                 };
@@ -620,7 +824,7 @@ impl CloudProvider for SangforCloudProvider {
         }
 
         tracing::info!(
-            account = self.account_name,
+            account = %self.account_name,
             count = instances.len(),
             "Listed Sangfor SCP instances"
         );

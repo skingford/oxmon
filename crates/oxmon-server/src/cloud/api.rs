@@ -454,11 +454,15 @@ fn normalize_cloud_instance_status(status: Option<&str>) -> &'static str {
     match normalized.as_str() {
         "" | "unknown" | "unk" | "none" | "null" | "nil" | "-" => "unknown",
         "running" | "active" | "online" | "started" | "up" | "1" => "running",
-        "stopped" | "stop" | "offline" | "terminated" | "shutdown" | "shutoff" | "down" | "0" => {
-            "stopped"
-        }
+        "stopped" | "stop" | "offline" | "terminated" | "shutdown" | "shutoff" | "down"
+        // SCP/OpenStack 特有关机状态
+        | "shelved" | "shelved_offloaded" | "soft_deleted"
+        | "0" => "stopped",
         "pending" | "starting" | "stopping" | "provisioning" | "initializing" | "booting"
         | "creating" | "rebooting" | "restarting" | "resetting" | "reinstalling" | "migrating"
+        // SCP/OpenStack 特有过渡状态
+        | "build" | "rebuild" | "hard_reboot" | "resize" | "verify_resize"
+        | "revert_resize" | "password" | "rescue" | "unrescue" | "suspended"
         | "2" => "pending",
         "failed" | "error" | "err" | "unhealthy" | "launch_failed" | "create_failed"
         | "start_failed" | "stop_failed" | "reboot_failed" | "3" => "error",
@@ -1434,7 +1438,7 @@ struct BatchCreateCloudAccountsResponse {
 /// `账号名:SecretId:SecretKey:region1,region2`
 ///
 /// 多条记录用 `|` 分隔，例如：
-/// `主账号:AKID123:secret:ap-shanghai,ap-guangzhou|子账号:AKID456:secret2:ap-beijing`
+/// `主账号:example-secret-id-1:example-secret-key-1:ap-shanghai,ap-guangzhou|子账号:example-secret-id-2:example-secret-key-2:ap-beijing`
 #[derive(Deserialize, ToSchema)]
 struct BatchCreateCloudAccountsRequest {
     /// 供应商（tencent 或 alibaba）

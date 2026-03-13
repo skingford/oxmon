@@ -40,7 +40,7 @@ curl -X POST http://localhost:8080/v1/agents/whitelist \
 # 响应示例：
 # {
 #   "agent_id": "web-server-01",
-#   "token": "AbCdEf1234567890...",  # 保存此 token！
+#   "token": "oxmon_example_agent_token_please_replace",  # 保存此 token！
 #   "created_at": "2024-01-01T00:00:00Z"
 # }
 ```
@@ -57,7 +57,7 @@ agent_id = "web-server-01"
 server_endpoint = "http://server-ip:9090"
 
 # 添加认证 token
-auth_token = "AbCdEf1234567890..."  # 使用步骤 3 中获取的 token
+auth_token = "oxmon_example_agent_token_please_replace"  # 使用步骤 3 中获取的 token
 
 collection_interval_secs = 10
 buffer_max_size = 1000

@@ -212,23 +212,28 @@ impl CloudCheckScheduler {
                 Some(serde_json::to_string(&instance.tags).unwrap_or_default())
             };
 
+            // 将空字符串字段转为 None，避免 COALESCE 选中空字符串覆盖旧值
+            fn nonempty(s: &str) -> Option<String> {
+                if s.is_empty() { None } else { Some(s.to_string()) }
+            }
+
             if let Err(e) = self
                 .cert_store
                 .upsert_cloud_instance(&oxmon_storage::CloudInstanceRow {
                     id: String::new(), // ID将由 upsert_cloud_instance 内部生成
                     instance_id: instance.instance_id.clone(),
-                    instance_name: Some(instance.instance_name.clone()),
+                    instance_name: nonempty(&instance.instance_name),
                     provider: provider_type.to_string(),
                     account_config_key: config_key,
                     region: instance.region.clone(),
-                    public_ip: Some(instance.public_ip.clone()),
-                    private_ip: Some(instance.private_ip.clone()),
-                    os: Some(instance.os.clone()),
-                    status: Some(instance.status.clone()),
+                    public_ip: nonempty(&instance.public_ip),
+                    private_ip: nonempty(&instance.private_ip),
+                    os: nonempty(&instance.os),
+                    status: nonempty(&instance.status),
                     last_seen_at: now,
                     created_at: now,
                     updated_at: now,
-                    instance_type: Some(instance.instance_type.clone()),
+                    instance_type: nonempty(&instance.instance_type),
                     cpu_cores: instance.cpu_cores.map(|v| v as i32),
                     memory_gb: instance.memory_gb,
                     disk_gb: instance.disk_gb,

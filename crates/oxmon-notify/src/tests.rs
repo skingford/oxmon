@@ -151,7 +151,7 @@ fn dingtalk_hmac_signing_produces_correct_url_format() {
     let channel = crate::channels::dingtalk::DingTalkChannel::new(
         "test-instance",
         "https://oapi.dingtalk.com/robot/send?access_token=test",
-        Some("SEC_test_secret".to_string()),
+        Some("example-dingtalk-signing-secret".to_string()),
         false,
         vec![],
         vec![],
@@ -379,8 +379,8 @@ fn sms_plugin_validates_tencent_config() {
 
     let valid = serde_json::json!({
         "provider": "tencent",
-        "secret_id": "AKIDxxxxxxxx",
-        "secret_key": "xxxxxxxxxxxxxxxx",
+        "secret_id": "example-secret-id",
+        "secret_key": "example-secret-key",
         "sdk_app_id": "1400123456",
         "sign_name": "oxmon",
         "template_id": "12345"
@@ -390,7 +390,7 @@ fn sms_plugin_validates_tencent_config() {
     // missing required field
     let invalid = serde_json::json!({
         "provider": "tencent",
-        "secret_id": "AKIDxxxxxxxx"
+        "secret_id": "example-secret-id"
     });
     assert!(registry
         .create_channel("sms", "sms-tc-2", &invalid)
@@ -438,14 +438,14 @@ fn sms_aliyun_sign_deterministic() {
 fn sms_tencent_sign_produces_valid_authorization() {
     use crate::channels::sms::SmsChannel;
     let auth = SmsChannel::tencent_sign(
-        "AKIDtest",
-        "testsecretkey",
+        "example-secret-id",
+        "example-secret-key",
         "sms",
         "sms.tencentcloudapi.com",
         "{}",
         1700000000,
     );
-    assert!(auth.starts_with("TC3-HMAC-SHA256 Credential=AKIDtest/"));
+    assert!(auth.starts_with("TC3-HMAC-SHA256 Credential=example-secret-id/"));
     assert!(auth.contains("SignedHeaders=content-type;host"));
     assert!(auth.contains("Signature="));
 }
