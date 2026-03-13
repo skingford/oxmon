@@ -576,7 +576,7 @@ impl CertStore {
 
     pub async fn cert_summary(&self) -> Result<CertHealthSummary> {
         use sea_orm::{ConnectionTrait, Statement};
-        let sql = "SELECT chain_valid, not_after
+        let sql = "SELECT chain_valid, CAST(strftime('%s', not_after) AS INTEGER) AS not_after
              FROM certificate_details";
 
         let rows = self
