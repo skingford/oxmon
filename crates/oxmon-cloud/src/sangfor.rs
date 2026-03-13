@@ -662,12 +662,11 @@ mod tests {
 
     #[test]
     fn test_sign_matches_python() {
-        let secret_key = "0c345d26da5046d6a015df07e2b621bb";
-        let _secret_id = "febd45a7154f43c294947c2c47004cad"; // test.py access_key
+        let secret_key = "example-secret-key-for-signature-test";
         let region = "regionOne";
         let date_str = "20240101";
         let datetime_str = "20240101T120000Z";
-        let cookie_value = "aCMPAuthToken=testtoken1234567890abcdef";
+        let cookie_value = "aCMPAuthToken=example-auth-token-for-tests";
         let method = "GET";
         let uri = "/janus/20180725/azs";
         let signed_headers = "cookie;x-amz-date";
@@ -697,11 +696,11 @@ mod tests {
         let signature = hex::encode(hmac_sha256(&k_signing, string_to_sign.as_bytes()));
         eprintln!("signature: {}", signature);
 
-        // Expected from Python
+        // Expected signature for the fixture above, verified against an external reference implementation.
         assert_eq!(
             signature,
-            "7f57de3c0021c7ce673be411a9a1eb58761fce2867a84cbea0605fc2c92808fa",
-            "Signature should match Python output"
+            "7f65ebae2c3fcfc77a7fc5dc94978e1250680067c230efd1d3d207758e9a1a83",
+            "Signature should match the reference output"
         );
     }
 }
