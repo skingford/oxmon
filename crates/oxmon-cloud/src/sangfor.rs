@@ -8,7 +8,6 @@ use std::collections::HashMap;
 
 type HmacSha256 = Hmac<Sha256>;
 
-const API_VERSION: &str = "20260312";
 const DEFAULT_REGION_FOR_SIGN: &str = "cn-south-1";
 const SCP_SERVICE: &str = "open-api";
 
@@ -58,13 +57,19 @@ impl SangforCloudProvider {
         })
     }
 
+    /// 获取当天日期作为 API 版本号，格式：20260313
+    fn api_version() -> String {
+        Utc::now().format("%Y%m%d").to_string()
+    }
+
     /// 构造 SCP API 的 base URL
     fn base_url(&self) -> String {
+        let version = Self::api_version();
         let host = &self.endpoint;
         if host.starts_with("http://") || host.starts_with("https://") {
-            format!("{}/janus/{}", host.trim_end_matches('/'), API_VERSION)
+            format!("{}/janus/{}", host.trim_end_matches('/'), version)
         } else {
-            format!("https://{}/janus/{}", host, API_VERSION)
+            format!("https://{}/janus/{}", host, version)
         }
     }
 
@@ -124,8 +129,9 @@ impl SangforCloudProvider {
     /// 发起已签名的 GET 请求
     async fn signed_get(&self, path: &str, query_string: &str) -> Result<serde_json::Value> {
         let now = Utc::now();
+        let version = Self::api_version();
 
-        let uri = format!("/janus/{}{}", API_VERSION, path);
+        let uri = format!("/janus/{}{}", version, path);
         let (authorization, datetime_str, canonical_request, string_to_sign) =
             self.sign_aws4("GET", &uri, query_string, &now);
 
