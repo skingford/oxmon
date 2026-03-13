@@ -596,12 +596,12 @@ impl CertStore {
 
         for row in rows {
             let chain_valid: bool = row.try_get("", "chain_valid")?;
-            let not_after: i64 = row.try_get("", "not_after")?;
-            let is_valid = chain_valid && not_after >= now;
+            let not_after: Option<i64> = row.try_get("", "not_after")?;
+            let is_valid = chain_valid && not_after.map(|ts| ts >= now).unwrap_or(false);
 
             if is_valid {
                 valid += 1;
-                if not_after <= soon_upper {
+                if not_after.unwrap_or(0) <= soon_upper {
                     expiring_soon += 1;
                 }
             } else {
