@@ -2,17 +2,201 @@ use crate::{CloudAccountConfig, CloudInstance, CloudMetrics, CloudProvider};
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
-use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::sync::Arc;
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
 
-
 const API_VERSION: &str = "20180725";
 const DEFAULT_REGION_FOR_SIGN: &str = "regionOne";
 const SCP_SERVICE: &str = "sdk-api";
+const REQUEST_TIMEOUT_SECS: u64 = 30;
+
+// ── 原始 HTTPS 客户端（保留 header 大小写）────────────────────────────────────
+// 深信服 SCP 服务端对 HTTP header 名称大小写敏感（如 X-Amz-Date、Cookie）
+// reqwest/hyper 会将所有 header 名强制转为小写，导致 401 签名验证失败
+// 因此 Sangfor 模块不使用 reqwest，直接通过 tokio + rustls 发送原始 HTTP/1.1 请求
+
+/// rustls 自定义证书验证器：接受任何证书（SCP 使用自签名证书）
+#[derive(Debug)]
+struct NoVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for NoVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        use rustls::SignatureScheme::*;
+        vec![
+            RSA_PKCS1_SHA1,
+            ECDSA_SHA1_Legacy,
+            RSA_PKCS1_SHA256,
+            ECDSA_NISTP256_SHA256,
+            RSA_PKCS1_SHA384,
+            ECDSA_NISTP384_SHA384,
+            RSA_PKCS1_SHA512,
+            ECDSA_NISTP521_SHA512,
+            RSA_PSS_SHA256,
+            RSA_PSS_SHA384,
+            RSA_PSS_SHA512,
+            ED25519,
+        ]
+    }
+}
+
+/// 发送原始 HTTP/1.1 HTTPS GET 请求，完整保留 header 名称的大小写
+///
+/// 返回 (status_code, body_string)
+async fn raw_https_get(
+    endpoint: &str,
+    path_and_query: &str,
+    headers: &[(&str, &str)],
+) -> Result<(u16, String)> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let timeout = std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS);
+
+    // 构建 TLS 配置（跳过证书验证）
+    let tls_config = rustls::ClientConfig::builder_with_provider(
+        Arc::new(rustls::crypto::ring::default_provider()),
+    )
+    .with_safe_default_protocol_versions()
+    .context("TLS protocol config failed")?
+    .dangerous()
+    .with_custom_certificate_verifier(Arc::new(NoVerifier))
+    .with_no_client_auth();
+
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_config));
+
+    // 解析 endpoint 中的 hostname 和 port
+    let raw_host = endpoint
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/');
+    let (hostname, port): (&str, u16) = if let Some((h, p)) = raw_host.rsplit_once(':') {
+        (h, p.parse().unwrap_or(443))
+    } else {
+        (raw_host, 443)
+    };
+
+    // TCP 连接
+    let tcp = tokio::time::timeout(timeout, tokio::net::TcpStream::connect((hostname, port)))
+        .await
+        .context("TCP connect timeout")?
+        .with_context(|| format!("TCP connect to {}:{} failed", hostname, port))?;
+
+    // TLS 握手
+    let server_name = rustls::pki_types::ServerName::try_from(hostname.to_string())
+        .context("Invalid TLS server name")?;
+    let mut tls = tokio::time::timeout(timeout, connector.connect(server_name, tcp))
+        .await
+        .context("TLS handshake timeout")?
+        .context("TLS handshake failed")?;
+
+    // 构建原始 HTTP/1.1 请求（header 名称保留原始大小写）
+    let mut req = format!("GET {} HTTP/1.1\r\nHost: {}\r\n", path_and_query, hostname);
+    for (name, value) in headers {
+        req.push_str(&format!("{}: {}\r\n", name, value));
+    }
+    req.push_str("Connection: close\r\n\r\n");
+
+    // 发送请求
+    tokio::time::timeout(timeout, tls.write_all(req.as_bytes()))
+        .await
+        .context("request write timeout")?
+        .context("request write failed")?;
+
+    // 读取完整响应（Connection: close 保证服务端关闭连接后 read_to_end 返回）
+    let mut buf = Vec::with_capacity(16384);
+    tokio::time::timeout(timeout, tls.read_to_end(&mut buf))
+        .await
+        .context("response read timeout")?
+        .context("response read failed")?;
+
+    let response = String::from_utf8_lossy(&buf);
+
+    // 分割 header 和 body
+    let sep = response.find("\r\n\r\n").unwrap_or(response.len());
+    let header_section = &response[..sep];
+    let body_raw = response
+        .get(sep + 4..)
+        .unwrap_or("");
+
+    // 解析状态码
+    let status: u16 = header_section
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    // 判断是否分块传输
+    let is_chunked = header_section.lines().any(|l| {
+        let ll = l.to_lowercase();
+        ll.starts_with("transfer-encoding:") && ll.contains("chunked")
+    });
+
+    let body = if is_chunked {
+        decode_chunked(body_raw).unwrap_or_else(|_| body_raw.to_string())
+    } else {
+        body_raw.to_string()
+    };
+
+    Ok((status, body))
+}
+
+/// 解码 HTTP/1.1 分块传输编码（Transfer-Encoding: chunked）
+fn decode_chunked(input: &str) -> Result<String> {
+    let mut out = String::new();
+    let mut rest = input;
+    loop {
+        let crlf = rest
+            .find("\r\n")
+            .ok_or_else(|| anyhow::anyhow!("chunked: missing size line"))?;
+        let size_str = rest[..crlf].split(';').next().unwrap_or("").trim();
+        let size =
+            usize::from_str_radix(size_str, 16).context("chunked: invalid chunk size hex")?;
+        rest = &rest[crlf + 2..];
+        if size == 0 {
+            break;
+        }
+        if rest.len() < size {
+            bail!("chunked: chunk data truncated");
+        }
+        out.push_str(&rest[..size]);
+        rest = &rest[size + 2..]; // skip chunk data + trailing CRLF
+    }
+    Ok(out)
+}
+// ── /原始 HTTPS 客户端 ────────────────────────────────────────────────────────
 
 pub struct SangforCloudProvider {
     account_name: String,
@@ -26,7 +210,6 @@ pub struct SangforCloudProvider {
     region_for_sign: String,
     /// SCP 6.3.0 及更早版本需要的 Cookie 认证 Token，SCP 6.3.70+ 无需
     scp_auth_token: Option<String>,
-    client: Client,
     instance_filter: crate::InstanceFilter,
 }
 
@@ -42,17 +225,6 @@ impl SangforCloudProvider {
             .clone()
             .unwrap_or_else(|| DEFAULT_REGION_FOR_SIGN.to_string());
 
-        // SCP 使用自签名证书，必须关闭 TLS 证书校验
-        // 强制 HTTP/1.1：SCP 服务器不支持 HTTP/2，reqwest 默认会通过 ALPN 协商 HTTP/2
-        // 导致服务器返回 401（签名头在 HTTP/2 下会被服务器错误处理）
-        let client = Client::builder()
-            .use_rustls_tls()
-            .danger_accept_invalid_certs(true)
-            .http1_only()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .context("Failed to build HTTP client for Sangfor SCP")?;
-
         Ok(Self {
             account_name: account_name.to_string(),
             secret_id: config.secret_id,
@@ -61,19 +233,8 @@ impl SangforCloudProvider {
             endpoint,
             region_for_sign,
             scp_auth_token: config.scp_auth_token,
-            client,
             instance_filter: config.instance_filter,
         })
-    }
-
-    /// 构造 SCP API 的 base URL
-    fn base_url(&self) -> String {   
-        let host = &self.endpoint;
-        if host.starts_with("http://") || host.starts_with("https://") {
-            format!("{}/janus/{}", host.trim_end_matches('/'), API_VERSION)
-        } else {
-            format!("https://{}/janus/{}", host, API_VERSION)
-        }
     }
 
     /// AWS4-HMAC-SHA256 签名，用于深信服 SCP Open API
@@ -141,7 +302,7 @@ impl SangforCloudProvider {
         (authorization, datetime_str, canonical_request, string_to_sign)
     }
 
-    /// 发起已签名的 GET 请求
+    /// 发起已签名的 GET 请求（使用原始 TCP+TLS，保留 header 大小写）
     async fn signed_get(&self, path: &str, query_string: &str) -> Result<serde_json::Value> {
         let now = Utc::now();
 
@@ -153,48 +314,40 @@ impl SangforCloudProvider {
             .scp_auth_token
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
-        let cookie_header = format!("aCMPAuthToken={}", cookie_token);
+        let cookie_header_value = format!("aCMPAuthToken={}", cookie_token);
 
         let (authorization, datetime_str, canonical_request, string_to_sign) =
-            self.sign_aws4("GET", &uri, &now, Some(&cookie_header));
+            self.sign_aws4("GET", &uri, &now, Some(&cookie_header_value));
 
-        let base = self.base_url();
-        let url = if query_string.is_empty() {
-            format!("{}{}", base, path)
+        // path_and_query 用于原始 HTTP 请求行（含查询参数）
+        let path_and_query = if query_string.is_empty() {
+            format!("/janus/{}{}", API_VERSION, path)
         } else {
-            format!("{}{}?{}", base, path, query_string)
+            format!("/janus/{}{}?{}", API_VERSION, path, query_string)
         };
 
-        let request = self
-            .client
-            .get(&url)
-            .header("X-Amz-Date", &datetime_str)
-            .header("Authorization", &authorization)
-            .header("Cookie", &cookie_header);
+        // 使用原始 HTTPS 客户端，保留 header 名称大小写（X-Amz-Date、Authorization、Cookie）
+        // SCP 服务端对 header 名称大小写敏感，reqwest/hyper 发送小写 header 会导致 401
+        let req_headers: &[(&str, &str)] = &[
+            ("X-Amz-Date", &datetime_str),
+            ("Authorization", &authorization),
+            ("Cookie", &cookie_header_value),
+        ];
 
-        let resp = request
-            .send()
-            .await
-            .with_context(|| format!("GET {} failed", url))?;
+        let (status, text) =
+            raw_https_get(&self.endpoint, &path_and_query, req_headers)
+                .await
+                .with_context(|| format!("raw HTTPS GET {}{} failed", self.endpoint, path_and_query))?;
 
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        if !status.is_success() {
+        if status < 200 || status >= 300 {
             tracing::error!(
                 account = %self.account_name,
                 http_status = %status,
                 response_body = %text,
-                region_for_sign = %self.region_for_sign,
-                service = %SCP_SERVICE,
                 uri_for_sign = %uri,
                 canonical_request = %canonical_request,
                 string_to_sign = %string_to_sign,
                 "Sangfor SCP request failed"
-            );
-            // 单独一行打印 curl 命令，方便直接复制执行
-            tracing::error!(
-                "--- curl debug ---\ncurl -sk -X GET \\\n  -H 'X-Amz-Date: {}' \\\n  -H 'Authorization: {}' \\\n  -H 'Cookie: {}' \\\n  '{}'",
-                datetime_str, authorization, cookie_header, url
             );
             bail!("SCP API error ({}): {}", status, text);
         }
@@ -510,7 +663,7 @@ mod tests {
     #[test]
     fn test_sign_matches_python() {
         let secret_key = "0c345d26da5046d6a015df07e2b621bb";
-        let secret_id = "febd45a7154f43c294947c2c47004cad"; // test.py access_key
+        let _secret_id = "febd45a7154f43c294947c2c47004cad"; // test.py access_key
         let region = "regionOne";
         let date_str = "20240101";
         let datetime_str = "20240101T120000Z";
