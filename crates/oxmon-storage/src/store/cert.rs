@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use oxmon_common::types::{
     CertCheckResult, CertDomain, CertificateDetails, CertificateDetailsFilter, CreateDomainRequest,
-    UpdateDomainRequest,
+    DomainDetailView, DomainOverviewFilter, DomainOverviewItem, UpdateDomainRequest,
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Order, PaginatorTrait,
@@ -1072,6 +1072,75 @@ impl CertStore {
         }
         Ok((inserted, preview))
     }
+
+    /// 查询域名综合概览列表（三表 LEFT JOIN，包含全部域名，含异常域名）
+    pub async fn query_domain_overview(
+        &self,
+        filter: &DomainOverviewFilter,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<DomainOverviewItem>> {
+        use sea_orm::{ConnectionTrait, Statement};
+        let sql = build_domain_overview_sql(filter, Some((limit, offset)));
+        let rows = self
+            .db()
+            .query_all_raw(Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                sql,
+            ))
+            .await?;
+        parse_domain_overview_rows(rows)
+    }
+
+    /// 统计域名综合概览总数
+    pub async fn count_domain_overview(&self, filter: &DomainOverviewFilter) -> Result<u64> {
+        use sea_orm::{ConnectionTrait, Statement};
+        let inner_sql = build_domain_overview_sql(filter, None);
+        let sql = format!("SELECT COUNT(*) AS cnt FROM ({inner_sql}) sub");
+        let rows = self
+            .db()
+            .query_all_raw(Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                sql,
+            ))
+            .await?;
+        if let Some(row) = rows.into_iter().next() {
+            let cnt: i64 = row.try_get("", "cnt")?;
+            Ok(cnt as u64)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// 获取单个域名的明细视图（聚合 cert_domains + cert_check_results + certificate_details）
+    pub async fn get_domain_detail_view(
+        &self,
+        domain_id: &str,
+    ) -> Result<Option<DomainDetailView>> {
+        // 1. 获取域名配置
+        let domain_info = match self.get_domain_by_id(domain_id).await? {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+
+        // 2. 获取最新检查结果（取最新一条）
+        let latest_check = self
+            .query_check_results_by_domain_id(domain_id, 1, 0)
+            .await?
+            .into_iter()
+            .next();
+
+        // 3. 获取证书详情（仅成功收集时有值）
+        let certificate_details = self
+            .get_certificate_details(&domain_info.domain)
+            .await?;
+
+        Ok(Some(DomainDetailView {
+            domain_info,
+            latest_check,
+            certificate_details,
+        }))
+    }
 }
 
 fn escape_sql_like(s: &str) -> String {
@@ -1211,6 +1280,128 @@ fn parse_check_result_rows(rows: Vec<sea_orm::QueryResult>) -> Result<Vec<CertCh
             checked_at: checked_at.with_timezone(&Utc),
             created_at: created_at.with_timezone(&Utc),
             updated_at: updated_at.with_timezone(&Utc),
+        });
+    }
+    Ok(result)
+}
+
+/// 构建域名综合概览 SQL（三表 LEFT JOIN，包含全部已启用域名）
+///
+/// 排序规则：异常域名优先（is_valid=0），其次未检查，最后正常；同级按域名字母序
+fn build_domain_overview_sql(
+    filter: &DomainOverviewFilter,
+    pagination: Option<(usize, usize)>,
+) -> String {
+    let mut where_parts = vec!["d.enabled = 1".to_string()];
+
+    if let Some(ref s) = filter.domain_contains {
+        let escaped = escape_sql_like(s);
+        where_parts.push(format!("d.domain LIKE '%{escaped}%' ESCAPE '\\'"));
+    }
+    if let Some(v) = filter.is_valid {
+        where_parts.push(format!("r.is_valid = {}", if v { 1 } else { 0 }));
+    }
+    if let Some(true) = filter.has_error {
+        where_parts.push("r.error IS NOT NULL AND r.error != ''".to_string());
+    }
+    if let Some(v) = filter.days_until_expiry_lte {
+        where_parts.push(format!("r.days_until_expiry <= {v}"));
+    }
+
+    let where_clause = where_parts.join(" AND ");
+
+    let mut sql = format!(
+        "SELECT
+            d.id, d.domain, d.port, d.enabled, d.note,
+            d.check_interval_secs, d.last_checked_at, d.created_at,
+            r.is_valid, r.chain_valid, r.days_until_expiry,
+            r.not_before, r.not_after, r.issuer,
+            r.error AS check_error, r.checked_at,
+            cd.fingerprint_sha256, cd.tls_version,
+            cd.public_key_algorithm, cd.public_key_bits,
+            cd.is_wildcard, cd.subject_cn, cd.chain_depth
+         FROM cert_domains d
+         LEFT JOIN cert_check_results r
+             ON r.domain_id = d.id
+             AND r.checked_at = (
+                 SELECT MAX(checked_at) FROM cert_check_results WHERE domain_id = d.id
+             )
+         LEFT JOIN certificate_details cd ON cd.domain = d.domain
+         WHERE {where_clause}
+         ORDER BY
+             CASE WHEN r.is_valid = 0 OR r.error IS NOT NULL THEN 0
+                  WHEN r.is_valid IS NULL THEN 1
+                  ELSE 2 END,
+             d.domain ASC"
+    );
+
+    if let Some((limit, offset)) = pagination {
+        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
+    }
+
+    sql
+}
+
+/// 解析域名综合概览查询结果行
+fn parse_domain_overview_rows(
+    rows: Vec<sea_orm::QueryResult>,
+) -> Result<Vec<DomainOverviewItem>> {
+    let mut result = Vec::with_capacity(rows.len());
+    for row in rows {
+        let id: String = row.try_get("", "id")?;
+        let domain: String = row.try_get("", "domain")?;
+        let port: i32 = row.try_get("", "port")?;
+        let enabled: bool = row.try_get("", "enabled")?;
+        let note: Option<String> = row.try_get("", "note")?;
+        let check_interval_secs: Option<i64> = row.try_get("", "check_interval_secs")?;
+        let last_checked_at: Option<chrono::DateTime<chrono::FixedOffset>> =
+            row.try_get("", "last_checked_at")?;
+        let created_at: chrono::DateTime<chrono::FixedOffset> = row.try_get("", "created_at")?;
+
+        let is_valid: Option<bool> = row.try_get("", "is_valid")?;
+        let chain_valid: Option<bool> = row.try_get("", "chain_valid")?;
+        let days_until_expiry: Option<i32> = row.try_get("", "days_until_expiry")?;
+        let not_before: Option<chrono::DateTime<chrono::FixedOffset>> =
+            row.try_get("", "not_before")?;
+        let not_after: Option<chrono::DateTime<chrono::FixedOffset>> =
+            row.try_get("", "not_after")?;
+        let issuer: Option<String> = row.try_get("", "issuer")?;
+        let check_error: Option<String> = row.try_get("", "check_error")?;
+        let checked_at: Option<chrono::DateTime<chrono::FixedOffset>> =
+            row.try_get("", "checked_at")?;
+
+        let fingerprint_sha256: Option<String> = row.try_get("", "fingerprint_sha256")?;
+        let tls_version: Option<String> = row.try_get("", "tls_version")?;
+        let public_key_algorithm: Option<String> = row.try_get("", "public_key_algorithm")?;
+        let public_key_bits: Option<i32> = row.try_get("", "public_key_bits")?;
+        let is_wildcard: Option<bool> = row.try_get("", "is_wildcard")?;
+        let subject_cn: Option<String> = row.try_get("", "subject_cn")?;
+        let chain_depth: Option<i32> = row.try_get("", "chain_depth")?;
+
+        result.push(DomainOverviewItem {
+            id,
+            domain,
+            port,
+            enabled,
+            note,
+            check_interval_secs,
+            last_checked_at: last_checked_at.map(|t| t.with_timezone(&Utc)),
+            created_at: created_at.with_timezone(&Utc),
+            is_valid,
+            chain_valid,
+            days_until_expiry: days_until_expiry.map(|v| v as i64),
+            not_before: not_before.map(|t| t.with_timezone(&Utc)),
+            not_after: not_after.map(|t| t.with_timezone(&Utc)),
+            issuer,
+            check_error,
+            checked_at: checked_at.map(|t| t.with_timezone(&Utc)),
+            fingerprint_sha256,
+            tls_version,
+            public_key_algorithm,
+            public_key_bits,
+            is_wildcard,
+            subject_cn,
+            chain_depth,
         });
     }
     Ok(result)

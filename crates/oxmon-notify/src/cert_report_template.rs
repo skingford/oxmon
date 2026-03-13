@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{FixedOffset, Utc};
 
 /// 证书告警明细条目（用于批量报告）
 #[derive(Debug, Clone)]
@@ -139,7 +139,11 @@ impl CertReportRenderer {
         };
 
         let table_rows = Self::build_html_table_rows(params.alert_items, locale);
-        let created_at = Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+        let beijing_tz = FixedOffset::east_opt(8 * 3600).unwrap();
+        let created_at = Utc::now()
+            .with_timezone(&beijing_tz)
+            .format("%Y-%m-%d %H:%M:%S CST")
+            .to_string();
 
         let html = template
             .replace("{{lang}}", if locale == "zh-CN" { "zh" } else { "en" })

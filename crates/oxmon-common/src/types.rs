@@ -782,3 +782,84 @@ pub struct CreateAIReportRequest {
     pub html_content: String,
     pub raw_metrics_json: String,
 }
+
+/// 域名综合概览条目（合并 cert_domains + cert_check_results + certificate_details）
+/// 用于展示所有监控域名的状态，包括异常域名
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DomainOverviewItem {
+    // --- 来自 cert_domains ---
+    /// 域名 ID
+    pub id: String,
+    /// 域名
+    pub domain: String,
+    /// 端口号
+    pub port: i32,
+    /// 是否启用
+    pub enabled: bool,
+    /// 备注
+    pub note: Option<String>,
+    /// 检查间隔秒数
+    pub check_interval_secs: Option<i64>,
+    /// 上次检查时间
+    pub last_checked_at: Option<DateTime<Utc>>,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+
+    // --- 来自 cert_check_results（最新一条，可能为 None 表示未检查）---
+    /// 证书是否有效
+    pub is_valid: Option<bool>,
+    /// 证书链是否有效
+    pub chain_valid: Option<bool>,
+    /// 距离过期天数（负数表示已过期）
+    pub days_until_expiry: Option<i64>,
+    /// 证书生效时间
+    pub not_before: Option<DateTime<Utc>>,
+    /// 证书过期时间
+    pub not_after: Option<DateTime<Utc>>,
+    /// 证书颁发者
+    pub issuer: Option<String>,
+    /// 检查错误原因（异常域名可见此字段）
+    pub check_error: Option<String>,
+    /// 最近检查时间
+    pub checked_at: Option<DateTime<Utc>>,
+
+    // --- 来自 certificate_details（可能为 None，表示未成功收集）---
+    /// 证书 SHA-256 指纹
+    pub fingerprint_sha256: Option<String>,
+    /// TLS 版本
+    pub tls_version: Option<String>,
+    /// 公钥算法
+    pub public_key_algorithm: Option<String>,
+    /// 公钥长度
+    pub public_key_bits: Option<i32>,
+    /// 是否通配符证书
+    pub is_wildcard: Option<bool>,
+    /// 主体通用名称
+    pub subject_cn: Option<String>,
+    /// 证书链深度
+    pub chain_depth: Option<i32>,
+}
+
+/// 域名概览过滤条件
+#[derive(Debug, Clone, Default)]
+pub struct DomainOverviewFilter {
+    /// 域名包含匹配
+    pub domain_contains: Option<String>,
+    /// 是否有效（true/false/None 表示全部）
+    pub is_valid: Option<bool>,
+    /// 是否存在错误（true=只看异常）
+    pub has_error: Option<bool>,
+    /// 距离过期天数上限
+    pub days_until_expiry_lte: Option<i64>,
+}
+
+/// 域名明细视图（单个域名的完整信息聚合）
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DomainDetailView {
+    /// 域名配置信息
+    pub domain_info: CertDomain,
+    /// 最新检查结果（未检查时为 None）
+    pub latest_check: Option<CertCheckResult>,
+    /// 证书详细信息（仅成功收集时有值）
+    pub certificate_details: Option<CertificateDetails>,
+}

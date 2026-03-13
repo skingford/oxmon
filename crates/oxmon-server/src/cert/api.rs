@@ -11,8 +11,9 @@ use axum::response::IntoResponse;
 use axum::Json;
 use chrono::Utc;
 use oxmon_common::types::{
-    BatchCreateDomainsRequest, CertCheckResult, CertDomain, CreateDomainRequest, MetricBatch,
-    MetricDataPoint, UpdateDomainRequest,
+    BatchCreateDomainsRequest, CertCheckResult, CertDomain, CreateDomainRequest,
+    DomainDetailView, DomainOverviewFilter, DomainOverviewItem, MetricBatch, MetricDataPoint,
+    UpdateDomainRequest,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -502,8 +503,12 @@ async fn delete_domain(
     }
 }
 
-/// 分页查询所有域名的最新证书检查结果。
-/// 默认排序：`checked_at` 倒序；默认分页：`limit=20&offset=0`。
+/// 分页查询已启用域名的最新证书检查结果。
+///
+/// **职责说明**：本接口返回已有检查记录的域名状态，数据来源为 `cert_check_results` 表。
+/// 与 `/v1/certs/domains/overview` 的区别：
+/// - 本接口仅返回已执行过至少一次检查的域名（INNER JOIN），适合查询"最近一次检查状态"。
+/// - 若需要包含从未被成功收集证书详情的异常域名（完整列表），请使用 `/v1/certs/domains/overview`。
 #[utoipa::path(
     get,
     path = "/v1/certs/status",
@@ -511,7 +516,7 @@ async fn delete_domain(
     security(("bearer_auth" = [])),
     params(CertStatusListParams),
     responses(
-        (status = 200, description = "域名证书状态分页列表", body = Vec<CertCheckResult>),
+        (status = 200, description = "域名证书检查状态分页列表", body = Vec<CertCheckResult>),
         (status = 401, description = "未授权", body = crate::api::ApiError)
     )
 )]
@@ -975,6 +980,135 @@ async fn cert_check_history(
     }
 }
 
+/// 域名综合概览查询参数
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+struct DomainOverviewParams {
+    /// 域名包含匹配（模糊搜索）
+    domain_contains: Option<String>,
+    /// 是否有效过滤（true=仅正常, false=仅异常）
+    is_valid_eq: Option<bool>,
+    /// 是否仅显示有错误的域名（true=仅异常）
+    has_error_eq: Option<bool>,
+    /// 距离过期天数上限
+    days_until_expiry_lte: Option<i64>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+}
+
+/// 查询所有监控域名的综合概览，包含检查状态与证书摘要。
+///
+/// 与 `/v1/certs/status` 的区别：
+/// - 本接口以域名配置为基础，通过 LEFT JOIN 合并检查结果和证书详情，
+///   **始终返回全部已启用域名**（含从未成功收集证书详情的异常域名）。
+/// - 异常域名排在前面，`check_error` 字段包含具体错误原因。
+/// - 适合作为"证书监控主列表"的数据源。
+#[utoipa::path(
+    get,
+    path = "/v1/certs/domains/overview",
+    tag = "Certificates",
+    security(("bearer_auth" = [])),
+    params(DomainOverviewParams),
+    responses(
+        (status = 200, description = "域名综合概览分页列表", body = Vec<DomainOverviewItem>),
+        (status = 401, description = "未授权", body = crate::api::ApiError)
+    )
+)]
+async fn list_domain_overview(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Query(params): Query<DomainOverviewParams>,
+) -> impl IntoResponse {
+    let limit = PaginationParams::resolve_limit(params.limit);
+    let offset = PaginationParams::resolve_offset(params.offset);
+    let filter = DomainOverviewFilter {
+        domain_contains: params.domain_contains,
+        is_valid: params.is_valid_eq,
+        has_error: params.has_error_eq,
+        days_until_expiry_lte: params.days_until_expiry_lte,
+    };
+
+    let total = match state.cert_store.count_domain_overview(&filter).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to count domain overview");
+            return common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
+    match state
+        .cert_store
+        .query_domain_overview(&filter, limit, offset)
+        .await
+    {
+        Ok(items) => {
+            success_paginated_response(StatusCode::OK, &trace_id, items, total, limit, offset)
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to query domain overview");
+            common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
+    }
+}
+
+/// 获取单个域名的完整明细视图（域名配置 + 最新检查结果 + 证书详情）。
+///
+/// 返回三部分聚合数据：
+/// - `domain_info`：域名配置（检查间隔、备注、启用状态等）
+/// - `latest_check`：最新一次检查结果，含错误原因（未检查时为 null）
+/// - `certificate_details`：详细证书信息，含指纹、TLS 版本、密钥算法等（仅成功收集时有值）
+#[utoipa::path(
+    get,
+    path = "/v1/certs/domains/{id}/detail-view",
+    tag = "Certificates",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "域名 ID")
+    ),
+    responses(
+        (status = 200, description = "域名明细视图", body = DomainDetailView),
+        (status = 401, description = "未授权", body = crate::api::ApiError),
+        (status = 404, description = "域名不存在", body = crate::api::ApiError)
+    )
+)]
+async fn get_domain_detail_view(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.cert_store.get_domain_detail_view(&id).await {
+        Ok(Some(view)) => success_response(StatusCode::OK, &trace_id, view),
+        Ok(None) => common_error_response(
+            StatusCode::NOT_FOUND,
+            &trace_id,
+            "not_found",
+            "Domain not found",
+        )
+        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to get domain detail view");
+            common_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Internal query error",
+            )
+            .into_response()
+        }
+    }
+}
+
 pub fn cert_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(create_domain))
@@ -988,4 +1122,6 @@ pub fn cert_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(cert_status_summary))
         .routes(routes!(cert_status_by_domain))
         .routes(routes!(cert_check_history))
+        .routes(routes!(list_domain_overview))
+        .routes(routes!(get_domain_detail_view))
 }

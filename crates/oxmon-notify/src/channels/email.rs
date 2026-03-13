@@ -3,6 +3,7 @@ use crate::utils::{truncate_string, MAX_BODY_LENGTH};
 use crate::{NotificationChannel, RecipientResult, SendResponse};
 use anyhow::Result;
 use async_trait::async_trait;
+use chrono::FixedOffset;
 use lettre::message::header::ContentType;
 use lettre::message::{MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
@@ -89,7 +90,7 @@ impl EmailChannel {
             message_label = t.get(locale, "notify.message", "Message"),
             message = alert.message,
             time_label = t.get(locale, "notify.time", "Time"),
-            time = alert.timestamp,
+            time = alert.timestamp.with_timezone(&FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y-%m-%d %H:%M:%S CST"),
         )
     }
 

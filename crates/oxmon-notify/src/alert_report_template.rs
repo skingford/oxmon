@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use std::collections::HashMap;
 
 /// 单条告警明细（用于批量告警报告）
@@ -251,7 +251,11 @@ impl AlertReportRenderer {
         };
 
         let table_rows = Self::build_html_table_rows(params.items, locale);
-        let created_at = Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+        let beijing_tz = FixedOffset::east_opt(8 * 3600).unwrap();
+        let created_at = Utc::now()
+            .with_timezone(&beijing_tz)
+            .format("%Y-%m-%d %H:%M:%S CST")
+            .to_string();
 
         let html = template
             .replace("{{lang}}", if is_zh { "zh" } else { "en" })
@@ -322,7 +326,12 @@ impl AlertReportRenderer {
                 _ => "num",
             };
 
-            let time_str = item.triggered_at.format("%m-%d %H:%M:%S").to_string();
+            let beijing_tz = FixedOffset::east_opt(8 * 3600).unwrap();
+            let time_str = item
+                .triggered_at
+                .with_timezone(&beijing_tz)
+                .format("%m-%d %H:%M:%S")
+                .to_string();
             // 截断过长的消息避免撑开表格
             let message_display = if item.message.len() > 80 {
                 format!("{}…", &item.message[..80])
@@ -478,7 +487,12 @@ impl AlertReportRenderer {
                     }
                 }
             };
-            let time_str = item.triggered_at.format("%H:%M:%S").to_string();
+            let beijing_tz = FixedOffset::east_opt(8 * 3600).unwrap();
+            let time_str = item
+                .triggered_at
+                .with_timezone(&beijing_tz)
+                .format("%H:%M:%S")
+                .to_string();
             // 实例名（主）+ agent_id（次）
             let agent_display = if let Some(ref name) = item.instance_name {
                 format!("{} ({})", name, item.agent_id)
