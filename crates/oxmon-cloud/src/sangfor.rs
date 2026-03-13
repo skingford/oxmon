@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 type HmacSha256 = Hmac<Sha256>;
 
+const API_VERSION: &str = "20180725";
 const DEFAULT_REGION_FOR_SIGN: &str = "cn-south-1";
 const SCP_SERVICE: &str = "open-api";
 
@@ -57,14 +58,9 @@ impl SangforCloudProvider {
         })
     }
 
-    /// 获取当天日期作为 API 版本号，格式：20260313
-    fn api_version() -> String {
-        Utc::now().format("%Y%m%d").to_string()
-    }
-
     /// 构造 SCP API 的 base URL
     fn base_url(&self) -> String {
-        let version = Self::api_version();
+        let version = API_VERSION;
         let host = &self.endpoint;
         if host.starts_with("http://") || host.starts_with("https://") {
             format!("{}/janus/{}", host.trim_end_matches('/'), version)
@@ -129,9 +125,8 @@ impl SangforCloudProvider {
     /// 发起已签名的 GET 请求
     async fn signed_get(&self, path: &str, query_string: &str) -> Result<serde_json::Value> {
         let now = Utc::now();
-        let version = Self::api_version();
 
-        let uri = format!("/janus/{}{}", version, path);
+        let uri = format!("/janus/{}{}", API_VERSION, path);
         let (authorization, datetime_str, canonical_request, string_to_sign) =
             self.sign_aws4("GET", &uri, query_string, &now);
 
@@ -157,18 +152,19 @@ impl SangforCloudProvider {
         if !status.is_success() {
             tracing::error!(
                 account = %self.account_name,
-                url = %url,
-                uri_for_sign = %uri,
-                query_string = %query_string,
-                x_amz_date = %datetime_str,
-                region_for_sign = %self.region_for_sign,
-                service = %SCP_SERVICE,
-                authorization = %authorization,
-                canonical_request = %canonical_request,
-                string_to_sign = %string_to_sign,
                 http_status = %status,
                 response_body = %text,
-                "Sangfor SCP request failed - signing details"
+                region_for_sign = %self.region_for_sign,
+                service = %SCP_SERVICE,
+                uri_for_sign = %uri,
+                canonical_request = %canonical_request,
+                string_to_sign = %string_to_sign,
+                "Sangfor SCP request failed"
+            );
+            // 单独一行打印 curl 命令，方便直接复制执行
+            tracing::error!(
+                "--- curl debug ---\ncurl -sk -X GET \\\n  -H 'X-Amz-Date: {}' \\\n  -H 'Authorization: {}' \\\n  '{}'",
+                datetime_str, authorization, url
             );
             bail!("SCP API error ({}): {}", status, text);
         }
