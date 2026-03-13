@@ -57,6 +57,14 @@ impl AgentRegistry {
         self.agents.remove(agent_id).is_some()
     }
 
+    /// 从数据库快照批量预加载 Agent 上报时间，用于服务重启后恢复状态。
+    /// 已存在的条目（更新时间更新）不会被覆盖。
+    pub fn preload(&mut self, agents: Vec<(String, DateTime<Utc>)>) {
+        for (agent_id, last_seen) in agents {
+            self.agents.entry(agent_id).or_insert(last_seen);
+        }
+    }
+
     pub fn get_agent(&self, agent_id: &str) -> Option<AgentInfo> {
         let now = Utc::now();
         let timeout = Duration::seconds((self.default_collection_interval_secs * 3) as i64);

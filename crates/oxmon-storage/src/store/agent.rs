@@ -648,6 +648,31 @@ impl CertStore {
         Ok(result.rows_affected())
     }
 
+    /// 批量按 agent_id 查询 agents 表，返回 HashMap<agent_id, AgentInfo>。
+    /// 用于白名单 API 显示在线状态时替代内存 AgentRegistry，保证与 /v1/agents 一致。
+    pub async fn list_agent_infos_by_ids(
+        &self,
+        agent_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, AgentInfo>> {
+        if agent_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows = AgentEntity::find()
+            .filter(AgentCol::AgentId.is_in(agent_ids.iter().map(|s| s.as_str())))
+            .all(self.db())
+            .await?;
+        Ok(rows.iter().map(|m| (m.agent_id.clone(), agent_to_info(m))).collect())
+    }
+
+    /// 返回所有 agents 的 (agent_id, last_seen)，供启动时预加载 AgentRegistry。
+    pub async fn list_all_agents_last_seen(&self) -> Result<Vec<(String, DateTime<Utc>)>> {
+        let rows = AgentEntity::find().all(self.db()).await?;
+        Ok(rows
+            .iter()
+            .map(|m| (m.agent_id.clone(), m.last_seen.with_timezone(&Utc)))
+            .collect())
+    }
+
     /// 批量解析 agent_id 列表为可读显示名称。
     ///
     /// - 普通 Agent（无前缀）：查 `agents` 表，返回 `hostname`，若无则返回 `agent_id`

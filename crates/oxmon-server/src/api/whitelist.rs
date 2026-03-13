@@ -253,14 +253,29 @@ async fn list_whitelist_agents(
         Err(resp) => return resp,
     };
 
-    let registry = state
-        .agent_registry
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // 从 agents 表批量查询在线状态（与 /v1/agents 数据源一致，避免服务重启后显示 "unknown"）
+    let agent_ids: Vec<String> = agents.iter().map(|e| e.agent_id.clone()).collect();
+    let agent_info_map = match state
+        .cert_store
+        .list_agent_infos_by_ids(&agent_ids)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to get agent infos from DB");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
     let items: Vec<AgentWhitelistDetail> = agents
         .into_iter()
         .map(|entry| {
-            let agent_info = registry.get_agent(&entry.agent_id);
+            let agent_info = agent_info_map.get(&entry.agent_id);
             AgentWhitelistDetail {
                 id: entry.id,
                 agent_id: entry.agent_id,
@@ -269,8 +284,8 @@ async fn list_whitelist_agents(
                 description: entry.description,
                 token: None, // Never expose tokens in list responses
                 collection_interval_secs: entry.collection_interval_secs,
-                last_seen: agent_info.as_ref().map(|a| a.last_seen),
-                status: match &agent_info {
+                last_seen: agent_info.map(|a| a.last_seen),
+                status: match agent_info {
                     Some(a) if a.active => "active".to_string(),
                     Some(_) => "inactive".to_string(),
                     None => "unknown".to_string(),
@@ -325,11 +340,24 @@ async fn get_whitelist_agent(
         Err(resp) => return resp,
     };
 
-    let registry = state
-        .agent_registry
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let agent_info = registry.get_agent(&entry.agent_id);
+    // 从 agents 表查询在线状态（与 /v1/agents 数据源一致）
+    let agent_info_map = match state
+        .cert_store
+        .list_agent_infos_by_ids(std::slice::from_ref(&entry.agent_id))
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to get agent info from DB");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "Database error",
+            )
+        }) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let agent_info = agent_info_map.get(&entry.agent_id);
 
     let detail = AgentWhitelistDetail {
         id: entry.id,
@@ -339,8 +367,8 @@ async fn get_whitelist_agent(
         description: entry.description,
         token: None, // Never expose tokens in responses
         collection_interval_secs: entry.collection_interval_secs,
-        last_seen: agent_info.as_ref().map(|a| a.last_seen),
-        status: match &agent_info {
+        last_seen: agent_info.map(|a| a.last_seen),
+        status: match agent_info {
             Some(a) if a.active => "active".to_string(),
             Some(_) => "inactive".to_string(),
             None => "unknown".to_string(),

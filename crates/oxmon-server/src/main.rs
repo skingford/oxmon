@@ -411,6 +411,21 @@ async fn run_server(config_path: &str) -> Result<()> {
         config.agent_collection_interval_secs,
     )));
 
+    // 从数据库恢复 AgentRegistry，避免服务重启后所有主机显示 "unknown"
+    match cert_store.list_all_agents_last_seen().await {
+        Ok(agents) => {
+            let count = agents.len();
+            agent_registry
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .preload(agents);
+            tracing::info!(count, "AgentRegistry preloaded from DB");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to preload AgentRegistry from DB");
+        }
+    }
+
     // Sync built-in system dictionaries first so other seeds can depend on dictionary metadata.
     if let Err(e) = oxmon_server::dictionary_seed::init_default_dictionaries(&cert_store).await {
         tracing::error!(error = %e, "Failed to initialize default system dictionaries");

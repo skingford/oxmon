@@ -8,7 +8,9 @@ use std::collections::HashMap;
 
 type HmacSha256 = Hmac<Sha256>;
 
-const API_VERSION: &str = "20180725";
+fn api_version() -> String {
+    Utc::now().format("%Y%m%d").to_string()
+}
 const DEFAULT_REGION_FOR_SIGN: &str = "cn-south-1";
 const SCP_SERVICE: &str = "open-api";
 
@@ -60,7 +62,7 @@ impl SangforCloudProvider {
 
     /// 构造 SCP API 的 base URL
     fn base_url(&self) -> String {
-        let version = API_VERSION;
+        let version = api_version();
         let host = &self.endpoint;
         if host.starts_with("http://") || host.starts_with("https://") {
             format!("{}/janus/{}", host.trim_end_matches('/'), version)
@@ -126,7 +128,7 @@ impl SangforCloudProvider {
     async fn signed_get(&self, path: &str, query_string: &str) -> Result<serde_json::Value> {
         let now = Utc::now();
 
-        let uri = format!("/janus/{}{}", API_VERSION, path);
+        let uri = format!("/janus/{}{}", api_version(), path);
         let (authorization, datetime_str, canonical_request, string_to_sign) =
             self.sign_aws4("GET", &uri, query_string, &now);
 
