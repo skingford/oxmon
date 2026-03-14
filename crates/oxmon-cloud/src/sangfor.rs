@@ -211,6 +211,8 @@ pub struct SangforCloudProvider {
     /// SCP 6.3.0 及更早版本需要的 Cookie 认证 Token，SCP 6.3.70+ 无需
     scp_auth_token: Option<String>,
     instance_filter: crate::InstanceFilter,
+    /// 指标采集时间窗口（秒），与账号配置的 collection_interval_secs 一致
+    collection_interval_secs: u64,
 }
 
 impl SangforCloudProvider {
@@ -234,6 +236,7 @@ impl SangforCloudProvider {
             region_for_sign,
             scp_auth_token: config.scp_auth_token,
             instance_filter: config.instance_filter,
+            collection_interval_secs: config.collection_interval_secs,
         })
     }
 
@@ -450,13 +453,22 @@ impl SangforCloudProvider {
     /// 获取单台服务器的最新指标（取最后一个数据点）
     async fn fetch_metrics_for_server(&self, server_id: &str) -> Result<HashMap<String, f64>> {
         let metric_names = "cpu.util,memory.util,disk.util,io.read.iops,io.write.iops,net.in.bps,net.out.bps";
+        // timegap 使用账号配置的采集间隔（秒整数），确保时间窗口与调度间隔一致
         let qs = format!(
-            "object_type=server&metric_names={}&timegap=1h",
-            metric_names
+            "object_type=server&metric_names={}&timegap={}",
+            metric_names, self.collection_interval_secs
         );
         let path = format!("/metrics/{}", server_id);
 
         let val = self.signed_get(&path, &qs).await?;
+
+        tracing::debug!(
+            account = %self.account_name,
+            server_id = %server_id,
+            raw_response = ?val,
+            "Sangfor SCP /metrics raw response"
+        );
+
         let data = val.get("data").unwrap_or(&serde_json::Value::Null);
 
         let mut result = HashMap::new();
@@ -550,18 +562,18 @@ fn extract_memory_gb(s: &serde_json::Value) -> Option<f64> {
 
 /// 从服务器 JSON 对象中提取磁盘容量（GB），自动检测单位（MB vs GB）
 fn extract_disk_gb(s: &serde_json::Value) -> Option<f64> {
-    for field in &["storage_mb", "disk_mb", "system_disk_mb"] {
+    for field in &["storage_mb", "disk_mb", "system_disk_mb", "root_disk_mb"] {
         if let Some(mb) = s.get(*field).and_then(|v| v.as_f64()) {
             return Some(mb / 1024.0);
         }
     }
-    for field in &["storage_gb", "disk_gb", "system_disk_gb"] {
+    for field in &["storage_gb", "disk_gb", "system_disk_gb", "root_gb", "root_disk_gb"] {
         if let Some(gb) = s.get(*field).and_then(|v| v.as_f64()) {
             return Some(gb);
         }
     }
     // 通用字段：> 500 认为是 MB
-    for field in &["disk_size", "system_disk_size", "storage", "disk"] {
+    for field in &["disk_size", "system_disk_size", "root_disk", "root", "storage", "disk"] {
         if let Some(v) = s.get(*field).and_then(|v| v.as_f64()) {
             return Some(if v > 500.0 { v / 1024.0 } else { v });
         }
