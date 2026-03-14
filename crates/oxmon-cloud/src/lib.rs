@@ -435,8 +435,8 @@ mod tests {
     #[test]
     fn should_deserialize_regions_from_array_field() {
         let cfg: CloudAccountConfig = serde_json::from_value(serde_json::json!({
-            "secret_id": "sid",
-            "secret_key": "skey",
+            "secret_id": "example-secret-id",
+            "secret_key": "example-secret-key",
             "regions": ["ap-guangzhou", "ap-shanghai"]
         }))
         .expect("config should parse");
@@ -447,8 +447,8 @@ mod tests {
     #[test]
     fn should_deserialize_regions_from_default_region_string_alias() {
         let cfg: CloudAccountConfig = serde_json::from_value(serde_json::json!({
-            "secret_id": "sid",
-            "secret_key": "skey",
+            "secret_id": "example-secret-id",
+            "secret_key": "example-secret-key",
             "default_region": "ap-guangzhou"
         }))
         .expect("config should parse");

@@ -12,7 +12,7 @@ use utoipa::{IntoParams, OpenApi, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::api::pagination::{deserialize_optional_u64, PaginationParams};
-use crate::api::{error_response, success_paginated_response};
+use crate::api::{error_response, success_id_response, success_paginated_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 
@@ -356,21 +356,37 @@ async fn create_ai_account(
     ),
     request_body = UpdateAIAccountRequest,
     responses(
-        (status = 200, description = "AI 账号更新成功", body = AIAccountResponse),
-        (status = 404, description = "AI 账号不存在"),
+        (status = 200, description = "AI 账号更新成功", body = crate::api::IdResponse),
+        (status = 404, description = "AI 账号不存在", body = crate::api::ApiError),
     ),
     tag = "AI 管理"
 )]
 async fn update_ai_account(
+    Extension(trace_id): Extension<TraceId>,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateAIAccountRequest>,
-) -> Result<Json<AIAccountResponse>, AppError> {
-    state
-        .cert_store
-        .get_ai_account_by_id(&id)
-        .await?
-        .ok_or(AppError::NotFound("AI account not found".into()))?;
+) -> impl IntoResponse {
+    match state.cert_store.get_ai_account_by_id(&id).await {
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                &trace_id,
+                "not_found",
+                "AI account not found",
+            );
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to get AI account");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "internal error",
+            );
+        }
+        Ok(Some(_)) => {}
+    }
 
     let upd = AIAccountUpdate {
         display_name: req.display_name,
@@ -386,17 +402,18 @@ async fn update_ai_account(
         enabled: req.enabled,
     };
 
-    state.cert_store.update_ai_account(&id, upd).await?;
-
-    let updated = state
-        .cert_store
-        .get_ai_account_by_id(&id)
-        .await?
-        .ok_or(AppError::NotFound(
-            "AI account not found after update".into(),
-        ))?;
-
-    Ok(Json(row_to_response(updated)))
+    match state.cert_store.update_ai_account(&id, upd).await {
+        Ok(_) => success_id_response(StatusCode::OK, &trace_id, id),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to update AI account");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "internal_error",
+                "internal error",
+            )
+        }
+    }
 }
 
 /// 删除 AI 账号

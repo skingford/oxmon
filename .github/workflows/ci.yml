@@ -29,6 +29,7 @@ jobs:
         with:
           version: ${{ env.PROTOC_VERSION }}
       - uses: Swatinem/rust-cache@v2
+      - run: bash scripts/check-no-secrets.sh
       - run: cargo build --all-targets
       - run: cargo test --workspace
       - run: cargo clippy --workspace -- -D warnings

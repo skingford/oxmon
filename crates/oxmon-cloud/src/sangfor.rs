@@ -339,7 +339,7 @@ impl SangforCloudProvider {
                 .await
                 .with_context(|| format!("raw HTTPS GET {}{} failed", self.endpoint, path_and_query))?;
 
-        if status < 200 || status >= 300 {
+        if !(200..300).contains(&status) {
             tracing::error!(
                 account = %self.account_name,
                 http_status = %status,
@@ -449,7 +449,7 @@ impl SangforCloudProvider {
 
     /// 获取单台服务器的最新指标（取最后一个数据点）
     async fn fetch_metrics_for_server(&self, server_id: &str) -> Result<HashMap<String, f64>> {
-        let metric_names = "cpu.util,memory.util,io.read.iops,io.write.iops,net.in.bps,net.out.bps";
+        let metric_names = "cpu.util,memory.util,disk.util,io.read.iops,io.write.iops,net.in.bps,net.out.bps";
         let qs = format!(
             "object_type=server&metric_names={}&timegap=1h",
             metric_names
@@ -667,19 +667,14 @@ impl CloudProvider for SangforCloudProvider {
                     .unwrap_or("unknown")
                     .to_string();
 
-                // SCP IP 地址在 networks 数组中，ip_address 字段
+                // ── 网络 ──────────────────────────────────────────────────────────
+                // SCP IP 地址在 networks 数组中；顶层 ips 数组作为回退
                 let networks = s
                     .get("networks")
                     .and_then(|v| v.as_array())
                     .cloned()
                     .unwrap_or_default();
                 let first_net = networks.first();
-
-                let private_ip = first_net
-                    .and_then(|n| n.get("ip_address"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
 
                 // 辅助闭包：读取非空字符串字段（空字符串视为不存在，继续向后查找）
                 let nev = |field: &str| -> Option<&str> {
@@ -688,17 +683,36 @@ impl CloudProvider for SangforCloudProvider {
                         .filter(|v| !v.is_empty())
                 };
 
-                // SCP 公网 IP：顶层字段 → floatingip.floating_ip_address 嵌套对象 → floatingips 数组
+                let private_ip = first_net
+                    .and_then(|n| n.get("ip_address"))
+                    .and_then(|v| v.as_str())
+                    .filter(|v| !v.is_empty())
+                    .or_else(|| {
+                        // 顶层 ips 数组回退（["192.168.x.x", ...]）
+                        s.get("ips")
+                            .and_then(|v| v.as_array())
+                            .and_then(|arr| arr.first())
+                            .and_then(|v| v.as_str())
+                            .filter(|v| !v.is_empty())
+                    })
+                    .unwrap_or("")
+                    .to_string();
+
+                // ── 公网 IP / 弹性 IP ────────────────────────────────────────────
+                // floatingip 嵌套对象（SCP 6.x 格式）
+                let floatingip_obj = s.get("floatingip");
+
                 let public_ip = nev("public_ip")
                     .or_else(|| nev("float_ip"))
                     .or_else(|| nev("floating_ip"))
                     .or_else(|| {
-                        s.get("floatingip")
+                        floatingip_obj
                             .and_then(|fip| fip.get("floating_ip_address"))
                             .and_then(|v| v.as_str())
                             .filter(|v| !v.is_empty())
                     })
                     .or_else(|| {
+                        // floatingips 数组（多个公网 IP 时取第一个）
                         s.get("floatingips")
                             .and_then(|v| v.as_array())
                             .and_then(|arr| arr.first())
@@ -709,8 +723,54 @@ impl CloudProvider for SangforCloudProvider {
                     .unwrap_or("")
                     .to_string();
 
-                // SCP OS 名称：os_name("Ubuntu 22.04.2 LTS") 优先；
-                // image_name 虽有此字段但可能为空字符串，需跳过空值
+                // 弹性 IP 分配 ID：floatingip.floatingip_id
+                let eip_allocation_id = floatingip_obj
+                    .and_then(|fip| fip.get("floatingip_id"))
+                    .and_then(|v| v.as_str())
+                    .filter(|v| !v.is_empty())
+                    .map(|v| v.to_string());
+
+                // 公网带宽（Mbps）：floatingip.bandwidth，0 表示无公网带宽
+                let internet_max_bandwidth = floatingip_obj
+                    .and_then(|fip| fip.get("bandwidth"))
+                    .and_then(|v| v.as_u64())
+                    .filter(|&bw| bw > 0)
+                    .map(|bw| bw as u32);
+
+                // 公网带宽计费类型：floatingip.line_type（如 "BGP"、"单线"）
+                let internet_charge_type = floatingip_obj
+                    .and_then(|fip| fip.get("line_type"))
+                    .and_then(|v| v.as_str())
+                    .filter(|v| !v.is_empty())
+                    .map(|v| v.to_string());
+
+                // ── VPC / 子网 ───────────────────────────────────────────────────
+                let vpc_id = first_net
+                    .and_then(|n| n.get("vpc_id").or_else(|| n.get("network_id")))
+                    .and_then(|v| v.as_str())
+                    .filter(|v| !v.is_empty())
+                    .map(|v| v.to_string());
+
+                let subnet_id = first_net
+                    .and_then(|n| n.get("subnet_id").or_else(|| n.get("net_id")))
+                    .and_then(|v| v.as_str())
+                    .filter(|v| !v.is_empty())
+                    .map(|v| v.to_string());
+
+                // IPv6 地址：从所有 networks 中收集非空的 ipv6_address 字段
+                let ipv6_addresses: Vec<String> = networks
+                    .iter()
+                    .filter_map(|n| {
+                        n.get("ipv6_address")
+                            .and_then(|v| v.as_str())
+                            .filter(|v| !v.is_empty())
+                            .map(|v| v.to_string())
+                    })
+                    .collect();
+
+                // ── OS / 镜像 ────────────────────────────────────────────────────
+                // os_name 字段直接提供可读名称（"Ubuntu 22.04.2 LTS"）；
+                // image_name 虽存在但在 SCP 中可能为空字符串，需跳过
                 let os = nev("os_name")
                     .or_else(|| nev("image_name"))
                     .or_else(|| {
@@ -725,16 +785,48 @@ impl CloudProvider for SangforCloudProvider {
                     .unwrap_or("")
                     .to_string();
 
-                // 使用多字段回退 + 单位自动检测
+                // 镜像 ID：image_id 顶层字段 → image.id 嵌套对象
+                let image_id = nev("image_id")
+                    .or_else(|| {
+                        s.get("image")
+                            .and_then(|img| img.get("id"))
+                            .and_then(|v| v.as_str())
+                            .filter(|v| !v.is_empty())
+                    })
+                    .map(|v| v.to_string());
+
+                // ── 规格 ─────────────────────────────────────────────────────────
                 let cpu_cores = extract_cpu_cores(&s);
                 let memory_gb = extract_memory_gb(&s);
                 let disk_gb = extract_disk_gb(&s);
 
-                // SCP 不提供 flavor 对象，os_type 是系统分类码（常量如 "l2664"），无规格含义
-                // 从 CPU + 内存推导可读的规格字符串（如 "4C16G"）
+                // SCP os_type 是系统分类码（所有实例相同，如 "l2664"），不反映规格
+                // 从 CPU + 内存推导可读规格字符串（如 "4C16G"）
                 let instance_type = derive_instance_type(cpu_cores, memory_gb);
 
-                // region：优先使用配置的 az_id，其次从服务器响应中读取
+                // GPU 数量：has_gpu>0 时从 gpu_status.graphics_count 取实际数量
+                let gpu = s
+                    .get("has_gpu")
+                    .and_then(|v| v.as_u64())
+                    .filter(|&g| g > 0)
+                    .map(|_| {
+                        s.get("gpu_status")
+                            .and_then(|gs| gs.get("graphics_count"))
+                            .and_then(|v| v.as_u64())
+                            .filter(|&c| c > 0)
+                            .map(|c| c as u32)
+                            .unwrap_or(1) // has_gpu=1 但 graphics_count=0 时默认 1
+                    });
+
+                // SCP VM 工具安装状态：vtool_installed=1 等同于 IO 优化
+                // （类似 VMware Tools / VirtIO 驱动，表明驱动就绪、IO 性能可保障）
+                let io_optimized = s
+                    .get("vtool_installed")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| if v == 1 { "optimized".to_string() } else { "none".to_string() });
+
+                // ── 位置 ─────────────────────────────────────────────────────────
+                // region：优先使用当次查询的 az_id，其次从响应中读取
                 let region = if az_id.is_empty() {
                     s.get("az_id")
                         .or_else(|| s.get("zone"))
@@ -745,20 +837,62 @@ impl CloudProvider for SangforCloudProvider {
                     az_id.clone()
                 };
 
-                // zone：优先使用 /azs 发现的友好名称，其次是响应中的字段
-                let zone = az_name_map.get(&region).cloned().or_else(|| {
-                    s.get("zone")
-                        .or_else(|| s.get("az_name"))
-                        .or_else(|| s.get("az_id"))
-                        .and_then(|v| v.as_str())
-                        .map(|z| z.to_string())
-                });
-
-                // 从 networks 数组中提取子网 ID（若存在）
-                let subnet_id = first_net
-                    .and_then(|n| n.get("subnet_id").or_else(|| n.get("net_id")))
+                // zone 友好名称：响应中的 az_name 最直接（"HN-CS1-Pub-AZ1"），
+                // 其次查 /azs 建立的映射表，最后回退 az_id UUID
+                let zone = s
+                    .get("az_name")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                    .filter(|v| !v.is_empty())
+                    .map(|v| v.to_string())
+                    .or_else(|| az_name_map.get(&region).cloned())
+                    .or_else(|| {
+                        s.get("zone")
+                            .and_then(|v| v.as_str())
+                            .map(|v| v.to_string())
+                    });
+
+                // ── 生命周期 ─────────────────────────────────────────────────────
+                // expire_time="unlimited" → 按需付费；其他值（日期字符串）→ 包年包月
+                // SCP 服务器对象不含创建时间戳（created_at 不在响应顶层）
+                let charge_type = s
+                    .get("expire_time")
+                    .and_then(|v| v.as_str())
+                    .filter(|v| !v.is_empty())
+                    .map(|t| {
+                        if t == "unlimited" {
+                            "postpaid".to_string()
+                        } else {
+                            "prepaid".to_string()
+                        }
+                    });
+
+                // ── 标签 ─────────────────────────────────────────────────────────
+                // SCP tags 为 [{key, value}, ...] 数组，转换为 HashMap
+                let tags: HashMap<String, String> = s
+                    .get("tags")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|t| {
+                                let key = t
+                                    .get("key")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|v| !v.is_empty())
+                                    .map(|v| v.to_string())?;
+                                let val = t
+                                    .get("value")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                Some((key, val))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // ── 其他元数据 ───────────────────────────────────────────────────
+                // 资源组 ID：group_id 字段（SCP 中用于租户资源分组）
+                let resource_group_id = nev("group_id").map(|v| v.to_string());
 
                 let instance = CloudInstance {
                     instance_id,
@@ -769,52 +903,35 @@ impl CloudProvider for SangforCloudProvider {
                     private_ip,
                     os,
                     status,
-                    tags: HashMap::new(),
+                    tags,
                     instance_type,
                     cpu_cores,
                     memory_gb,
                     disk_gb,
-                    created_time: None,
-                    expired_time: None,
-                    charge_type: None,
-                    // vpc_id 和 subnet_id 在 networks 数组中
-                    vpc_id: first_net
-                        .and_then(|n| n.get("vpc_id").or_else(|| n.get("network_id")))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
+                    created_time: None, // SCP 服务器对象顶层不含创建时间戳
+                    expired_time: None, // expire_time 为字符串，无法直接转为 Unix 时间戳
+                    charge_type,
+                    vpc_id,
                     subnet_id,
-                    security_group_ids: vec![],
+                    security_group_ids: vec![], // SCP 安全组信息不在服务器对象中
                     zone,
-                    internet_max_bandwidth: None,
-                    ipv6_addresses: vec![],
-                    eip_allocation_id: None,
-                    internet_charge_type: None,
-                    image_id: s
-                        .get("image_id")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
-                    hostname: s
-                        .get("hostname")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
-                    description: s
-                        .get("description")
-                        .or_else(|| s.get("desc"))
-                        .and_then(|v| v.as_str())
-                        .filter(|d| !d.is_empty())
-                        .map(|s| s.to_string()),
-                    gpu: None,
-                    io_optimized: None,
-                    latest_operation: None,
-                    latest_operation_state: None,
-                    project_id: s
-                        .get("project_id")
-                        .or_else(|| s.get("tenant_id"))
-                        .and_then(|v| v.as_str())
-                        .filter(|p| !p.is_empty())
-                        .map(|s| s.to_string()),
-                    resource_group_id: None,
-                    auto_renew_flag: None,
+                    internet_max_bandwidth,
+                    ipv6_addresses,
+                    eip_allocation_id,
+                    internet_charge_type,
+                    image_id,
+                    // SCP 响应中 hostname 字段不存在（host_name 是物理宿主机名，非 VM hostname）
+                    hostname: None,
+                    description: nev("description").or_else(|| nev("desc")).map(|v| v.to_string()),
+                    gpu,
+                    io_optimized,
+                    latest_operation: None,       // SCP 无等效字段
+                    latest_operation_state: None, // SCP 无等效字段
+                    project_id: nev("project_id")
+                        .or_else(|| nev("tenant_id"))
+                        .map(|v| v.to_string()),
+                    resource_group_id,
+                    auto_renew_flag: None, // SCP 无等效字段
                 };
 
                 if self.instance_filter.matches(&instance) {
@@ -845,7 +962,7 @@ impl CloudProvider for SangforCloudProvider {
             region: region.to_string(),
             cpu_usage: metrics_map.get("cpu.util").copied(),
             memory_usage: metrics_map.get("memory.util").copied(),
-            disk_usage: None,
+            disk_usage: metrics_map.get("disk.util").copied(),
             network_in_bytes: metrics_map.get("net.in.bps").copied(),
             network_out_bytes: metrics_map.get("net.out.bps").copied(),
             disk_iops_read: metrics_map.get("io.read.iops").copied(),

@@ -692,7 +692,7 @@ async fn get_admin_user(
     ),
     request_body = UpdateAdminUserRequest,
     responses(
-        (status = 200, description = "更新成功", body = AdminUserResponse),
+        (status = 200, description = "更新成功", body = crate::api::IdResponse),
         (status = 400, description = "请求参数错误", body = crate::api::ApiError),
         (status = 401, description = "未认证", body = crate::api::ApiError),
         (status = 404, description = "用户不存在", body = crate::api::ApiError)
@@ -750,37 +750,17 @@ async fn update_admin_user(
         }
     }
 
-    // 返回更新后的用户信息
-    match state.cert_store.get_user_by_id(&id).await {
-        Ok(Some(user)) => {
-            write_update_admin_user_audit_log(
-                &state,
-                &trace_id,
-                &claims,
-                &headers,
-                &id,
-                &req,
-                start.elapsed().as_millis() as i64,
-            )
-            .await;
-            success_response(StatusCode::OK, &trace_id, to_admin_user_response(user))
-        }
-        Ok(None) => error_response(
-            StatusCode::NOT_FOUND,
-            &trace_id,
-            "not_found",
-            "user not found",
-        ),
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to fetch updated admin user");
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &trace_id,
-                "internal_error",
-                "internal error",
-            )
-        }
-    }
+    write_update_admin_user_audit_log(
+        &state,
+        &trace_id,
+        &claims,
+        &headers,
+        &id,
+        &req,
+        start.elapsed().as_millis() as i64,
+    )
+    .await;
+    success_id_response(StatusCode::OK, &trace_id, id)
 }
 
 /// 手动清除某个账号的登录失败锁定。

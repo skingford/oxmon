@@ -350,6 +350,33 @@ impl CertStore {
     }
 
     pub async fn delete_domain(&self, id: &str) -> Result<bool> {
+        let domain_model = DomainEntity::find_by_id(id).one(self.db()).await?;
+        let Some(domain_model) = domain_model else {
+            return Ok(false);
+        };
+        let domain_name = domain_model.domain.clone();
+        let domain_id = domain_model.id.clone();
+
+        // 级联删除 certificate_details (按 domain 字符串关联)
+        DetailEntity::delete_many()
+            .filter(DetailCol::Domain.eq(&domain_name))
+            .exec(self.db())
+            .await?;
+
+        // 级联删除 cert_check_results (按 domain_id 关联)
+        CheckEntity::delete_many()
+            .filter(CheckCol::DomainId.eq(&domain_id))
+            .exec(self.db())
+            .await?;
+
+        // 删除域名本身
+        let res = DomainEntity::delete_by_id(id).exec(self.db()).await?;
+        Ok(res.rows_affected > 0)
+    }
+
+    /// 仅删除域名记录，不级联清理关联数据。
+    /// 用于 backfill 等需要保留 certificate_details 孤立记录的场景。
+    pub async fn delete_domain_record_only(&self, id: &str) -> Result<bool> {
         let res = DomainEntity::delete_by_id(id).exec(self.db()).await?;
         Ok(res.rows_affected > 0)
     }
@@ -576,8 +603,9 @@ impl CertStore {
 
     pub async fn cert_summary(&self) -> Result<CertHealthSummary> {
         use sea_orm::{ConnectionTrait, Statement};
-        let sql = "SELECT chain_valid, CAST(strftime('%s', not_after) AS INTEGER) AS not_after
-             FROM certificate_details";
+        let sql = "SELECT cd.chain_valid, CAST(strftime('%s', cd.not_after) AS INTEGER) AS not_after
+             FROM certificate_details cd
+             INNER JOIN cert_domains d ON d.domain = cd.domain AND d.enabled = 1";
 
         let rows = self
             .db()

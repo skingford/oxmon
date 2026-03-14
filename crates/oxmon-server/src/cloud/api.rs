@@ -1,5 +1,5 @@
 use crate::api::pagination::PaginationParams;
-use crate::api::{error_response, success_paginated_response, success_response};
+use crate::api::{error_response, success_id_response, success_paginated_response, success_response};
 use crate::logging::TraceId;
 use crate::state::AppState;
 use axum::extract::{Extension, Path, Query, State};
@@ -37,12 +37,6 @@ struct CloudAccountResponse {
     enabled: bool,
     created_at: String,
     updated_at: String,
-}
-
-/// 更新成功响应（仅返回 id）
-#[derive(Serialize, ToSchema)]
-struct UpdatedIdResponse {
-    id: String,
 }
 
 /// 创建云账户请求
@@ -715,7 +709,7 @@ async fn get_cloud_account(
     ),
     request_body = UpdateCloudAccountRequest,
     responses(
-        (status = 200, description = "云账户已更新", body = UpdatedIdResponse),
+        (status = 200, description = "云账户已更新", body = crate::api::IdResponse),
         (status = 404, description = "云账户不存在", body = crate::api::ApiError)
     )
 )]
@@ -792,7 +786,7 @@ async fn update_cloud_account(
     };
 
     match state.cert_store.update_cloud_account(&id, &updated).await {
-        Ok(_) => success_response(StatusCode::OK, &trace_id, UpdatedIdResponse { id }),
+        Ok(_) => success_id_response(StatusCode::OK, &trace_id, id).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "Failed to update cloud account");
             error_response(
