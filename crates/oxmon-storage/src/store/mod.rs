@@ -14,6 +14,7 @@ pub mod cert;
 pub mod cloud;
 pub mod config;
 pub mod dictionary;
+pub mod instance_contact;
 pub mod notification;
 pub mod user;
 
@@ -30,6 +31,7 @@ pub use cloud::{
 };
 pub use config::{SystemConfigFilter, SystemConfigRow, SystemConfigUpdate};
 pub use dictionary::DictTypeFilter;
+pub use instance_contact::{InstanceContactFilter, InstanceContactRow, InstanceContactUpdate};
 pub use notification::{
     ActiveAlertFilter, NotificationChannelFilter, NotificationChannelRow,
     NotificationChannelUpdate, NotificationLogFilter, NotificationLogRow, NotificationRecipientRow,

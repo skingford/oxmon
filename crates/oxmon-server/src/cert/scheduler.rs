@@ -141,6 +141,11 @@ impl CertCheckScheduler {
                 let agent_id = "cert-checker".to_string();
                 let mut labels = HashMap::new();
                 labels.insert("domain".to_string(), domain.domain.clone());
+                if let Some(ref ips) = result.resolved_ips {
+                    if !ips.is_empty() {
+                        labels.insert("ip".to_string(), ips.join(","));
+                    }
+                }
 
                 let mut data_points = Vec::new();
 

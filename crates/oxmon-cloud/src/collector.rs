@@ -1,4 +1,4 @@
-use crate::{CloudMetrics, CloudProvider};
+use crate::{CloudInstance, CloudMetrics, CloudProvider};
 use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
@@ -128,6 +128,92 @@ impl CloudCollector {
         }
 
         tracing::info!("Collected metrics from {} instances", all_metrics.len());
+        Ok(all_metrics)
+    }
+
+    /// Collect metrics for pre-discovered instances, skipping the `list_instances()` call.
+    /// This avoids redundant API calls when the scheduler has already synced instances.
+    pub async fn collect_for_instances(
+        &self,
+        instances: Vec<CloudInstance>,
+    ) -> Result<Vec<CloudMetrics>> {
+        if instances.is_empty() {
+            tracing::warn!("No cloud instances provided for metrics collection");
+            return Ok(Vec::new());
+        }
+
+        let mut all_metrics = Vec::new();
+        let semaphore = Arc::new(Semaphore::new(self.concurrency));
+        let mut tasks = Vec::new();
+
+        for instance in instances {
+            let sem = Arc::clone(&semaphore);
+            let providers = self.providers.clone();
+            let timeout_duration = Duration::from_secs(self.timeout_secs);
+
+            let task = tokio::spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+
+                // Find the matching provider for this instance
+                let provider_opt: Option<&Arc<dyn CloudProvider>> = providers.iter().find(|p| {
+                    instance.provider.ends_with(&format!(":{}", p.name()))
+                });
+
+                if provider_opt.is_none() {
+                    tracing::warn!("No provider found for instance {}", instance.instance_id);
+                    return None;
+                }
+
+                let provider = provider_opt.unwrap();
+
+                match timeout(
+                    timeout_duration,
+                    provider.get_metrics(&instance.instance_id, &instance.region),
+                )
+                .await
+                {
+                    Ok(Ok(mut metrics)) => {
+                        metrics.instance_name = instance.instance_name.clone();
+                        Some(metrics)
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!(
+                            "Failed to collect metrics for instance {}: {}",
+                            instance.instance_id,
+                            e
+                        );
+                        None
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            "Timeout collecting metrics for instance {} after {:?}",
+                            instance.instance_id,
+                            timeout_duration
+                        );
+                        None
+                    }
+                }
+            });
+
+            tasks.push(task);
+        }
+
+        for task in tasks {
+            match task.await {
+                Ok(Some(metrics)) => {
+                    all_metrics.push(metrics);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::error!("Task panicked: {}", e);
+                }
+            }
+        }
+
+        tracing::info!(
+            "Collected metrics from {} instances (pre-discovered)",
+            all_metrics.len()
+        );
         Ok(all_metrics)
     }
 }

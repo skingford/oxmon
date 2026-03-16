@@ -594,8 +594,8 @@ impl CertStore {
         let sql = "SELECT
                 COUNT(*) AS total,
                 SUM(CASE WHEN LOWER(COALESCE(status,'')) IN ('running','started','active') THEN 1 ELSE 0 END) AS running,
-                SUM(CASE WHEN LOWER(COALESCE(status,'')) IN ('stopped','shutdown') THEN 1 ELSE 0 END) AS stopped,
-                SUM(CASE WHEN LOWER(COALESCE(status,'')) IN ('pending','starting','stopping','rebooting') THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN LOWER(COALESCE(status,'')) IN ('stopped','shutdown','shutoff','paused','suspended') THEN 1 ELSE 0 END) AS stopped,
+                SUM(CASE WHEN LOWER(COALESCE(status,'')) IN ('pending','starting','stopping','rebooting','build','rebuilding','migrating','resize') THEN 1 ELSE 0 END) AS pending,
                 SUM(CASE WHEN LOWER(COALESCE(status,'')) IN ('error','failed') THEN 1 ELSE 0 END) AS error
              FROM cloud_instances";
         let rows = self

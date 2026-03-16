@@ -11,6 +11,7 @@ pub mod cert_check_result;
 pub mod cert_domain;
 pub mod certificate_detail;
 pub mod cloud_account;
+pub mod instance_contact;
 pub mod cloud_collection_state;
 pub mod cloud_instance;
 pub mod dictionary_type;

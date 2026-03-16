@@ -21,6 +21,7 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+glob-match = { workspace = true }
 
 bcrypt = { workspace = true }
 base64 = { workspace = true }

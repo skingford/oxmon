@@ -36,11 +36,13 @@ pub fn format_metric_display(
 ) -> String {
     let is_zh = locale == "zh-CN";
 
-    // 附加标签信息（如挂载点、网络接口）
+    // 附加标签信息（如挂载点、网络接口、域名）
     let label_suffix = if let Some(mount) = labels.get("mount") {
         format!(" [{}]", mount)
     } else if let Some(iface) = labels.get("interface") {
         format!(" [{}]", iface)
+    } else if let Some(domain) = labels.get("domain") {
+        format!(" [{}]", domain)
     } else {
         String::new()
     };
@@ -123,7 +125,7 @@ pub fn format_metric_display(
                 format!("Cloud Disk: {:.1}%{}", value, label_suffix)
             }
         }
-        "certificate.days_remaining" => {
+        "certificate.days_until_expiry" | "certificate.days_remaining" => {
             if is_zh {
                 format!("证书剩余天数: {:.0}天{}", value, label_suffix)
             } else {
@@ -339,8 +341,14 @@ impl AlertReportRenderer {
                 item.message.clone()
             };
 
-            // 主机列：显示实例名（主要）+ agent_id（次要）
-            let agent_cell = if let Some(ref name) = item.instance_name {
+            // 主机列：证书告警显示域名+IP，其余显示实例名+agent_id
+            let agent_cell = if item.agent_id == "cert-checker" {
+                let domain = item.labels.get("domain").map(|s| s.as_str()).unwrap_or("cert-checker");
+                let ip_line = item.labels.get("ip")
+                    .map(|ip| format!("<br><small style=\"color:#888\">{}</small>", html_escape(ip)))
+                    .unwrap_or_default();
+                format!("<strong>{}</strong>{}", html_escape(domain), ip_line)
+            } else if let Some(ref name) = item.instance_name {
                 format!(
                     "<strong>{}</strong><br><small style=\"color:#888\">{}</small>",
                     html_escape(name),
@@ -493,8 +501,15 @@ impl AlertReportRenderer {
                 .with_timezone(&beijing_tz)
                 .format("%H:%M:%S")
                 .to_string();
-            // 实例名（主）+ agent_id（次）
-            let agent_display = if let Some(ref name) = item.instance_name {
+            // 证书告警显示域名+IP，其余显示实例名+agent_id
+            let agent_display = if item.agent_id == "cert-checker" {
+                let domain = item.labels.get("domain").map(|s| s.as_str()).unwrap_or("cert-checker");
+                if let Some(ip) = item.labels.get("ip") {
+                    format!("{} ({})", domain, ip)
+                } else {
+                    domain.to_string()
+                }
+            } else if let Some(ref name) = item.instance_name {
                 format!("{} ({})", name, item.agent_id)
             } else {
                 item.agent_id.clone()
@@ -573,8 +588,15 @@ impl AlertReportRenderer {
                     }
                 }
             };
-            // 实例名（主）+ agent_id（次），格式化指标值
-            let host_display = if let Some(ref name) = item.instance_name {
+            // 证书告警显示域名+IP，其余显示实例名+agent_id
+            let host_display = if item.agent_id == "cert-checker" {
+                let domain = item.labels.get("domain").map(|s| s.as_str()).unwrap_or("cert-checker");
+                if let Some(ip) = item.labels.get("ip") {
+                    format!("{}({})", domain, ip)
+                } else {
+                    domain.to_string()
+                }
+            } else if let Some(ref name) = item.instance_name {
                 format!("{}({})", name, item.agent_id)
             } else {
                 item.agent_id.clone()
@@ -751,5 +773,71 @@ mod tests {
             format_metric_display("cloud.cpu.usage", 75.0, &labels, "en"),
             "Cloud CPU: 75.0%"
         );
+    }
+
+    #[test]
+    fn test_format_metric_display_cert() {
+        let mut labels = HashMap::new();
+        labels.insert("domain".to_string(), "example.com".to_string());
+        // certificate.days_until_expiry 应匹配证书剩余天数格式
+        assert_eq!(
+            format_metric_display("certificate.days_until_expiry", 354.0, &labels, "zh-CN"),
+            "证书剩余天数: 354天 [example.com]"
+        );
+        assert_eq!(
+            format_metric_display("certificate.days_until_expiry", 30.0, &labels, "en"),
+            "Cert Days Left: 30 [example.com]"
+        );
+        // certificate.days_remaining 仍然匹配
+        assert_eq!(
+            format_metric_display("certificate.days_remaining", 10.0, &labels, "zh-CN"),
+            "证书剩余天数: 10天 [example.com]"
+        );
+    }
+
+    #[test]
+    fn test_cert_checker_display() {
+        let mut labels = HashMap::new();
+        labels.insert("domain".to_string(), "example.com".to_string());
+        labels.insert("ip".to_string(), "1.2.3.4".to_string());
+
+        let items = vec![AlertReportDetail {
+            agent_id: "cert-checker".to_string(),
+            instance_name: None,
+            rule_name: "SSL证书即将过期".to_string(),
+            metric_name: "certificate.days_until_expiry".to_string(),
+            severity: "warning".to_string(),
+            value: 25.0,
+            threshold: 30.0,
+            message: "证书将在25天后过期".to_string(),
+            triggered_at: Utc::now(),
+            labels,
+        }];
+
+        let params = AlertReportParams {
+            report_date: "2026-03-16 10:00",
+            total_alerts: 1,
+            critical_count: 0,
+            warning_count: 1,
+            items: &items,
+            locale: "zh-CN",
+        };
+
+        // HTML: 域名加粗 + IP 灰字
+        let html = AlertReportRenderer::render_html(&params).unwrap();
+        assert!(html.contains("example.com"), "HTML should contain domain");
+        assert!(html.contains("1.2.3.4"), "HTML should contain IP");
+        assert!(!html.contains(">cert-checker<"), "HTML should not show raw cert-checker as primary");
+
+        // Markdown: domain (ip)
+        let md = AlertReportRenderer::render_markdown(&params);
+        assert!(md.contains("example.com (1.2.3.4)"), "Markdown should show domain (ip), got: {}", md);
+
+        // Plain: domain(ip)
+        let plain = AlertReportRenderer::render_plain(&params);
+        assert!(plain.contains("example.com(1.2.3.4)"), "Plain should show domain(ip), got: {}", plain);
+
+        // 指标值格式化
+        assert!(html.contains("证书剩余天数:"), "HTML should contain formatted cert metric");
     }
 }

@@ -1291,10 +1291,10 @@ async fn get_cloud_instance_detail(
     //    Format: cloud:{provider}:{instance_id}
     let agent_id = format!("cloud:{}:{}", instance.provider, instance.instance_id);
 
-    // 3. Query latest metric values (lookback 2 days to cover partition boundaries)
+    // 3. Query latest metric values (lookback 7 days to cover collection gaps)
     let metrics = match state
         .storage
-        .query_latest_metrics_for_agent(&agent_id, CLOUD_METRIC_NAMES, 2)
+        .query_latest_metrics_for_agent(&agent_id, CLOUD_METRIC_NAMES, 7)
         .await
     {
         Ok(m) => m,

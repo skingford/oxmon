@@ -16,6 +16,7 @@ mod m013_users_extended_fields;
 mod m014_login_throttles;
 mod m015_cloud_accounts_region_for_sign;
 mod m016_cloud_accounts_scp_auth_token;
+mod m017_instance_contacts;
 
 pub struct Migrator;
 
@@ -39,6 +40,7 @@ impl MigratorTrait for Migrator {
             Box::new(m014_login_throttles::Migration),
             Box::new(m015_cloud_accounts_region_for_sign::Migration),
             Box::new(m016_cloud_accounts_scp_auth_token::Migration),
+            Box::new(m017_instance_contacts::Migration),
         ]
     }
 }

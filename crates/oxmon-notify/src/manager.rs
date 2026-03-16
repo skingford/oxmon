@@ -38,6 +38,15 @@ impl SilenceWindow {
     }
 }
 
+/// 实例联系人按渠道类型分组后的接收人集合。
+#[derive(Default)]
+struct ContactRecipients {
+    emails: Vec<String>,
+    phones: Vec<String>,
+    dingtalk_webhooks: Vec<String>,
+    webhooks: Vec<String>,
+}
+
 /// A loaded channel instance with its associated recipients.
 struct ChannelInstance {
     channel: Box<dyn NotificationChannel>,
@@ -391,16 +400,40 @@ impl NotificationManager {
             .cert_store
             .get_runtime_setting_string("language", oxmon_common::i18n::DEFAULT_LOCALE)
             .await;
+
+        // 查询实例联系人：如果触发告警的实例有配置联系人，按联系方式路由通知
+        let contact_recipients = self.resolve_contact_recipients(&event.agent_id).await;
+
         let instances = self.instances.read().await;
         for (channel_id, instance) in instances.iter() {
             if event.severity < instance.min_severity {
                 continue;
             }
 
+            // 确定本渠道的接收人列表
+            let recipients = if let Some(ref cr) = contact_recipients {
+                // 有实例联系人：按渠道类型匹配联系方式
+                let matched = match instance.channel_type.as_str() {
+                    "email" => &cr.emails,
+                    "sms" | "aliyun_sms" | "tencent_sms" => &cr.phones,
+                    "dingtalk" => &cr.dingtalk_webhooks,
+                    "webhook" | "weixin" => &cr.webhooks,
+                    _ => &cr.emails, // 未知类型回退到邮箱
+                };
+                if matched.is_empty() {
+                    // 该联系方式无值，跳过此渠道
+                    continue;
+                }
+                matched.clone()
+            } else {
+                // 无实例联系人：使用渠道默认接收人
+                instance.recipients.clone()
+            };
+
             let start = Instant::now();
             let result = instance
                 .channel
-                .send(event, &instance.recipients, &locale)
+                .send(event, &recipients, &locale)
                 .await;
             let duration_ms = start.elapsed().as_millis() as i64;
 
@@ -422,11 +455,64 @@ impl NotificationManager {
                 channel_name: &instance.name,
                 channel_type: &instance.channel_type,
                 duration_ms,
-                recipient_count: instance.recipients.len() as i32,
+                recipient_count: recipients.len() as i32,
                 response,
             };
             Self::record_send_log(&self.cert_store, event, &ctx, &send_result).await;
         }
+    }
+
+    /// 根据 agent_id 查找实例联系人，将联系方式按渠道类型分组。
+    /// 如果没有匹配的联系人，返回 None（表示回退到默认接收人）。
+    async fn resolve_contact_recipients(&self, agent_id: &str) -> Option<ContactRecipients> {
+        let contacts = match self.cert_store.find_contacts_for_agent(agent_id).await {
+            Ok(c) if !c.is_empty() => c,
+            Ok(_) => return None,
+            Err(e) => {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    error = %e,
+                    "Failed to query instance contacts, falling back to default recipients"
+                );
+                return None;
+            }
+        };
+
+        let mut cr = ContactRecipients::default();
+        for c in &contacts {
+            if let Some(ref email) = c.contact_email {
+                if !email.is_empty() && !cr.emails.contains(email) {
+                    cr.emails.push(email.clone());
+                }
+            }
+            if let Some(ref phone) = c.contact_phone {
+                if !phone.is_empty() && !cr.phones.contains(phone) {
+                    cr.phones.push(phone.clone());
+                }
+            }
+            if let Some(ref dt) = c.contact_dingtalk {
+                if !dt.is_empty() && !cr.dingtalk_webhooks.contains(dt) {
+                    cr.dingtalk_webhooks.push(dt.clone());
+                }
+            }
+            if let Some(ref wh) = c.contact_webhook {
+                if !wh.is_empty() && !cr.webhooks.contains(wh) {
+                    cr.webhooks.push(wh.clone());
+                }
+            }
+        }
+
+        tracing::info!(
+            agent_id = %agent_id,
+            contact_count = contacts.len(),
+            emails = cr.emails.len(),
+            phones = cr.phones.len(),
+            dingtalk = cr.dingtalk_webhooks.len(),
+            webhooks = cr.webhooks.len(),
+            "Resolved instance contacts for notification routing"
+        );
+
+        Some(cr)
     }
 
     /// 记录一条通知发送日志。

@@ -20,6 +20,7 @@ pub use store::{
     LoginThrottleRow, NotificationChannelFilter, NotificationChannelRow, NotificationChannelUpdate,
     NotificationLogFilter, NotificationLogRow, NotificationRecipientRow, SilenceWindowFilter,
     SilenceWindowRow, SystemConfigFilter, SystemConfigRow, SystemConfigUpdate,
+    InstanceContactFilter, InstanceContactRow, InstanceContactUpdate,
 };
 
 use anyhow::Result;

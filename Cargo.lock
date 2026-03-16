@@ -2752,6 +2752,7 @@ dependencies = [
  "base64",
  "bcrypt",
  "chrono",
+ "glob-match",
  "migration",
  "oxmon-common",
  "rand 0.10.0",

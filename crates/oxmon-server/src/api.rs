@@ -4,6 +4,7 @@ pub mod audit;
 pub mod certificates;
 pub mod dashboard;
 pub mod dictionaries;
+pub mod instance_contacts;
 pub mod notifications;
 pub mod pagination;
 pub mod sys_configs;
@@ -1573,6 +1574,7 @@ pub fn protected_routes() -> OpenApiRouter<AppState> {
         .merge(dictionaries::dictionary_routes())
         .merge(sys_configs::sys_config_routes())
         .merge(crate::cloud::cloud_routes())
+        .merge(instance_contacts::instance_contact_routes())
         .merge(audit::audit_routes())
         .merge(admin::admin_routes())
 }

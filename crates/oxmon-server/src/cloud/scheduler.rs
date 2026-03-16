@@ -313,8 +313,12 @@ impl CloudCheckScheduler {
             "Collecting cloud metrics for due accounts"
         );
 
-        // Build providers for due accounts
+        // Build providers for due accounts and filter pre-discovered instances
         let mut providers: Vec<Arc<dyn oxmon_cloud::CloudProvider>> = Vec::new();
+        let due_provider_keys: HashSet<String> = due_accounts
+            .iter()
+            .map(|(_ck, pt, an, _ac)| format!("{}:{}", pt, an))
+            .collect();
         for (_config_key, provider_type, account_name, account_config) in &due_accounts {
             match build_provider(provider_type, account_name, account_config.clone()) {
                 Ok(provider) => {
@@ -336,29 +340,35 @@ impl CloudCheckScheduler {
             return Ok(());
         }
 
-        // Collect metrics from all providers
-        let collector = CloudCollector::new(providers, self.max_concurrent);
-        let mut metrics = collector.collect_all().await?;
+        // Filter instances to only those belonging to due accounts (avoid redundant list_instances calls)
+        let due_instances: Vec<oxmon_cloud::CloudInstance> = all_instances
+            .iter()
+            .filter(|i| due_provider_keys.contains(&i.provider))
+            .cloned()
+            .collect();
 
-        // Diagnose collection gaps: discovered instances but no metrics object returned
-        // (usually timeout/provider mismatch/error in collector task).
-        let discovered_ids: HashSet<String> = all_instances
+        // Collect metrics using pre-discovered instances (skip redundant list_instances)
+        let collector = CloudCollector::new(providers, self.max_concurrent);
+        let mut metrics = collector.collect_for_instances(due_instances.clone()).await?;
+
+        // Diagnose collection gaps: only compare against due account instances (not all accounts)
+        let due_instance_ids: HashSet<String> = due_instances
             .iter()
             .map(|i| i.instance_id.clone())
             .collect();
         let collected_ids: HashSet<String> =
             metrics.iter().map(|m| m.instance_id.clone()).collect();
         let mut missing_ids: Vec<String> =
-            discovered_ids.difference(&collected_ids).cloned().collect();
+            due_instance_ids.difference(&collected_ids).cloned().collect();
         missing_ids.sort();
         if !missing_ids.is_empty() {
             let sample: Vec<String> = missing_ids.iter().take(20).cloned().collect();
             tracing::warn!(
-                discovered_instances = discovered_ids.len(),
+                due_instances = due_instance_ids.len(),
                 collected_metrics_instances = collected_ids.len(),
                 missing_count = missing_ids.len(),
                 sample_missing_instance_ids = ?sample,
-                "Some cloud instances were discovered but returned no metrics object"
+                "Some due cloud instances were discovered but returned no metrics object"
             );
         }
 
@@ -394,6 +404,12 @@ impl CloudCheckScheduler {
             "Hardware specs enrichment completed"
         );
 
+        // Count metrics per account (keyed by "provider_type:account_name") before moving into batch
+        let mut per_account_metrics_count: HashMap<String, i32> = HashMap::new();
+        for m in &metrics {
+            *per_account_metrics_count.entry(m.provider.clone()).or_insert(0) += 1;
+        }
+
         // Convert metrics to MetricDataPoint and write to storage
         let batch = self.metrics_to_batch(metrics);
         if !batch.data_points.is_empty() {
@@ -406,15 +422,62 @@ impl CloudCheckScheduler {
             self.evaluate_alerts(&batch.data_points).await;
         }
 
-        // Update collection state for each account
-        for (config_key, _provider_type, _account_name, _account_config) in &due_accounts {
+        // Update collection state per account: only update last_collected_at when metrics were actually collected
+        for (config_key, provider_type, account_name, _account_config) in &due_accounts {
+            let provider_key = format!("{}:{}", provider_type, account_name);
+            let account_count = per_account_metrics_count.get(&provider_key).copied().unwrap_or(0);
+            let account_due_instances = due_instances.iter().filter(|i| i.provider == provider_key).count();
+
+            // Determine if list_instances failed for this account (no instances synced)
+            let sync_failed = !successful_synced.contains_key(config_key.as_str());
+
+            let (ts, error_msg): (i64, Option<String>) = if account_count > 0 {
+                // Successfully collected metrics — update timestamp
+                (now, None)
+            } else {
+                // No metrics collected — preserve previous timestamp so the account retries sooner
+                let prev_ts = self
+                    .cert_store
+                    .get_cloud_collection_state(config_key)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|s| s.last_collected_at)
+                    .unwrap_or(now);
+
+                let err = if sync_failed {
+                    tracing::warn!(
+                        config_key = config_key,
+                        provider = provider_key,
+                        "Skipping last_collected_at update: list_instances failed"
+                    );
+                    "list_instances API call failed".to_string()
+                } else if account_due_instances == 0 {
+                    tracing::warn!(
+                        config_key = config_key,
+                        provider = provider_key,
+                        "Skipping last_collected_at update: no instances discovered"
+                    );
+                    "No instances discovered for this account".to_string()
+                } else {
+                    tracing::warn!(
+                        config_key = config_key,
+                        provider = provider_key,
+                        due_instances = account_due_instances,
+                        "Skipping last_collected_at update: instances found but no metrics collected"
+                    );
+                    format!("0 metrics from {} instances", account_due_instances)
+                };
+                (prev_ts, Some(err))
+            };
+
             if let Err(e) = self
                 .cert_store
                 .upsert_cloud_collection_state(
                     config_key,
-                    now,
-                    batch.data_points.len() as i32,
-                    None,
+                    ts,
+                    account_count,
+                    error_msg.as_deref(),
                 )
                 .await
             {

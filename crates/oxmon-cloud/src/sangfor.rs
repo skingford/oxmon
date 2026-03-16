@@ -590,6 +590,40 @@ fn derive_instance_type(cpu_cores: Option<u32>, memory_gb: Option<f64>) -> Strin
     }
 }
 
+/// Parse common datetime string formats to Unix timestamp (seconds).
+/// Supported formats:
+/// - `"2024-01-15T10:30:00Z"` (ISO 8601 / RFC 3339)
+/// - `"2024-01-15T10:30:00+08:00"` (with timezone offset)
+/// - `"2024-01-15T10:30:00.000000"` (ISO 8601 without timezone, SCP format, assumed UTC)
+/// - `"2024-01-15 10:30:00"` (space-separated, assumed UTC)
+/// - `"2024-01-15"` (date only, midnight UTC)
+fn parse_datetime_to_timestamp(s: &str) -> Option<i64> {
+    use chrono::NaiveDate;
+    // Try RFC 3339 / ISO 8601 with timezone
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Some(dt.timestamp());
+    }
+    // Try ISO 8601 without timezone, with fractional seconds (SCP: "2026-01-04T06:42:42.000000")
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
+        return Some(ndt.and_utc().timestamp());
+    }
+    // Try ISO 8601 without timezone, without fractional seconds ("2024-01-15T10:30:00")
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        return Some(ndt.and_utc().timestamp());
+    }
+    // Try "YYYY-MM-DD HH:MM:SS" (assumed UTC)
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Some(ndt.and_utc().timestamp());
+    }
+    // Try date only "YYYY-MM-DD" (midnight UTC)
+    if let Ok(nd) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return nd
+            .and_hms_opt(0, 0, 0)
+            .map(|ndt| ndt.and_utc().timestamp());
+    }
+    None
+}
+
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC key length is valid");
     mac.update(data);
@@ -694,6 +728,8 @@ impl CloudProvider for SangforCloudProvider {
                         .and_then(|v| v.as_str())
                         .filter(|v| !v.is_empty())
                 };
+
+
 
                 let private_ip = first_net
                     .and_then(|n| n.get("ip_address"))
@@ -865,17 +901,38 @@ impl CloudProvider for SangforCloudProvider {
 
                 // ── 生命周期 ─────────────────────────────────────────────────────
                 // expire_time="unlimited" → 按需付费；其他值（日期字符串）→ 包年包月
-                // SCP 服务器对象不含创建时间戳（created_at 不在响应顶层）
-                let charge_type = s
+                let expire_time_str = s
                     .get("expire_time")
                     .and_then(|v| v.as_str())
-                    .filter(|v| !v.is_empty())
-                    .map(|t| {
-                        if t == "unlimited" {
-                            "postpaid".to_string()
-                        } else {
-                            "prepaid".to_string()
-                        }
+                    .filter(|v| !v.is_empty());
+
+                let charge_type = expire_time_str.map(|t| {
+                    if t == "unlimited" {
+                        "postpaid".to_string()
+                    } else {
+                        "prepaid".to_string()
+                    }
+                });
+
+                // 解析到期时间：非 "unlimited" 时尝试解析为 Unix 时间戳
+                let expired_time = expire_time_str
+                    .filter(|t| *t != "unlimited")
+                    .and_then(parse_datetime_to_timestamp);
+
+                // 解析创建时间：优先尝试 created_at/created/create_time 字符串字段，
+                // 若不存在则从 uptime（运行秒数）反推：now - uptime = 大致创建时间
+                let created_time = ["created_at", "created", "create_time"]
+                    .iter()
+                    .find_map(|key| {
+                        s.get(*key)
+                            .and_then(|v| v.as_str())
+                            .filter(|v| !v.is_empty())
+                            .and_then(parse_datetime_to_timestamp)
+                    })
+                    .or_else(|| {
+                        s.get("uptime")
+                            .and_then(|v| v.as_u64().or_else(|| v.as_i64().map(|i| i as u64)))
+                            .map(|uptime_secs| Utc::now().timestamp() - uptime_secs as i64)
                     });
 
                 // ── 标签 ─────────────────────────────────────────────────────────
@@ -920,8 +977,8 @@ impl CloudProvider for SangforCloudProvider {
                     cpu_cores,
                     memory_gb,
                     disk_gb,
-                    created_time: None, // SCP 服务器对象顶层不含创建时间戳
-                    expired_time: None, // expire_time 为字符串，无法直接转为 Unix 时间戳
+                    created_time,
+                    expired_time,
                     charge_type,
                     vpc_id,
                     subnet_id,
@@ -932,8 +989,10 @@ impl CloudProvider for SangforCloudProvider {
                     eip_allocation_id,
                     internet_charge_type,
                     image_id,
-                    // SCP 响应中 hostname 字段不存在（host_name 是物理宿主机名，非 VM hostname）
-                    hostname: None,
+                    // 尝试从 hostname/computer_name 提取（host_name 是物理宿主机名，跳过）
+                    hostname: nev("hostname")
+                        .or_else(|| nev("computer_name"))
+                        .map(|v| v.to_string()),
                     description: nev("description").or_else(|| nev("desc")).map(|v| v.to_string()),
                     gpu,
                     io_optimized,
