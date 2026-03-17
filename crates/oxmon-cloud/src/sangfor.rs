@@ -226,6 +226,7 @@ fn metric_candidates() -> Vec<(&'static str, Vec<&'static str>)> {
         ("io_write", vec!["volume_write_iops", "io.write.iops", "io_write_iops", "disk_write_iops", "disk.write.iops"]),
         ("net_in", vec!["nic_in_bps", "net.in.bps", "net_in_bps", "network_in_bps", "network.in.bps"]),
         ("net_out", vec!["nic_out_bps", "net.out.bps", "net_out_bps", "network_out_bps", "network.out.bps"]),
+        ("connections", vec!["tcp_curr_estab", "tcp_connections", "tcp.connections", "tcp.curr.estab", "connections"]),
     ]
 }
 
@@ -1227,7 +1228,7 @@ impl CloudProvider for SangforCloudProvider {
             network_out_bytes: metrics_map.get("net_out").copied(),
             disk_iops_read: metrics_map.get("io_read").copied(),
             disk_iops_write: metrics_map.get("io_write").copied(),
-            connections: None,
+            connections: metrics_map.get("connections").copied(),
             collected_at: Utc::now(),
             instance_type: String::new(),
             cpu_cores: None,

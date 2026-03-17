@@ -631,7 +631,7 @@ async fn dictionary_endpoints_should_cover_crud_paths() {
     let (status, body, _) = request_no_body(
         &ctx.app,
         "GET",
-        "/v1/dictionaries/type/channel_type",
+        "/v1/dictionaries/types/all?dict_type__in=channel_type",
         Some(&token),
     )
     .await;
@@ -1239,23 +1239,18 @@ async fn cloud_account_create_and_get_should_normalize_regions_and_default_inter
             "config_key": "cloud_tencent_prod",
             "provider": "tencent",
             "display_name": "Tencent Prod",
-            "config": {
-                "secret_id": "example-secret-id",
-                "secret_key": "example-secret-key",
-                "default_region": "ap-guangzhou"
-            }
+            "account_name": "test-account",
+            "secret_id": "example-secret-id",
+            "secret_key": "example-secret-key",
+            "regions": ["ap-guangzhou"]
         })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_ok_envelope(&body);
     let id = must_some(body["data"]["id"].as_str(), "id should exist").to_string();
-    assert_eq!(body["data"]["config"]["regions"], json!(["ap-guangzhou"]));
-    assert_eq!(
-        body["data"]["config"]["default_region"],
-        serde_json::Value::Null
-    );
-    assert_eq!(body["data"]["config"]["collection_interval_secs"], 3600);
+    assert_eq!(body["data"]["regions"], json!(["ap-guangzhou"]));
+    assert_eq!(body["data"]["collection_interval_secs"], 3600);
 
     let (status, body, _) = request_no_body(
         &ctx.app,
@@ -1266,12 +1261,8 @@ async fn cloud_account_create_and_get_should_normalize_regions_and_default_inter
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_ok_envelope(&body);
-    assert_eq!(body["data"]["config"]["regions"], json!(["ap-guangzhou"]));
-    assert_eq!(
-        body["data"]["config"]["default_region"],
-        serde_json::Value::Null
-    );
-    assert_eq!(body["data"]["config"]["collection_interval_secs"], 3600);
+    assert_eq!(body["data"]["regions"], json!(["ap-guangzhou"]));
+    assert_eq!(body["data"]["collection_interval_secs"], 3600);
 }
 
 #[tokio::test]
@@ -1415,16 +1406,21 @@ async fn dashboard_overview_should_include_cloud_resource_summary() {
     must_ok(
         ctx.state
             .cert_store
-            .insert_system_config(&oxmon_storage::SystemConfigRow {
+            .insert_cloud_account(&oxmon_storage::CloudAccountRow {
                 id: oxmon_common::id::next_id(),
                 config_key: "cloud_tencent_dashboard".to_string(),
-                config_type: "cloud_account".to_string(),
-                provider: Some("tencent".to_string()),
+                provider: "tencent".to_string(),
                 display_name: "Cloud Dashboard".to_string(),
                 description: None,
-                config_json:
-                    r#"{"secret_id":"example-secret-id","secret_key":"example-secret-key","regions":["ap-guangzhou"]}"#
-                        .to_string(),
+                account_name: "test".to_string(),
+                secret_id: "example-secret-id".to_string(),
+                secret_key: "example-secret-key".to_string(),
+                regions: vec!["ap-guangzhou".to_string()],
+                endpoint: None,
+                region_for_sign: None,
+                scp_auth_token: None,
+                scp_metric_names: None,
+                collection_interval_secs: 3600,
                 enabled: true,
                 created_at: now,
                 updated_at: now,
@@ -1550,16 +1546,21 @@ async fn dashboard_overview_should_count_unknown_cloud_instance_statuses() {
     must_ok(
         ctx.state
             .cert_store
-            .insert_system_config(&oxmon_storage::SystemConfigRow {
+            .insert_cloud_account(&oxmon_storage::CloudAccountRow {
                 id: oxmon_common::id::next_id(),
                 config_key: "cloud_tencent_unknown_status".to_string(),
-                config_type: "cloud_account".to_string(),
-                provider: Some("tencent".to_string()),
+                provider: "tencent".to_string(),
                 display_name: "Cloud Unknown Status".to_string(),
                 description: None,
-                config_json:
-                    r#"{"secret_id":"example-secret-id","secret_key":"example-secret-key","regions":["ap-guangzhou"]}"#
-                        .to_string(),
+                account_name: "test".to_string(),
+                secret_id: "example-secret-id".to_string(),
+                secret_key: "example-secret-key".to_string(),
+                regions: vec!["ap-guangzhou".to_string()],
+                endpoint: None,
+                region_for_sign: None,
+                scp_auth_token: None,
+                scp_metric_names: None,
+                collection_interval_secs: 3600,
                 enabled: true,
                 created_at: now,
                 updated_at: now,
