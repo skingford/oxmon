@@ -33,6 +33,8 @@ struct CloudAccountResponse {
     region_for_sign: Option<String>,
     /// 深信服 SCP 6.3.0 及更早版本需要的 Cookie 认证 Token（SCP 6.3.70+ 无需）
     scp_auth_token: Option<String>,
+    /// 深信服 SCP 自定义指标名称映射（JSON 格式），为空时使用默认指标名
+    scp_metric_names: Option<String>,
     collection_interval_secs: i64,
     enabled: bool,
     created_at: String,
@@ -64,6 +66,9 @@ struct CreateCloudAccountRequest {
     region_for_sign: Option<String>,
     /// 深信服 SCP 6.3.0 及更早版本需要的 Cookie 认证 Token（SCP 6.3.70+ 无需）
     scp_auth_token: Option<String>,
+    /// 深信服 SCP 自定义指标名称映射（JSON 格式），为空时使用默认指标名
+    /// 示例：{"cpu":"vcpus_util","memory":"mem_util","disk":"volume_util"}
+    scp_metric_names: Option<String>,
     /// 采集间隔（秒，默认 3600）
     collection_interval_secs: Option<i64>,
 }
@@ -85,6 +90,8 @@ struct UpdateCloudAccountRequest {
     region_for_sign: Option<Option<String>>,
     /// 深信服 SCP Cookie 认证 Token（传入则更新，传 null 则清除）
     scp_auth_token: Option<Option<String>>,
+    /// 深信服 SCP 自定义指标名称映射（传入则更新，传 null 则清除恢复默认）
+    scp_metric_names: Option<Option<String>>,
     collection_interval_secs: Option<i64>,
     enabled: Option<bool>,
 }
@@ -339,6 +346,9 @@ fn row_to_cloud_account_config(row: &CloudAccountRow) -> CloudAccountConfig {
         endpoint: row.endpoint.clone(),
         region_for_sign: row.region_for_sign.clone(),
         scp_auth_token: row.scp_auth_token.clone(),
+        scp_metric_names: row.scp_metric_names.as_ref().and_then(|s| {
+            serde_json::from_str::<std::collections::HashMap<String, String>>(s).ok()
+        }),
         collection_interval_secs: row.collection_interval_secs as u64,
         concurrency: 5,
         instance_filter: Default::default(),
@@ -359,6 +369,7 @@ fn row_to_cloud_account_response(_state: &AppState, row: CloudAccountRow) -> Clo
         endpoint: row.endpoint,
         region_for_sign: row.region_for_sign,
         scp_auth_token: row.scp_auth_token,
+        scp_metric_names: row.scp_metric_names,
         collection_interval_secs: row.collection_interval_secs,
         enabled: row.enabled,
         created_at: row.created_at.to_rfc3339(),
@@ -615,6 +626,7 @@ async fn create_cloud_account(
         endpoint: req.endpoint,
         region_for_sign: req.region_for_sign,
         scp_auth_token: req.scp_auth_token,
+        scp_metric_names: req.scp_metric_names,
         collection_interval_secs: collection_interval,
         enabled: true,
         created_at: now,
@@ -764,6 +776,12 @@ async fn update_cloud_account(
         None => existing.scp_auth_token,
     };
 
+    let scp_metric_names = match req.scp_metric_names {
+        Some(Some(v)) => Some(v),
+        Some(None) => None,
+        None => existing.scp_metric_names,
+    };
+
     let updated = CloudAccountRow {
         id: existing.id,
         config_key: existing.config_key,
@@ -777,6 +795,7 @@ async fn update_cloud_account(
         endpoint: req.endpoint.unwrap_or(existing.endpoint),
         region_for_sign,
         scp_auth_token,
+        scp_metric_names,
         collection_interval_secs: req
             .collection_interval_secs
             .unwrap_or(existing.collection_interval_secs),
@@ -1531,6 +1550,7 @@ async fn batch_create_cloud_accounts(
             endpoint: None,
             region_for_sign: None,
             scp_auth_token: None,
+            scp_metric_names: None,
             collection_interval_secs: collection_interval,
             enabled: true,
             created_at: now,

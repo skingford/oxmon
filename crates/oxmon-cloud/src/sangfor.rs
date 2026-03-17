@@ -198,6 +198,37 @@ fn decode_chunked(input: &str) -> Result<String> {
 }
 // ── /原始 HTTPS 客户端 ────────────────────────────────────────────────────────
 
+/// SCP 指标名映射：标准键 -> SCP API 指标名
+/// 标准键: cpu, memory, disk, io_read, io_write, net_in, net_out
+fn default_metric_map() -> HashMap<String, String> {
+    [
+        ("cpu", "cpu.util"),
+        ("memory", "memory.util"),
+        ("disk", "disk.util"),
+        ("io_read", "io.read.iops"),
+        ("io_write", "io.write.iops"),
+        ("net_in", "net.in.bps"),
+        ("net_out", "net.out.bps"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
+}
+
+/// 每个标准指标键对应的候选 SCP 指标名（按优先级排列）
+/// 自动发现时对每个标准键逐一探测，找到第一个可用的名称
+fn metric_candidates() -> Vec<(&'static str, Vec<&'static str>)> {
+    vec![
+        ("cpu", vec!["vcpus_util", "cpu.util", "cpu_util", "cpu_usage", "cpu.usage"]),
+        ("memory", vec!["mem_util", "memory.util", "memory_util", "memory_usage", "memory.usage"]),
+        ("disk", vec!["volume_util", "disk.util", "disk_util", "disk_usage", "disk.usage"]),
+        ("io_read", vec!["volume_read_iops", "io.read.iops", "io_read_iops", "disk_read_iops", "disk.read.iops"]),
+        ("io_write", vec!["volume_write_iops", "io.write.iops", "io_write_iops", "disk_write_iops", "disk.write.iops"]),
+        ("net_in", vec!["nic_in_bps", "net.in.bps", "net_in_bps", "network_in_bps", "network.in.bps"]),
+        ("net_out", vec!["nic_out_bps", "net.out.bps", "net_out_bps", "network_out_bps", "network.out.bps"]),
+    ]
+}
+
 pub struct SangforCloudProvider {
     account_name: String,
     secret_id: String,
@@ -213,6 +244,12 @@ pub struct SangforCloudProvider {
     instance_filter: crate::InstanceFilter,
     /// 指标采集时间窗口（秒），与账号配置的 collection_interval_secs 一致
     collection_interval_secs: u64,
+    /// 标准键 -> SCP API 指标名的映射（支持运行时自动发现更新）
+    metric_map: std::sync::RwLock<HashMap<String, String>>,
+    /// 指标名是否已通过用户配置明确指定（true 时跳过自动发现）
+    metric_map_from_config: bool,
+    /// 是否已完成自动发现（成功找到可用的指标名集合后设为 true）
+    metric_map_resolved: std::sync::atomic::AtomicBool,
 }
 
 impl SangforCloudProvider {
@@ -227,6 +264,11 @@ impl SangforCloudProvider {
             .clone()
             .unwrap_or_else(|| DEFAULT_REGION_FOR_SIGN.to_string());
 
+        let (metric_map, metric_map_from_config) = match config.scp_metric_names {
+            Some(map) => (map, true),
+            None => (default_metric_map(), false),
+        };
+
         Ok(Self {
             account_name: account_name.to_string(),
             secret_id: config.secret_id,
@@ -237,6 +279,9 @@ impl SangforCloudProvider {
             scp_auth_token: config.scp_auth_token,
             instance_filter: config.instance_filter,
             collection_interval_secs: config.collection_interval_secs,
+            metric_map: std::sync::RwLock::new(metric_map),
+            metric_map_from_config,
+            metric_map_resolved: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -343,16 +388,22 @@ impl SangforCloudProvider {
                 .with_context(|| format!("raw HTTPS GET {}{} failed", self.endpoint, path_and_query))?;
 
         if !(200..300).contains(&status) {
+            // 尝试从 JSON 响应中提取 message（serde_json 会自动解码 Unicode 转义）
+            let decoded_msg = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(String::from));
+            let display_msg = decoded_msg.as_deref().unwrap_or(&text);
+
             tracing::error!(
                 account = %self.account_name,
                 http_status = %status,
-                response_body = %text,
+                response_body = %display_msg,
                 uri_for_sign = %uri,
                 canonical_request = %canonical_request,
                 string_to_sign = %string_to_sign,
                 "Sangfor SCP request failed"
             );
-            bail!("SCP API error ({}): {}", status, text);
+            bail!("SCP API error ({}): {}", status, display_msg);
         }
 
         let val: serde_json::Value =
@@ -450,13 +501,20 @@ impl SangforCloudProvider {
         Ok(servers)
     }
 
-    /// 获取单台服务器的最新指标（取最后一个数据点）
-    async fn fetch_metrics_for_server(&self, server_id: &str) -> Result<HashMap<String, f64>> {
-        let metric_names = "cpu.util,memory.util,disk.util,io.read.iops,io.write.iops,net.in.bps,net.out.bps";
-        // timegap 使用账号配置的采集间隔（秒整数），确保时间窗口与调度间隔一致
+    /// 使用指定的指标名映射获取服务器指标
+    ///
+    /// 返回 Ok(HashMap) 正常结果，或 Err 错误（包含 "无效的 metric_names" 时表示指标名不匹配）
+    async fn try_fetch_metrics(
+        &self,
+        server_id: &str,
+        metric_map: &HashMap<String, String>,
+    ) -> Result<HashMap<String, f64>> {
+        let scp_names: Vec<&str> = metric_map.values().map(|v| v.as_str()).collect();
+        let metric_names_param = scp_names.join(",");
+
         let qs = format!(
             "object_type=server&metric_names={}&timegap={}",
-            metric_names, self.collection_interval_secs
+            metric_names_param, self.collection_interval_secs
         );
         let path = format!("/metrics/{}", server_id);
 
@@ -471,18 +529,25 @@ impl SangforCloudProvider {
 
         let data = val.get("data").unwrap_or(&serde_json::Value::Null);
 
+        // 构建 SCP 指标名 -> 标准键 的反向映射
+        let reverse_map: HashMap<&str, &str> = metric_map
+            .iter()
+            .map(|(std_key, scp_name)| (scp_name.as_str(), std_key.as_str()))
+            .collect();
+
         let mut result = HashMap::new();
-        for name in metric_names.split(',') {
-            if let Some(metric_obj) = data.get(name) {
+        for scp_name in &scp_names {
+            if let Some(metric_obj) = data.get(*scp_name) {
                 if let Some(datapoints) = metric_obj.get("datapoints").and_then(|v| v.as_array()) {
                     if let Some(last) = datapoints.last() {
-                        // datapoints format: [[timestamp, value], ...]
                         let val = last
                             .as_array()
                             .and_then(|arr| arr.get(1))
                             .and_then(|v| v.as_f64());
                         if let Some(v) = val {
-                            result.insert(name.to_string(), v);
+                            if let Some(std_key) = reverse_map.get(scp_name) {
+                                result.insert(std_key.to_string(), v);
+                            }
                         }
                     }
                 }
@@ -490,6 +555,130 @@ impl SangforCloudProvider {
         }
 
         Ok(result)
+    }
+
+    /// 判断错误是否为 "无效的 metric_names"
+    fn is_invalid_metric_names_error(err: &anyhow::Error) -> bool {
+        let msg = err.to_string();
+        msg.contains("无效的 metric_names")
+            || msg.contains("invalid metric_names")
+            || msg.contains("Invalid metric_names")
+    }
+
+    /// 逐个探测每个标准指标键对应的 SCP 指标名，找到第一个可用的名称
+    ///
+    /// 对于每个标准键（cpu/memory/disk/...），依次尝试候选名称列表中的每个名称，
+    /// 发送单个指标查询请求。如果 SCP 返回成功（code=0），则该名称可用。
+    async fn discover_metric_names(&self, server_id: &str) -> Result<HashMap<String, String>> {
+        tracing::info!(
+            account = %self.account_name,
+            server_id = %server_id,
+            "Starting SCP metric name auto-discovery (probing individual metrics)..."
+        );
+
+        let mut discovered = HashMap::new();
+
+        for (std_key, candidates) in metric_candidates() {
+            let mut found = false;
+            for candidate in &candidates {
+                let qs = format!(
+                    "object_type=server&metric_names={}&timegap={}",
+                    candidate, self.collection_interval_secs
+                );
+                let path = format!("/metrics/{}", server_id);
+
+                match self.signed_get(&path, &qs).await {
+                    Ok(_) => {
+                        tracing::info!(
+                            account = %self.account_name,
+                            std_key = %std_key,
+                            scp_name = %candidate,
+                            "Discovered valid metric name"
+                        );
+                        discovered.insert(std_key.to_string(), candidate.to_string());
+                        found = true;
+                        break;
+                    }
+                    Err(e) if Self::is_invalid_metric_names_error(&e) => {
+                        tracing::debug!(
+                            account = %self.account_name,
+                            std_key = %std_key,
+                            scp_name = %candidate,
+                            "Metric name rejected, trying next candidate"
+                        );
+                        continue;
+                    }
+                    Err(e) => {
+                        // 非指标名错误（网络等），终止发现
+                        return Err(e).context("Metric discovery aborted due to non-metric error");
+                    }
+                }
+            }
+            if !found {
+                tracing::warn!(
+                    account = %self.account_name,
+                    std_key = %std_key,
+                    candidates = ?candidates,
+                    "No valid metric name found for this key, skipping"
+                );
+            }
+        }
+
+        if discovered.is_empty() {
+            bail!(
+                "Auto-discovery failed: no valid metric names found for SCP account '{}'. \
+                 Please configure 'scp_metric_names' manually via the cloud account API.",
+                self.account_name
+            );
+        }
+
+        tracing::info!(
+            account = %self.account_name,
+            discovered = ?discovered,
+            "SCP metric name auto-discovery completed"
+        );
+
+        Ok(discovered)
+    }
+
+    /// 获取单台服务器的最新指标（取最后一个数据点）
+    ///
+    /// 返回的 HashMap 键为标准键（cpu/memory/disk/io_read/io_write/net_in/net_out）
+    /// 当默认指标名被 SCP 拒绝时，自动逐个探测候选名称进行发现
+    async fn fetch_metrics_for_server(&self, server_id: &str) -> Result<HashMap<String, f64>> {
+        // 读取当前指标名映射
+        let current_map = self.metric_map.read().unwrap().clone();
+
+        match self.try_fetch_metrics(server_id, &current_map).await {
+            Ok(result) => {
+                // 标记为已解析（当前映射可用）
+                self.metric_map_resolved
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                Ok(result)
+            }
+            Err(e) => {
+                // 如果不是指标名无效，或者用户明确配置了指标名，或者已完成过发现，直接返回错误
+                if !Self::is_invalid_metric_names_error(&e)
+                    || self.metric_map_from_config
+                    || self
+                        .metric_map_resolved
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    return Err(e);
+                }
+
+                // 自动发现：逐个探测各指标键的候选名称
+                let discovered = self.discover_metric_names(server_id).await?;
+
+                // 更新缓存并标记为已解析
+                *self.metric_map.write().unwrap() = discovered.clone();
+                self.metric_map_resolved
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+
+                // 使用发现的指标名重新获取指标
+                self.try_fetch_metrics(server_id, &discovered).await
+            }
+        }
     }
 }
 
@@ -1031,13 +1220,13 @@ impl CloudProvider for SangforCloudProvider {
             instance_name: String::new(),
             provider: format!("sangfor:{}", self.account_name),
             region: region.to_string(),
-            cpu_usage: metrics_map.get("cpu.util").copied(),
-            memory_usage: metrics_map.get("memory.util").copied(),
-            disk_usage: metrics_map.get("disk.util").copied(),
-            network_in_bytes: metrics_map.get("net.in.bps").copied(),
-            network_out_bytes: metrics_map.get("net.out.bps").copied(),
-            disk_iops_read: metrics_map.get("io.read.iops").copied(),
-            disk_iops_write: metrics_map.get("io.write.iops").copied(),
+            cpu_usage: metrics_map.get("cpu").copied(),
+            memory_usage: metrics_map.get("memory").copied(),
+            disk_usage: metrics_map.get("disk").copied(),
+            network_in_bytes: metrics_map.get("net_in").copied(),
+            network_out_bytes: metrics_map.get("net_out").copied(),
+            disk_iops_read: metrics_map.get("io_read").copied(),
+            disk_iops_write: metrics_map.get("io_write").copied(),
             connections: None,
             collected_at: Utc::now(),
             instance_type: String::new(),

@@ -85,6 +85,9 @@ impl CloudCheckScheduler {
                 endpoint: account.endpoint.clone(),
                 region_for_sign: account.region_for_sign.clone(),
                 scp_auth_token: account.scp_auth_token.clone(),
+                scp_metric_names: account.scp_metric_names.as_ref().and_then(|s| {
+                    serde_json::from_str::<std::collections::HashMap<String, String>>(s).ok()
+                }),
                 collection_interval_secs: account.collection_interval_secs as u64,
                 concurrency: 5,
                 instance_filter: Default::default(),

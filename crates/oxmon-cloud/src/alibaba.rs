@@ -922,6 +922,7 @@ mod tests {
             endpoint: None,
             region_for_sign: None,
             scp_auth_token: None,
+            scp_metric_names: None,
             collection_interval_secs: 300,
             concurrency: 5,
             instance_filter: Default::default(),

@@ -20,6 +20,8 @@ pub struct Model {
     pub region_for_sign: Option<String>,
     /// 深信服 SCP 6.3.0 及更早版本需要的 Cookie 认证 Token（SCP 6.3.70+ 无需）
     pub scp_auth_token: Option<String>,
+    /// 深信服 SCP 自定义指标名称映射（JSON 格式），为空时使用默认值
+    pub scp_metric_names: Option<String>,
     pub collection_interval_secs: i64,
     pub enabled: bool,
     pub created_at: DateTimeWithTimeZone,

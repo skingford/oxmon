@@ -125,6 +125,10 @@ pub struct CloudAccountConfig {
     /// 若设置则请求时携带 Cookie: aCMPAuthToken=<value>，并将 cookie 纳入签名
     #[serde(default)]
     pub scp_auth_token: Option<String>,
+    /// 深信服 SCP 自定义指标名称映射，键为标准名(cpu/memory/disk/io_read/io_write/net_in/net_out)，
+    /// 值为 SCP API 实际指标名。为空时使用默认值。
+    #[serde(default)]
+    pub scp_metric_names: Option<std::collections::HashMap<String, String>>,
     #[serde(default = "default_collection_interval")]
     pub collection_interval_secs: u64,
     #[serde(default = "default_concurrency")]

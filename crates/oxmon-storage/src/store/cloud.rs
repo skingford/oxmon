@@ -29,6 +29,8 @@ pub struct CloudAccountRow {
     pub region_for_sign: Option<String>,
     /// 深信服 SCP 6.3.0 及更早版本需要的 Cookie 认证 Token（SCP 6.3.70+ 无需）
     pub scp_auth_token: Option<String>,
+    /// 深信服 SCP 自定义指标名称映射（JSON 格式），为空时使用默认值
+    pub scp_metric_names: Option<String>,
     pub collection_interval_secs: i64,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
@@ -122,6 +124,7 @@ fn model_to_account(m: cloud_account::Model) -> CloudAccountRow {
         endpoint: m.endpoint,
         region_for_sign: m.region_for_sign,
         scp_auth_token: m.scp_auth_token,
+        scp_metric_names: m.scp_metric_names,
         collection_interval_secs: m.collection_interval_secs,
         enabled: m.enabled,
         created_at: m.created_at.with_timezone(&Utc),
@@ -209,6 +212,7 @@ impl CertStore {
             endpoint: Set(row.endpoint.clone()),
             region_for_sign: Set(row.region_for_sign.clone()),
             scp_auth_token: Set(row.scp_auth_token.clone()),
+            scp_metric_names: Set(row.scp_metric_names.clone()),
             collection_interval_secs: Set(row.collection_interval_secs),
             enabled: Set(row.enabled),
             created_at: Set(now),
@@ -297,6 +301,7 @@ impl CertStore {
         am.endpoint = Set(row.endpoint.clone());
         am.region_for_sign = Set(row.region_for_sign.clone());
         am.scp_auth_token = Set(row.scp_auth_token.clone());
+        am.scp_metric_names = Set(row.scp_metric_names.clone());
         am.collection_interval_secs = Set(row.collection_interval_secs);
         am.enabled = Set(row.enabled);
         am.updated_at = Set(now);
