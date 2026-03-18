@@ -1,4 +1,7 @@
-use crate::{CloudAccountConfig, CloudInstance, CloudMetrics, CloudProvider};
+use crate::{
+    mask_authorization, truncate_body, CloudAccountConfig, CloudInstance, CloudMetrics,
+    CloudProvider, DiagnoseReport, DiagnoseRequestTrace,
+};
 use anyhow::{Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use hmac::{Hmac, Mac};
@@ -11,6 +14,13 @@ const CVM_ENDPOINT: &str = "cvm.tencentcloudapi.com";
 const MONITOR_ENDPOINT: &str = "monitor.tencentcloudapi.com";
 const CVM_VERSION: &str = "2017-03-12";
 const MONITOR_VERSION: &str = "2018-07-24";
+
+struct Tc3SigningOutput {
+    authorization: String,
+    canonical_request: String,
+    string_to_sign: String,
+    credential_scope: String,
+}
 
 pub struct TencentCloudProvider {
     account_name: String,
@@ -39,7 +49,7 @@ impl TencentCloudProvider {
         })
     }
 
-    /// TC3-HMAC-SHA256 signature algorithm
+    /// TC3-HMAC-SHA256 签名算法，返回签名输出结构
     fn sign_tc3(
         &self,
         service: &str,
@@ -48,7 +58,7 @@ impl TencentCloudProvider {
         _version: &str,
         payload: &str,
         timestamp: i64,
-    ) -> Result<String> {
+    ) -> Result<Tc3SigningOutput> {
         let date = DateTime::from_timestamp(timestamp, 0)
             .context("Invalid timestamp")?
             .format("%Y-%m-%d")
@@ -94,7 +104,12 @@ impl TencentCloudProvider {
             self.secret_id, credential_scope, signed_headers, signature
         );
 
-        Ok(authorization)
+        Ok(Tc3SigningOutput {
+            authorization,
+            canonical_request,
+            string_to_sign,
+            credential_scope,
+        })
     }
 
     /// Call Tencent Cloud API with TC3 signature
@@ -108,7 +123,7 @@ impl TencentCloudProvider {
         payload: &str,
     ) -> Result<serde_json::Value> {
         let timestamp = Utc::now().timestamp();
-        let authorization = self.sign_tc3(service, host, action, version, payload, timestamp)?;
+        let signing = self.sign_tc3(service, host, action, version, payload, timestamp)?;
 
         let url = format!("https://{}/", host);
         let response = self
@@ -120,7 +135,7 @@ impl TencentCloudProvider {
             .header("X-TC-Version", version)
             .header("X-TC-Timestamp", timestamp.to_string())
             .header("X-TC-Region", region)
-            .header("Authorization", authorization)
+            .header("Authorization", signing.authorization)
             .body(payload.to_string())
             .send()
             .await
@@ -485,6 +500,111 @@ impl TencentCloudProvider {
 
         Ok(None)
     }
+
+    /// 调用腾讯云 API 并捕获完整的请求/响应追踪信息
+    async fn call_api_with_trace(
+        &self,
+        service: &str,
+        host: &str,
+        action: &str,
+        version: &str,
+        region: &str,
+        payload: &str,
+    ) -> DiagnoseRequestTrace {
+        let timestamp = Utc::now().timestamp();
+        let start = std::time::Instant::now();
+
+        let signing = match self.sign_tc3(service, host, action, version, payload, timestamp) {
+            Ok(s) => s,
+            Err(e) => {
+                return DiagnoseRequestTrace {
+                    method: "POST".to_string(),
+                    url: format!("https://{}/", host),
+                    request_headers: vec![],
+                    request_body: Some(payload.to_string()),
+                    sign_algorithm: "TC3-HMAC-SHA256".to_string(),
+                    canonical_request: String::new(),
+                    string_to_sign: String::new(),
+                    credential_scope: String::new(),
+                    response_status: 0,
+                    response_headers: vec![],
+                    response_body: format!("签名计算失败: {}", e),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                };
+            }
+        };
+
+        let url = format!("https://{}/", host);
+        let request_headers = vec![
+            ("Content-Type".to_string(), "application/json".to_string()),
+            ("Host".to_string(), host.to_string()),
+            ("X-TC-Action".to_string(), action.to_string()),
+            ("X-TC-Version".to_string(), version.to_string()),
+            ("X-TC-Timestamp".to_string(), timestamp.to_string()),
+            ("X-TC-Region".to_string(), region.to_string()),
+            (
+                "Authorization".to_string(),
+                mask_authorization(&signing.authorization),
+            ),
+        ];
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("Host", host)
+            .header("X-TC-Action", action)
+            .header("X-TC-Version", version)
+            .header("X-TC-Timestamp", timestamp.to_string())
+            .header("X-TC-Region", region)
+            .header("Authorization", &signing.authorization)
+            .body(payload.to_string())
+            .send()
+            .await;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        match response {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let response_headers: Vec<(String, String)> = resp
+                    .headers()
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                    .collect();
+                let body = resp.text().await.unwrap_or_default();
+
+                DiagnoseRequestTrace {
+                    method: "POST".to_string(),
+                    url,
+                    request_headers,
+                    request_body: Some(payload.to_string()),
+                    sign_algorithm: "TC3-HMAC-SHA256".to_string(),
+                    canonical_request: signing.canonical_request,
+                    string_to_sign: signing.string_to_sign,
+                    credential_scope: signing.credential_scope,
+                    response_status: status,
+                    response_headers,
+                    response_body: truncate_body(&body, 4096),
+                    duration_ms,
+                }
+            }
+            Err(e) => DiagnoseRequestTrace {
+                method: "POST".to_string(),
+                url,
+                request_headers,
+                request_body: Some(payload.to_string()),
+                sign_algorithm: "TC3-HMAC-SHA256".to_string(),
+                canonical_request: signing.canonical_request,
+                string_to_sign: signing.string_to_sign,
+                credential_scope: signing.credential_scope,
+                response_status: 0,
+                response_headers: vec![],
+                response_body: format!("请求发送失败: {}", e),
+                duration_ms,
+            },
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -595,6 +715,36 @@ impl CloudProvider for TencentCloudProvider {
             disk_gb: None,
         })
     }
+
+    async fn diagnose(&self) -> DiagnoseReport {
+        let region = self.regions.first().map(|s| s.as_str()).unwrap_or("ap-guangzhou");
+        let payload = serde_json::json!({"Offset": 0, "Limit": 1}).to_string();
+
+        let trace = self
+            .call_api_with_trace("cvm", CVM_ENDPOINT, "DescribeInstances", CVM_VERSION, region, &payload)
+            .await;
+
+        let success = trace.response_status == 200
+            && !trace.response_body.contains("\"Error\"");
+        let error_message = if success {
+            None
+        } else {
+            Some(format!(
+                "HTTP {} - {}",
+                trace.response_status,
+                truncate_body(&trace.response_body, 512)
+            ))
+        };
+
+        DiagnoseReport {
+            provider: "tencent".to_string(),
+            account_name: self.account_name.clone(),
+            success,
+            error_message,
+            traces: vec![trace],
+            diagnosed_at: Utc::now(),
+        }
+    }
 }
 
 /// HMAC-SHA256 helper function
@@ -657,11 +807,11 @@ mod tests {
 
         // Just ensure it doesn't panic and returns a signature
         assert!(result.is_ok());
-        let auth_header = result.unwrap();
-        assert!(auth_header.contains("TC3-HMAC-SHA256"));
-        assert!(auth_header.contains("Credential="));
-        assert!(auth_header.contains("SignedHeaders="));
-        assert!(auth_header.contains("Signature="));
+        let output = result.unwrap();
+        assert!(output.authorization.contains("TC3-HMAC-SHA256"));
+        assert!(output.authorization.contains("Credential="));
+        assert!(output.authorization.contains("SignedHeaders="));
+        assert!(output.authorization.contains("Signature="));
     }
 
     #[test]

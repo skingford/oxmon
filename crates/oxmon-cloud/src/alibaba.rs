@@ -1,4 +1,7 @@
-use crate::{CloudAccountConfig, CloudInstance, CloudMetrics, CloudProvider};
+use crate::{
+    truncate_body, CloudAccountConfig, CloudInstance, CloudMetrics, CloudProvider, DiagnoseReport,
+    DiagnoseRequestTrace,
+};
 use anyhow::{Context, Result};
 use base64::Engine;
 use chrono::Utc;
@@ -15,6 +18,12 @@ type HmacSha1 = Hmac<Sha1>;
 
 const ECS_ENDPOINT_TEMPLATE: &str = "ecs.{region}.aliyuncs.com";
 const CMS_ENDPOINT: &str = "metrics.aliyuncs.com";
+
+struct AcsSigningOutput {
+    signature: String,
+    string_to_sign: String,
+    canonical_query_string: String,
+}
 
 pub struct AlibabaCloudProvider {
     account_name: String,
@@ -49,7 +58,7 @@ impl AlibabaCloudProvider {
     }
 
     /// ACS v1 signature algorithm
-    fn sign_acs_v1(&self, params: &BTreeMap<String, String>) -> Result<String> {
+    fn sign_acs_v1(&self, params: &BTreeMap<String, String>) -> Result<AcsSigningOutput> {
         // Step 1: Sort parameters and build canonical query string
         let canonical_query_string = params
             .iter()
@@ -72,7 +81,11 @@ impl AlibabaCloudProvider {
         let signature =
             base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
 
-        Ok(signature)
+        Ok(AcsSigningOutput {
+            signature,
+            string_to_sign,
+            canonical_query_string,
+        })
     }
 
     /// Call Alibaba Cloud API with ACS v1 signature and retry logic
@@ -175,8 +188,8 @@ impl AlibabaCloudProvider {
         }
 
         // Sign the request
-        let signature = self.sign_acs_v1(&params)?;
-        params.insert("Signature".to_string(), signature);
+        let signing = self.sign_acs_v1(&params)?;
+        params.insert("Signature".to_string(), signing.signature);
 
         // Build URL
         let query_string = params
@@ -723,6 +736,128 @@ impl AlibabaCloudProvider {
             }
         }
     }
+
+    /// 调用阿里云 API 并捕获完整的请求/响应追踪信息（不使用重试逻辑）
+    async fn call_api_with_trace(
+        &self,
+        endpoint: &str,
+        action: &str,
+        version: &str,
+        region: Option<&str>,
+        extra_params: BTreeMap<String, String>,
+    ) -> DiagnoseRequestTrace {
+        let start = std::time::Instant::now();
+        let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let nonce = uuid::Uuid::new_v4().to_string();
+
+        let mut params = BTreeMap::new();
+        params.insert("Format".to_string(), "JSON".to_string());
+        params.insert("Version".to_string(), version.to_string());
+        params.insert("AccessKeyId".to_string(), self.access_key_id.clone());
+        params.insert("SignatureMethod".to_string(), "HMAC-SHA1".to_string());
+        params.insert("Timestamp".to_string(), timestamp);
+        params.insert("SignatureVersion".to_string(), "1.0".to_string());
+        params.insert("SignatureNonce".to_string(), nonce);
+        params.insert("Action".to_string(), action.to_string());
+
+        if let Some(r) = region {
+            params.insert("RegionId".to_string(), r.to_string());
+        }
+        for (k, v) in extra_params {
+            params.insert(k, v);
+        }
+
+        let signing = match self.sign_acs_v1(&params) {
+            Ok(s) => s,
+            Err(e) => {
+                return DiagnoseRequestTrace {
+                    method: "GET".to_string(),
+                    url: format!("https://{}/", endpoint),
+                    request_headers: vec![],
+                    request_body: None,
+                    sign_algorithm: "HMAC-SHA1".to_string(),
+                    canonical_request: String::new(),
+                    string_to_sign: String::new(),
+                    credential_scope: "N/A (ACS v1 不使用 credential scope)".to_string(),
+                    response_status: 0,
+                    response_headers: vec![],
+                    response_body: format!("签名计算失败: {}", e),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                };
+            }
+        };
+        params.insert("Signature".to_string(), signing.signature);
+
+        let query_string = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let url = format!("https://{}/?{}", endpoint, query_string);
+
+        // Mask Signature in displayed URL
+        let masked_url = if let Some(idx) = url.find("Signature=") {
+            let sig_start = idx + "Signature=".len();
+            let sig_end = url[sig_start..].find('&').map(|i| sig_start + i).unwrap_or(url.len());
+            let sig_val = &url[sig_start..sig_end];
+            if sig_val.len() > 8 {
+                format!("{}{}...{}", &url[..sig_start], &sig_val[..8], &url[sig_end..])
+            } else {
+                url.clone()
+            }
+        } else {
+            url.clone()
+        };
+
+        let request_headers = vec![
+            ("Host".to_string(), endpoint.to_string()),
+        ];
+
+        let response = self.client.get(&url).send().await;
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        match response {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let response_headers: Vec<(String, String)> = resp
+                    .headers()
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                    .collect();
+                let body = resp.text().await.unwrap_or_default();
+
+                DiagnoseRequestTrace {
+                    method: "GET".to_string(),
+                    url: masked_url,
+                    request_headers,
+                    request_body: None,
+                    sign_algorithm: "HMAC-SHA1".to_string(),
+                    canonical_request: signing.canonical_query_string,
+                    string_to_sign: signing.string_to_sign,
+                    credential_scope: "N/A (ACS v1 不使用 credential scope)".to_string(),
+                    response_status: status,
+                    response_headers,
+                    response_body: truncate_body(&body, 4096),
+                    duration_ms,
+                }
+            }
+            Err(e) => DiagnoseRequestTrace {
+                method: "GET".to_string(),
+                url: masked_url,
+                request_headers,
+                request_body: None,
+                sign_algorithm: "HMAC-SHA1".to_string(),
+                canonical_request: signing.canonical_query_string,
+                string_to_sign: signing.string_to_sign,
+                credential_scope: "N/A (ACS v1 不使用 credential scope)".to_string(),
+                response_status: 0,
+                response_headers: vec![],
+                response_body: format!("请求发送失败: {}", e),
+                duration_ms,
+            },
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -846,6 +981,40 @@ impl CloudProvider for AlibabaCloudProvider {
             memory_gb: None,
             disk_gb: None,
         })
+    }
+
+    async fn diagnose(&self) -> DiagnoseReport {
+        let region = self.regions.first().map(|s| s.as_str()).unwrap_or("cn-hangzhou");
+        let endpoint = ECS_ENDPOINT_TEMPLATE.replace("{region}", region);
+
+        let mut params = BTreeMap::new();
+        params.insert("PageNumber".to_string(), "1".to_string());
+        params.insert("PageSize".to_string(), "1".to_string());
+
+        let trace = self
+            .call_api_with_trace(&endpoint, "DescribeInstances", "2014-05-26", Some(region), params)
+            .await;
+
+        let success = trace.response_status == 200
+            && !trace.response_body.contains("\"Code\"");
+        let error_message = if success {
+            None
+        } else {
+            Some(format!(
+                "HTTP {} - {}",
+                trace.response_status,
+                truncate_body(&trace.response_body, 512)
+            ))
+        };
+
+        DiagnoseReport {
+            provider: "alibaba".to_string(),
+            account_name: self.account_name.clone(),
+            success,
+            error_message,
+            traces: vec![trace],
+            diagnosed_at: Utc::now(),
+        }
     }
 }
 

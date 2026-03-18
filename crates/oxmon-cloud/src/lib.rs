@@ -8,6 +8,81 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 
+/// 单次 HTTP 请求的诊断追踪信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnoseRequestTrace {
+    pub method: String,
+    pub url: String,
+    pub request_headers: Vec<(String, String)>,
+    pub request_body: Option<String>,
+    pub sign_algorithm: String,
+    pub canonical_request: String,
+    pub string_to_sign: String,
+    pub credential_scope: String,
+    pub response_status: u16,
+    pub response_headers: Vec<(String, String)>,
+    pub response_body: String,
+    pub duration_ms: u64,
+}
+
+/// 云账户诊断报告
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnoseReport {
+    pub provider: String,
+    pub account_name: String,
+    pub success: bool,
+    pub error_message: Option<String>,
+    pub traces: Vec<DiagnoseRequestTrace>,
+    pub diagnosed_at: DateTime<Utc>,
+}
+
+/// 对 Authorization 头中的 Signature 值进行脱敏，仅保留前 8 字符
+pub fn mask_authorization(value: &str) -> String {
+    // TC3-HMAC-SHA256 ... Signature=abcdef1234567890...
+    // AWS4-HMAC-SHA256 ... Signature=abcdef1234567890...
+    if let Some(idx) = value.find("Signature=") {
+        let sig_start = idx + "Signature=".len();
+        let sig_value = &value[sig_start..];
+        if sig_value.len() > 8 {
+            format!("{}{}...", &value[..sig_start], &sig_value[..8])
+        } else {
+            value.to_string()
+        }
+    } else {
+        value.to_string()
+    }
+}
+
+/// 对 Cookie 中的 aCMPAuthToken 进行脱敏
+pub fn mask_cookie(value: &str) -> String {
+    if let Some(idx) = value.find("aCMPAuthToken=") {
+        let token_start = idx + "aCMPAuthToken=".len();
+        let token_value = &value[token_start..];
+        let token_end = token_value.find(';').unwrap_or(token_value.len());
+        if token_end > 8 {
+            format!(
+                "{}{}...{}",
+                &value[..token_start],
+                &token_value[..8],
+                &value[token_start + token_end..]
+            )
+        } else {
+            value.to_string()
+        }
+    } else {
+        value.to_string()
+    }
+}
+
+/// 截断字符串到指定最大字符数
+pub fn truncate_body(body: &str, max_chars: usize) -> String {
+    if body.len() <= max_chars {
+        body.to_string()
+    } else {
+        format!("{}...(truncated, total {} chars)", &body[..max_chars], body.len())
+    }
+}
+
 /// Cloud instance metadata discovered from provider API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudInstance {
@@ -173,6 +248,18 @@ pub trait CloudProvider: Send + Sync {
 
     /// Get metrics for a specific instance
     async fn get_metrics(&self, instance_id: &str, region: &str) -> Result<CloudMetrics>;
+
+    /// 诊断云账户连接，返回完整的请求链路信息
+    async fn diagnose(&self) -> DiagnoseReport {
+        DiagnoseReport {
+            provider: "unknown".to_string(),
+            account_name: self.name().to_string(),
+            success: false,
+            error_message: Some("该云供应商尚未实现诊断功能".to_string()),
+            traces: vec![],
+            diagnosed_at: Utc::now(),
+        }
+    }
 }
 
 impl InstanceFilter {

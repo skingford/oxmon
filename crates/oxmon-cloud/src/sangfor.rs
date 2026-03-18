@@ -1,4 +1,7 @@
-use crate::{CloudAccountConfig, CloudInstance, CloudMetrics, CloudProvider};
+use crate::{
+    mask_authorization, mask_cookie, truncate_body, CloudAccountConfig, CloudInstance,
+    CloudMetrics, CloudProvider, DiagnoseReport, DiagnoseRequestTrace,
+};
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
@@ -681,6 +684,88 @@ impl SangforCloudProvider {
             }
         }
     }
+
+    /// 发起已签名的 GET 请求并捕获完整的请求/响应追踪信息
+    async fn signed_get_with_trace(&self, path: &str, query_string: &str) -> DiagnoseRequestTrace {
+        let start = std::time::Instant::now();
+        let now = Utc::now();
+
+        let uri = format!("/janus/{}{}", API_VERSION, path);
+
+        let cookie_token = self
+            .scp_auth_token
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
+        let cookie_header_value = format!("aCMPAuthToken={}", cookie_token);
+
+        let (authorization, datetime_str, canonical_request, string_to_sign) =
+            self.sign_aws4("GET", &uri, &now, Some(&cookie_header_value));
+
+        let date_str = now.format("%Y%m%d").to_string();
+        let credential_scope = format!(
+            "{}/{}/{}/aws4_request",
+            date_str, self.region_for_sign, SCP_SERVICE
+        );
+
+        let path_and_query = if query_string.is_empty() {
+            format!("/janus/{}{}", API_VERSION, path)
+        } else {
+            format!("/janus/{}{}?{}", API_VERSION, path, query_string)
+        };
+
+        let url = format!("https://{}{}", self.endpoint, path_and_query);
+        let request_headers = vec![
+            ("X-Amz-Date".to_string(), datetime_str.clone()),
+            (
+                "Authorization".to_string(),
+                mask_authorization(&authorization),
+            ),
+            ("Cookie".to_string(), mask_cookie(&cookie_header_value)),
+        ];
+
+        let req_headers: &[(&str, &str)] = &[
+            ("X-Amz-Date", &datetime_str),
+            ("Authorization", &authorization),
+            ("Cookie", &cookie_header_value),
+        ];
+
+        let result = raw_https_get(&self.endpoint, &path_and_query, req_headers).await;
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        match result {
+            Ok((status, body)) => {
+                // 尝试从原始响应中提取响应头（raw_https_get 不返回 headers，使用空列表）
+                DiagnoseRequestTrace {
+                    method: "GET".to_string(),
+                    url,
+                    request_headers,
+                    request_body: None,
+                    sign_algorithm: "AWS4-HMAC-SHA256".to_string(),
+                    canonical_request,
+                    string_to_sign,
+                    credential_scope,
+                    response_status: status,
+                    response_headers: vec![],
+                    response_body: truncate_body(&body, 4096),
+                    duration_ms,
+                }
+            }
+            Err(e) => DiagnoseRequestTrace {
+                method: "GET".to_string(),
+                url,
+                request_headers,
+                request_body: None,
+                sign_algorithm: "AWS4-HMAC-SHA256".to_string(),
+                canonical_request,
+                string_to_sign,
+                credential_scope,
+                response_status: 0,
+                response_headers: vec![],
+                response_body: format!("请求发送失败: {}", e),
+                duration_ms,
+            },
+        }
+    }
 }
 
 // ── SCP API 响应解析帮助函数 ─────────────────────────────────────────────────
@@ -1235,6 +1320,33 @@ impl CloudProvider for SangforCloudProvider {
             memory_gb: None,
             disk_gb: None,
         })
+    }
+
+    async fn diagnose(&self) -> DiagnoseReport {
+        let trace = self.signed_get_with_trace("/servers", "limit=1").await;
+
+        let success = (200..300).contains(&trace.response_status)
+            && !trace.response_body.contains("\"code\":") // no error code
+            || trace.response_body.contains("\"code\":0") // or code=0 is success
+            || trace.response_body.contains("\"code\": 0");
+        let error_message = if success {
+            None
+        } else {
+            Some(format!(
+                "HTTP {} - {}",
+                trace.response_status,
+                truncate_body(&trace.response_body, 512)
+            ))
+        };
+
+        DiagnoseReport {
+            provider: "sangfor".to_string(),
+            account_name: self.account_name.clone(),
+            success,
+            error_message,
+            traces: vec![trace],
+            diagnosed_at: Utc::now(),
+        }
     }
 }
 

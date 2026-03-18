@@ -25,8 +25,12 @@ use utoipa_swagger_ui::SwaggerUi;
         (name = "Notifications", description = "通知渠道管理"),
         (name = "Dashboard", description = "仪表盘概览"),
         (name = "System", description = "系统管理"),
+        (name = "SystemConfig", description = "系统配置项管理"),
         (name = "Dictionaries", description = "系统字典管理"),
         (name = "Cloud", description = "云账户与云实例管理"),
+        (name = "InstanceContacts", description = "云实例联系人映射"),
+        (name = "AI 管理", description = "AI 账号与报告模板管理"),
+        (name = "AI 报告", description = "AI 巡检报告与结果查询"),
         (name = "Audit", description = "审计操作日志"),
         (name = "Admin", description = "后台管理员管理")
     ),

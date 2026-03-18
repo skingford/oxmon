@@ -36,6 +36,7 @@ async fn openapi_paths_should_be_covered_by_test_matrix() -> Result<()> {
         "PUT /v1/agents/{id}",
         "DELETE /v1/agents/{id}",
         "GET /v1/agents/{id}/latest",
+        "GET /v1/agents/{id}/report-logs",
         "GET /v1/metrics",
         "GET /v1/alerts/rules",
         "GET /v1/alerts/history",
@@ -63,10 +64,14 @@ async fn openapi_paths_should_be_covered_by_test_matrix() -> Result<()> {
         // New endpoints: metrics discovery
         "GET /v1/metrics/names",
         "GET /v1/metrics/agents",
+        "GET /v1/metrics/sources",
         "GET /v1/metrics/summary",
         // New endpoints: cert history & summary
         "GET /v1/certs/domains/{id}/history",
+        "GET /v1/certs/domains/overview",
+        "GET /v1/certs/domains/{id}/detail-view",
         "GET /v1/certs/summary",
+        "GET /v1/certs/status/summary",
         // New endpoints: alert rules CRUD
         "POST /v1/alerts/rules",
         "GET /v1/alerts/rules/{id}",
@@ -95,6 +100,7 @@ async fn openapi_paths_should_be_covered_by_test_matrix() -> Result<()> {
         "GET /v1/notifications/logs",
         "GET /v1/notifications/logs/{id}",
         "GET /v1/notifications/logs/summary",
+        "POST /v1/notifications/test-cert-report",
         // New endpoints: dashboard
         "GET /v1/dashboard/overview",
         // New endpoints: system
@@ -107,6 +113,7 @@ async fn openapi_paths_should_be_covered_by_test_matrix() -> Result<()> {
         "POST /v1/dictionaries/types",
         "PUT /v1/dictionaries/types/{dict_type}",
         "DELETE /v1/dictionaries/types/{dict_type}",
+        "GET /v1/dictionaries/types/all",
         "GET /v1/dictionaries/type/{dict_type}",
         "GET /v1/dictionaries/{id}",
         "POST /v1/dictionaries",
@@ -121,13 +128,53 @@ async fn openapi_paths_should_be_covered_by_test_matrix() -> Result<()> {
         // New endpoints: cloud monitoring
         "GET /v1/cloud/accounts",
         "POST /v1/cloud/accounts",
+        "POST /v1/cloud/accounts/batch",
         "GET /v1/cloud/accounts/{id}",
         "PUT /v1/cloud/accounts/{id}",
         "DELETE /v1/cloud/accounts/{id}",
         "POST /v1/cloud/accounts/{id}/test",
+        "POST /v1/cloud/accounts/{id}/diagnose",
         "POST /v1/cloud/accounts/{id}/collect",
         "GET /v1/cloud/instances",
+        "GET /v1/cloud/instances/chart",
         "GET /v1/cloud/instances/{id}",
+        "GET /v1/cloud/instances/{id}/metrics",
+        "POST /v1/cloud/instances/ai-check",
+        "GET /v1/cloud/instances/ai-check/jobs",
+        "GET /v1/cloud/instances/ai-check/jobs/{id}",
+        "POST /v1/cloud/instances/{id}/ai-check",
+        // New endpoints: instance contacts
+        "GET /v1/instance-contacts",
+        "POST /v1/instance-contacts",
+        "GET /v1/instance-contacts/{id}",
+        "PUT /v1/instance-contacts/{id}",
+        "DELETE /v1/instance-contacts/{id}",
+        "GET /v1/instance-contacts/match/{agent_id}",
+        // New endpoints: audit
+        "GET /v1/audit/logs",
+        "GET /v1/audit/logs/{id}",
+        "GET /v1/audit/logs/security-summary",
+        "GET /v1/audit/logs/security-summary/timeseries",
+        // New endpoints: AI
+        "GET /v1/ai/accounts",
+        "POST /v1/ai/accounts",
+        "GET /v1/ai/accounts/{id}",
+        "PUT /v1/ai/accounts/{id}",
+        "DELETE /v1/ai/accounts/{id}",
+        "POST /v1/ai/accounts/{id}/trigger",
+        "GET /v1/ai/reports",
+        "GET /v1/ai/reports/{id}",
+        "GET /v1/ai/reports/{id}/view",
+        "GET /v1/ai/reports/{id}/instances",
+        // New endpoints: admin
+        "GET /v1/admin/users",
+        "POST /v1/admin/users",
+        "GET /v1/admin/users/{id}",
+        "PUT /v1/admin/users/{id}",
+        "DELETE /v1/admin/users/{id}",
+        "POST /v1/admin/users/{id}/password",
+        "GET /v1/admin/users/login-throttles",
+        "POST /v1/admin/users/unlock-login-throttle",
     ]
     .into_iter()
     .map(|s| s.to_string())
@@ -252,6 +299,55 @@ async fn openapi_list_query_params_should_be_optional() -> Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn openapi_operation_tags_should_be_declared_in_root_tags() -> Result<()> {
+    let ctx = build_test_context().await?;
+    let (status, body, _) = request_no_body(&ctx.app, "GET", "/v1/openapi.json", None).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+
+    let Some(root_tags) = body["tags"].as_array() else {
+        return Err(anyhow!("openapi tags should be array"));
+    };
+
+    let declared: HashSet<&str> = root_tags
+        .iter()
+        .filter_map(|tag| tag["name"].as_str())
+        .collect();
+
+    let Some(paths) = body["paths"].as_object() else {
+        return Err(anyhow!("openapi paths should be object"));
+    };
+
+    let mut missing: BTreeSet<String> = BTreeSet::new();
+    for (path, methods) in paths {
+        let Some(methods) = methods.as_object() else {
+            return Err(anyhow!("path methods should be object for {path}"));
+        };
+        for (method, operation) in methods {
+            let Some(tags) = operation["tags"].as_array() else {
+                continue;
+            };
+
+            for tag in tags.iter().filter_map(serde_json::Value::as_str) {
+                if !declared.contains(tag) {
+                    missing.insert(format!(
+                        "{} {} -> {}",
+                        method.to_ascii_uppercase(),
+                        path,
+                        tag
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "operation tags missing root declarations: {missing:?}"
+    );
     Ok(())
 }
 

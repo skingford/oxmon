@@ -338,6 +338,34 @@ struct TriggerCollectionResponse {
     collected_count: Option<usize>,
 }
 
+/// 诊断请求追踪信息
+#[derive(Serialize, ToSchema)]
+struct DiagnoseTraceResponse {
+    method: String,
+    url: String,
+    request_headers: Vec<(String, String)>,
+    request_body: Option<String>,
+    sign_algorithm: String,
+    canonical_request: String,
+    string_to_sign: String,
+    credential_scope: String,
+    response_status: u16,
+    response_headers: Vec<(String, String)>,
+    response_body: String,
+    duration_ms: u64,
+}
+
+/// 诊断报告响应
+#[derive(Serialize, ToSchema)]
+struct DiagnoseResponse {
+    provider: String,
+    account_name: String,
+    success: bool,
+    error_message: Option<String>,
+    traces: Vec<DiagnoseTraceResponse>,
+    diagnosed_at: String,
+}
+
 fn row_to_cloud_account_config(row: &CloudAccountRow) -> CloudAccountConfig {
     CloudAccountConfig {
         secret_id: row.secret_id.clone(),
@@ -934,6 +962,100 @@ async fn test_cloud_account_connection(
                 success: false,
                 message: format!("Failed to build provider: {}", e),
                 instance_count: None,
+            };
+            success_response(StatusCode::OK, &trace_id, resp)
+        }
+    }
+}
+
+/// 诊断云账户连接（返回完整请求链路信息）
+#[utoipa::path(
+    post,
+    path = "/v1/cloud/accounts/{id}/diagnose",
+    tag = "Cloud",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "云账户ID")
+    ),
+    responses(
+        (status = 200, description = "诊断报告", body = DiagnoseResponse),
+        (status = 404, description = "云账户不存在", body = crate::api::ApiError)
+    )
+)]
+async fn diagnose_cloud_account(
+    Extension(trace_id): Extension<TraceId>,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let row = match state.cert_store.get_cloud_account_by_id(&id).await {
+        Ok(row) => row,
+        Err(e) => {
+            let err_msg = e.to_string();
+            if err_msg.contains("no rows")
+                || err_msg.contains("NOT FOUND")
+                || err_msg.contains("not found")
+            {
+                return error_response(
+                    StatusCode::NOT_FOUND,
+                    &trace_id,
+                    "not_found",
+                    "Cloud account not found",
+                )
+                .into_response();
+            }
+            tracing::error!(error = %e, "Failed to get cloud account");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &trace_id,
+                "storage_error",
+                "Database error",
+            )
+            .into_response();
+        }
+    };
+
+    let account_config = row_to_cloud_account_config(&row);
+    let provider_type = &row.provider;
+    let account_name = &row.account_name;
+
+    match build_provider(provider_type, account_name, account_config) {
+        Ok(provider) => {
+            let report = provider.diagnose().await;
+            let resp = DiagnoseResponse {
+                provider: report.provider,
+                account_name: report.account_name,
+                success: report.success,
+                error_message: report.error_message,
+                traces: report
+                    .traces
+                    .into_iter()
+                    .map(|t| DiagnoseTraceResponse {
+                        method: t.method,
+                        url: t.url,
+                        request_headers: t.request_headers,
+                        request_body: t.request_body,
+                        sign_algorithm: t.sign_algorithm,
+                        canonical_request: t.canonical_request,
+                        string_to_sign: t.string_to_sign,
+                        credential_scope: t.credential_scope,
+                        response_status: t.response_status,
+                        response_headers: t.response_headers,
+                        response_body: t.response_body,
+                        duration_ms: t.duration_ms,
+                    })
+                    .collect(),
+                diagnosed_at: report.diagnosed_at.to_rfc3339(),
+            };
+            success_response(StatusCode::OK, &trace_id, resp)
+        }
+        Err(e) => {
+            let resp = DiagnoseResponse {
+                provider: provider_type.to_string(),
+                account_name: account_name.to_string(),
+                success: false,
+                error_message: Some(format!("Failed to build provider: {}", e)),
+                traces: vec![],
+                diagnosed_at: chrono::Utc::now().to_rfc3339(),
             };
             success_response(StatusCode::OK, &trace_id, resp)
         }
@@ -2439,6 +2561,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(update_cloud_account))
         .routes(routes!(delete_cloud_account))
         .routes(routes!(test_cloud_account_connection))
+        .routes(routes!(diagnose_cloud_account))
         .routes(routes!(trigger_cloud_account_collection))
         .routes(routes!(list_cloud_instances))
         .routes(routes!(cloud_instances_chart))
