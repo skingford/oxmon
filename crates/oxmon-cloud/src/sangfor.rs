@@ -1323,7 +1323,7 @@ impl CloudProvider for SangforCloudProvider {
     }
 
     async fn diagnose(&self) -> DiagnoseReport {
-        let trace = self.signed_get_with_trace("/servers", "limit=1").await;
+        let trace = self.signed_get_with_trace("/servers", "").await;
 
         let success = (200..300).contains(&trace.response_status)
             && !trace.response_body.contains("\"code\":") // no error code
