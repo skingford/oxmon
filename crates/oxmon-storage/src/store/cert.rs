@@ -1313,14 +1313,18 @@ fn parse_check_result_rows(rows: Vec<sea_orm::QueryResult>) -> Result<Vec<CertCh
     Ok(result)
 }
 
-/// 构建域名综合概览 SQL（三表 LEFT JOIN，包含全部已启用域名）
+/// 构建域名综合概览 SQL（三表 LEFT JOIN，支持按 enabled 过滤）
 ///
 /// 排序规则：异常域名优先（is_valid=0），其次未检查，最后正常；同级按域名字母序
 fn build_domain_overview_sql(
     filter: &DomainOverviewFilter,
     pagination: Option<(usize, usize)>,
 ) -> String {
-    let mut where_parts = vec!["d.enabled = 1".to_string()];
+    let mut where_parts = Vec::new();
+    match filter.enabled {
+        Some(v) => where_parts.push(format!("d.enabled = {}", if v { 1 } else { 0 })),
+        None => {} // 不传则不过滤，返回全部
+    }
 
     if let Some(ref s) = filter.domain_contains {
         let escaped = escape_sql_like(s);
@@ -1336,7 +1340,11 @@ fn build_domain_overview_sql(
         where_parts.push(format!("r.days_until_expiry <= {v}"));
     }
 
-    let where_clause = where_parts.join(" AND ");
+    let where_clause = if where_parts.is_empty() {
+        "1=1".to_string()
+    } else {
+        where_parts.join(" AND ")
+    };
 
     let mut sql = format!(
         "SELECT

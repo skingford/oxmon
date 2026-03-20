@@ -983,6 +983,9 @@ async fn cert_check_history(
 /// 域名综合概览查询参数
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 struct DomainOverviewParams {
+    /// 启用状态过滤（true=启用, false=停用, 不传=全部）
+    #[serde(rename = "enabled__eq")]
+    enabled_eq: Option<bool>,
     /// 域名包含匹配（模糊搜索）
     domain_contains: Option<String>,
     /// 是否有效过滤（true=仅正常, false=仅异常）
@@ -999,7 +1002,7 @@ struct DomainOverviewParams {
 ///
 /// 与 `/v1/certs/status` 的区别：
 /// - 本接口以域名配置为基础，通过 LEFT JOIN 合并检查结果和证书详情，
-///   **始终返回全部已启用域名**（含从未成功收集证书详情的异常域名）。
+///   **默认返回全部域名**（含停用的和从未成功收集证书详情的异常域名），可通过 `enabled__eq` 过滤。
 /// - 异常域名排在前面，`check_error` 字段包含具体错误原因。
 /// - 适合作为"证书监控主列表"的数据源。
 #[utoipa::path(
@@ -1021,6 +1024,7 @@ async fn list_domain_overview(
     let limit = PaginationParams::resolve_limit(params.limit);
     let offset = PaginationParams::resolve_offset(params.offset);
     let filter = DomainOverviewFilter {
+        enabled: params.enabled_eq,
         domain_contains: params.domain_contains,
         is_valid: params.is_valid_eq,
         has_error: params.has_error_eq,

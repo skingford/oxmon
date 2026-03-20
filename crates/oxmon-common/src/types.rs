@@ -843,6 +843,8 @@ pub struct DomainOverviewItem {
 /// 域名概览过滤条件
 #[derive(Debug, Clone, Default)]
 pub struct DomainOverviewFilter {
+    /// 启用状态过滤（None 表示全部）
+    pub enabled: Option<bool>,
     /// 域名包含匹配
     pub domain_contains: Option<String>,
     /// 是否有效（true/false/None 表示全部）
